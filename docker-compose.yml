@@ -1,0 +1,8 @@
+services:
+  finansapp:
+    build: .
+    image: finansapp-pro
+    container_name: finansapp
+    ports:
+      - "8080:80"
+    restart: unless-stopped
