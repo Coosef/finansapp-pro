@@ -39,7 +39,7 @@ export function Kullanicilar({ users, onChange, bildir, mevcut }) {
       <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1.25rem" }}>Her kullanıcının verisi ayrıdır.</p>
       <Card style={{ marginBottom: "1.25rem" }}>
         <h3 style={{ margin: "0 0 1rem", fontSize: "0.82rem", color: C.dim, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>Yeni Kullanıcı</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+        <div className="fa-grid-2">
           <Field label="Ad Soyad" value={yeni.ad} onChange={(v) => setYeni((y) => ({ ...y, ad: v }))} />
           <Field label="Kullanıcı Adı" value={yeni.username} onChange={(v) => setYeni((y) => ({ ...y, username: v }))} />
           <Field label="Şifre" value={yeni.sifre} onChange={(v) => setYeni((y) => ({ ...y, sifre: v }))} />
@@ -52,7 +52,7 @@ export function Kullanicilar({ users, onChange, bildir, mevcut }) {
         {users.map((u) => (
           <div key={u.username} style={rowStyle}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-              <div style={{ width: 36, height: 36, borderRadius: "50%", background: u.rol === "admin" ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "#1E2130", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.85rem" }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: u.rol === "admin" ? "linear-gradient(135deg,#10B981,#059669)" : "#1E2130", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.85rem" }}>
                 {(u.ad || u.username)[0]?.toUpperCase()}
               </div>
               <div>

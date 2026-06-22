@@ -3,11 +3,39 @@
 // ============================================================
 import { useState } from "react";
 import { C, pageTitle, sectionTitle, inputStyle, tagStyle, VARLIK_TIPLERI } from "../lib/constants.js";
-import { TL, TL2 } from "../lib/format.js";
-import { Card, Btn, Stat, ProgressBar, DelBtn, Bos, Modal, Field } from "../components/ui.jsx";
-import { Sparkline } from "../components/charts.jsx";
+import { TL, TL2, bugun } from "../lib/format.js";
+import { Card, Btn, Stat, ProgressBar, DelBtn, EditBtn, Bos, Modal, Field } from "../components/ui.jsx";
+import { Sparkline, DonutDagilim } from "../components/charts.jsx";
 
-export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, onGuncelle, guncelleniyor }) {
+// Tek yatırımın güncel fiyatını elle güncelle (AI/CoinGecko gerekmeden)
+function FiyatGuncelle({ y, setFindata }) {
+  const [val, setVal] = useState(String(y.guncelFiyat || y.alisFiyati || ""));
+  function uygula() {
+    const f = parseFloat(val);
+    if (isNaN(f) || f <= 0) return;
+    const t = bugun();
+    setFindata((d) => ({
+      ...d,
+      yatirimlar: d.yatirimlar.map((z) => {
+        if (z.id !== y.id) return z;
+        const g = z.gecmis || [];
+        const yd = z.adet * f;
+        const son = g[g.length - 1];
+        const g2 = son && son.tarih === t ? [...g.slice(0, -1), { tarih: t, deger: yd }] : [...g, { tarih: t, deger: yd }];
+        return { ...z, oncekiFiyat: z.guncelFiyat || z.alisFiyati, guncelFiyat: f, sonGuncelleme: t, gecmis: g2 };
+      }),
+    }));
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+      <span style={{ color: C.faint }}>Güncel ₺</span>
+      <input type="number" value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && uygula()} style={{ ...inputStyle, width: 84, padding: "0.2rem 0.4rem", fontSize: "0.72rem" }} />
+      <button className="fa-btn" onClick={uygula} title="Fiyatı uygula" style={{ background: "#10241A", border: "1px solid #1E3A2C", color: C.greenL, width: 26, height: 26, borderRadius: "0.4rem", cursor: "pointer", fontSize: "0.75rem", flexShrink: 0 }}>✓</button>
+    </div>
+  );
+}
+
+export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, onDuzenle, onGuncelle, guncelleniyor }) {
   const [hedefAcik, setHedefAcik] = useState(false);
   const enf = findata.ayarlar?.enflasyon || 0;
   const toplam = findata.yatirimlar.reduce((s, y) => s + guncelDeger(y), 0);
@@ -23,6 +51,12 @@ export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, on
   findata.yatirimlar.forEach((y) => { grup[y.tip] = (grup[y.tip] || 0) + guncelDeger(y); });
   const hedefDagilim = findata.hedefDagilim || {};
   const kur = findata.kurlar;
+
+  const tarihSet = {};
+  findata.yatirimlar.forEach((y) => (y.gecmis || []).forEach((p) => { tarihSet[p.tarih] = true; }));
+  const portfoyGecmis = Object.keys(tarihSet)
+    .sort()
+    .map((t) => ({ tarih: t, deger: findata.yatirimlar.reduce((s, y) => { const g = (y.gecmis || []).filter((p) => p.tarih <= t).pop(); return s + (g ? g.deger : 0); }, 0) }));
 
   const gunluk = (y) => (!y.oncekiFiyat || !y.guncelFiyat ? null : ((y.guncelFiyat - y.oncekiFiyat) / y.oncekiFiyat) * 100);
   const haftalik = (y) => {
@@ -52,10 +86,23 @@ export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, on
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+      <div className="fa-grid-2" style={{ marginBottom: "1rem" }}>
         <Stat title="Nominal Kâr/Zarar" value={`${kar >= 0 ? "+" : ""}${TL(kar)}`} sub={`${maliyet ? ((kar / maliyet) * 100).toFixed(1) : 0}% getiri`} subColor={kar >= 0 ? C.greenL : C.redL} color={kar >= 0 ? C.green : C.red} icon="📊" />
         <Stat title={`Reel K/Z (enf. %${enf})`} value={`${reelKar >= 0 ? "+" : ""}${TL(reelKar)}`} sub={reelKar >= 0 ? "Enflasyonu yendin 👍" : "Enflasyonun altında kaldı"} subColor={reelKar >= 0 ? C.greenL : C.redL} color={C.cyan} icon="🔥" />
       </div>
+
+      {findata.yatirimlar.length > 0 && (
+        <div className="fa-grid-2" style={{ marginBottom: "1rem" }}>
+          <Card>
+            <h3 style={sectionTitle}>Portföy Büyümesi</h3>
+            <Sparkline points={portfoyGecmis} color={C.indigoL} height={140} width={300} />
+          </Card>
+          <Card>
+            <h3 style={sectionTitle}>Varlık Dağılımı</h3>
+            <DonutDagilim yatirimlar={findata.yatirimlar} guncelDeger={guncelDeger} />
+          </Card>
+        </div>
+      )}
 
       {hedefAcik && (
         <Card style={{ marginBottom: "1rem" }}>
@@ -103,7 +150,10 @@ export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, on
                   <p style={{ margin: "0 0 0.15rem", fontWeight: 700, fontSize: "1rem" }}>{y.ad} <span style={{ color: C.faint, fontWeight: 400, fontSize: "0.78rem" }}>{y.sembol}</span></p>
                   <p style={{ margin: 0, color: C.dimmer, fontSize: "0.74rem" }}>{vt?.label} · {y.adet} {vt?.birim}</p>
                 </div>
-                <DelBtn onClick={() => onSil(y.id)} />
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  {onDuzenle && <EditBtn onClick={() => onDuzenle(y)} />}
+                  <DelBtn onClick={() => onSil(y.id)} />
+                </div>
               </div>
               <p style={{ margin: "0 0 0.4rem", fontWeight: 700, fontSize: "1.3rem" }}>{TL2(deger)}</p>
               <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginBottom: "0.5rem", flexWrap: "wrap" }}>
@@ -112,9 +162,9 @@ export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, on
                 {haf !== null && <span style={{ color: haf >= 0 ? C.greenL : C.redL, fontSize: "0.72rem", fontWeight: 600 }}>Hafta {haf >= 0 ? "+" : ""}{haf.toFixed(1)}%</span>}
               </div>
               <Sparkline points={y.gecmis} color={vt?.renk} height={48} width={260} />
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.6rem", fontSize: "0.72rem", color: C.faint }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.6rem", fontSize: "0.72rem", color: C.faint, flexWrap: "wrap", gap: "0.4rem" }}>
                 <span>Alış {TL2(y.alisFiyati)}</span>
-                <span>Güncel {y.guncelFiyat ? TL2(y.guncelFiyat) : "—"}</span>
+                <FiyatGuncelle y={y} setFindata={setFindata} />
               </div>
             </Card>
           );
@@ -124,10 +174,10 @@ export function Yatirimlar({ findata, setFindata, guncelDeger, onEkle, onSil, on
   );
 }
 
-export function YatirimModal({ form, setForm, onClose, onKaydet }) {
+export function YatirimModal({ title = "Yatırım Ekle", form, setForm, onClose, onKaydet }) {
   const vt = VARLIK_TIPLERI.find((v) => v.id === form.tip);
   return (
-    <Modal title="Yatırım Ekle" onClose={onClose}>
+    <Modal title={title} onClose={onClose}>
       <Field label="Varlık Tipi" value={form.tip} onChange={(v) => setForm((f) => ({ ...f, tip: v }))} options={VARLIK_TIPLERI} />
       <Field label="Ad" value={form.ad} onChange={(v) => setForm((f) => ({ ...f, ad: v }))} placeholder="Bitcoin / Gram Altın / THYAO" />
       <Field label="Sembol (fiyat için)" value={form.sembol} onChange={(v) => setForm((f) => ({ ...f, sembol: v }))} placeholder={form.tip === "kripto" ? "BTC, ETH…" : form.tip === "doviz" ? "USD, EUR…" : form.tip === "hisse" ? "THYAO…" : "altın"} />
@@ -140,7 +190,7 @@ export function YatirimModal({ form, setForm, onClose, onKaydet }) {
         </div>
       </div>
       <Field label="Alış Tarihi" type="date" value={form.alisTarihi} onChange={(v) => setForm((f) => ({ ...f, alisTarihi: v }))} />
-      <Btn onClick={onKaydet} style={{ width: "100%", padding: "0.7rem", marginTop: "0.3rem" }}>Yatırımı Ekle</Btn>
+      <Btn onClick={onKaydet} style={{ width: "100%", padding: "0.7rem", marginTop: "0.3rem" }}>Kaydet</Btn>
     </Modal>
   );
 }

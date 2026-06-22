@@ -51,7 +51,7 @@ export function Hane({ users }) {
         <Stat title="Hane Gideri" value={TL(toplamGider)} color={C.red} icon="💸" />
         <Stat title="Hane Dengesi" value={TL(toplamGelir - toplamGider)} subColor={toplamGelir - toplamGider >= 0 ? C.greenL : C.redL} color={C.purple} icon="⚖️" />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+      <div className="fa-grid-2">
         <Card>
           <h3 style={sectionTitle}>Kişi Katkısı</h3>
           {!kisiler.some((k) => k.hgider || k.hgelir) && <p style={{ color: C.faint, fontSize: "0.85rem" }}>Henüz hane işlemi yok.</p>}

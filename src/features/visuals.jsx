@@ -1,7 +1,7 @@
 // ============================================================
 // Görseller: para akışı (Sankey) + harcama ısı haritası
 // ============================================================
-import { C, pageTitle, sectionTitle, PALET } from "../lib/constants.js";
+import { C, sectionTitle, PALET } from "../lib/constants.js";
 import { Card } from "../components/ui.jsx";
 import { Sankey, IsiHaritasi } from "../components/charts.jsx";
 
@@ -20,8 +20,6 @@ export function Gorseller({ findata, toplamGelir }) {
   ];
   return (
     <div>
-      <h2 style={pageTitle}>Görseller</h2>
-      <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1rem" }}>Paranın akışı ve harcama yoğunluğu.</p>
       <Card style={{ marginBottom: "1rem" }}>
         <h3 style={sectionTitle}>🌊 Para Akışı (Sankey)</h3>
         {toplamGelir <= 0 ? <p style={{ color: C.faint, fontSize: "0.85rem" }}>Gelir ekleyince akış çizilir.</p> : <Sankey gelir={toplamGelir} kalemler={kalemler} />}

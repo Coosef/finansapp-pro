@@ -6,7 +6,21 @@ import { C, pageTitle, sectionTitle } from "../lib/constants.js";
 import { TL, buAy, bugun } from "../lib/format.js";
 import { bosVeri } from "../lib/finance.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
-import { Card, Btn } from "../components/ui.jsx";
+import { Card, Btn, SubNav } from "../components/ui.jsx";
+import { IceAktar } from "./importing.jsx";
+
+// Veri sekmesi: İçe Aktar + Rapor & Yedek (alt sekmeli)
+export function Veri(props) {
+  const [alt, setAlt] = useState("ice");
+  return (
+    <div>
+      <h2 style={pageTitle}>Veri</h2>
+      <SubNav value={alt} onChange={setAlt} items={[{ id: "ice", label: "📥 İçe Aktar" }, { id: "rapor", label: "📄 Rapor & Yedek" }]} />
+      {alt === "ice" && <IceAktar findata={props.findata} bildir={props.bildir} ekle={props.ekle} kategoriOgren={props.kategoriOgren} />}
+      {alt === "rapor" && <Rapor {...props} />}
+    </div>
+  );
+}
 
 export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGider, toplamAbonelik, yatirimDeger, yatirimKar, netDeger }) {
   const [rapor, setRapor] = useState(null);
@@ -45,7 +59,7 @@ export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGi
     const ayGider = {};
     findata.giderler.filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
     const katSatir = Object.entries(ayGider).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${k}</td><td style="text-align:right">${TL(v)}</td></tr>`).join("");
-    const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Finans Raporu</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;padding:0 20px}h1{color:#6366F1}.kart{display:inline-block;border:1px solid #ddd;border-radius:10px;padding:14px 18px;margin:6px 8px 6px 0}.kart b{display:block;font-size:1.3rem}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:8px;border-bottom:1px solid #eee;font-size:0.9rem}@media print{.no-print{display:none}}</style></head><body><h1>₺ FinansApp — Aylık Rapor</h1><p>${user.ad} · ${bugun()}</p><div><div class="kart">Net Varlık<b>${TL(netDeger)}</b></div><div class="kart">Toplam Gelir<b style="color:#16A34A">${TL(toplamGelir)}</b></div><div class="kart">Toplam Gider<b style="color:#DC2626">${TL(toplamGider)}</b></div><div class="kart">Yatırım<b style="color:#6366F1">${TL(yatirimDeger)}</b></div></div><h3>Bu Ay Kategori Giderleri (${ay})</h3><table><tr><th style="text-align:left">Kategori</th><th style="text-align:right">Tutar</th></tr>${katSatir || '<tr><td colspan=2>Veri yok</td></tr>'}</table><button class="no-print" onclick="window.print()" style="margin-top:24px;padding:10px 18px;background:#6366F1;color:#fff;border:none;border-radius:8px;cursor:pointer">PDF olarak yazdır / kaydet</button></body></html>`;
+    const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Finans Raporu</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;padding:0 20px}h1{color:#10B981}.kart{display:inline-block;border:1px solid #ddd;border-radius:10px;padding:14px 18px;margin:6px 8px 6px 0}.kart b{display:block;font-size:1.3rem}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:8px;border-bottom:1px solid #eee;font-size:0.9rem}@media print{.no-print{display:none}}</style></head><body><h1>₺ FinansApp — Aylık Rapor</h1><p>${user.ad} · ${bugun()}</p><div><div class="kart">Net Varlık<b>${TL(netDeger)}</b></div><div class="kart">Toplam Gelir<b style="color:#16A34A">${TL(toplamGelir)}</b></div><div class="kart">Toplam Gider<b style="color:#DC2626">${TL(toplamGider)}</b></div><div class="kart">Yatırım<b style="color:#10B981">${TL(yatirimDeger)}</b></div></div><h3>Bu Ay Kategori Giderleri (${ay})</h3><table><tr><th style="text-align:left">Kategori</th><th style="text-align:right">Tutar</th></tr>${katSatir || '<tr><td colspan=2>Veri yok</td></tr>'}</table><button class="no-print" onclick="window.print()" style="margin-top:24px;padding:10px 18px;background:#10B981;color:#fff;border:none;border-radius:8px;cursor:pointer">PDF olarak yazdır / kaydet</button></body></html>`;
     indir(html, `finansapp-rapor-${bugun()}.html`, "text/html");
     bildir("Rapor indirildi — açıp 'PDF olarak yazdır' ile kaydedebilirsin");
   }
@@ -82,7 +96,6 @@ export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGi
   }
   return (
     <div>
-      <h2 style={pageTitle}>Rapor & Yedek</h2>
       <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1.25rem" }}>Dışa aktar, yedekle, PDF rapor al veya AI'dan analiz iste.</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: "1rem", marginBottom: "1.25rem" }}>
         <Card>

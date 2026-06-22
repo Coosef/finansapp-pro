@@ -6,7 +6,7 @@ import { C, sectionTitle, tagStyle, inputStyle, GIDER_KAT } from "../lib/constan
 import { TL, bugun, buAy, aylikEsdeger, sonrakiTarih, kategoriAnahtar, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { Card, Btn, Stat, ProgressBar } from "../components/ui.jsx";
-import { Sparkline, BarChart, DonutDagilim } from "../components/charts.jsx";
+import { Sparkline, BarChart } from "../components/charts.jsx";
 
 function aiHata(e) {
   return e?.name === "AIAnahtarYok" ? e.message : null;
@@ -229,20 +229,14 @@ export function Panel({ findata, ekle, kategoriOgren, guncelDeger, toplamGelir, 
         )}
       </Card>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
-        <Card>
-          <h3 style={sectionTitle}>Aylık Gelir / Gider</h3>
-          <BarChart data={barData} />
-          <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem", fontSize: "0.75rem" }}>
-            <span style={{ color: C.greenL }}>● Gelir</span>
-            <span style={{ color: C.redL }}>● Gider</span>
-          </div>
-        </Card>
-        <Card>
-          <h3 style={sectionTitle}>Portföy Büyümesi</h3>
-          <Sparkline points={portfoyGecmis} color={C.indigoL} height={140} width={300} />
-        </Card>
-      </div>
+      <Card style={{ marginBottom: "1rem" }}>
+        <h3 style={sectionTitle}>Aylık Gelir / Gider</h3>
+        <BarChart data={barData} />
+        <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem", fontSize: "0.75rem" }}>
+          <span style={{ color: C.greenL }}>● Gelir</span>
+          <span style={{ color: C.redL }}>● Gider</span>
+        </div>
+      </Card>
 
       {butceliler.length > 0 && (
         <Card style={{ marginBottom: "1rem" }}>
@@ -264,10 +258,6 @@ export function Panel({ findata, ekle, kategoriOgren, guncelDeger, toplamGelir, 
         </Card>
       )}
 
-      <Card>
-        <h3 style={sectionTitle}>Varlık Dağılımı</h3>
-        <DonutDagilim yatirimlar={findata.yatirimlar} guncelDeger={guncelDeger} />
-      </Card>
     </div>
   );
 }

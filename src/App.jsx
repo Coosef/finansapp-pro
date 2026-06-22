@@ -13,16 +13,13 @@ import { Panel } from "./features/dashboard.jsx";
 import { Asistan } from "./features/assistant.jsx";
 import { Yatirimlar, YatirimModal } from "./features/investments.jsx";
 import { Hesaplar } from "./features/accounts.jsx";
-import { Liste, GiderListe, Abonelikler, IslemModal } from "./features/transactions.jsx";
+import { Islemler, IslemModal } from "./features/transactions.jsx";
 import { Planlama } from "./features/planning.jsx";
 import { Analiz } from "./features/analysis.jsx";
-import { Gorseller } from "./features/visuals.jsx";
 import { Takvim } from "./features/calendar.jsx";
 import { Hane } from "./features/household.jsx";
-import { IceAktar } from "./features/importing.jsx";
-import { Rapor } from "./features/report.jsx";
+import { Veri } from "./features/report.jsx";
 import { Ayarlar } from "./features/settings.jsx";
-import { Kullanicilar } from "./features/users.jsx";
 import { Btn } from "./components/ui.jsx";
 import { TL } from "./lib/format.js";
 import { GELIR_KAT, GIDER_KAT } from "./lib/constants.js";
@@ -139,27 +136,27 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   const [form, setForm] = useState({});
   const [fiyatGuncelleniyor, setFiyatGuncelleniyor] = useState(false);
   const [bildirim, setBildirim] = useState(null);
+  const [daha, setDaha] = useState(false);
   const isAdmin = user.rol === "admin";
-  const accent = findata.ayarlar?.accent || C.indigo;
+  // Eski varsayılan indigo (#6366F1) kayıtlıysa yeni zümrüt'e eşle
+  const savedAccent = findata.ayarlar?.accent;
+  const accent = !savedAccent || savedAccent === "#6366F1" ? "#10B981" : savedAccent;
 
   const TABS = [
-    { id: "panel", label: "📊 Panel" },
-    { id: "asistan", label: "💬 Asistan" },
-    { id: "yatirim", label: "📈 Yatırım" },
-    { id: "hesap", label: "👛 Hesaplar" },
-    { id: "gelir", label: "💰 Gelir" },
-    { id: "gider", label: "💸 Gider" },
-    { id: "abonelik", label: "🔄 Abonelik" },
-    { id: "planlama", label: "🎯 Bütçe & Hedef" },
-    { id: "analiz", label: "🔬 Analiz" },
-    { id: "gorsel", label: "🌊 Görseller" },
-    { id: "takvim", label: "📅 Takvim" },
-    { id: "hane", label: "🏠 Hane" },
-    { id: "ice", label: "📥 İçe Aktar" },
-    { id: "rapor", label: "📄 Rapor" },
-    { id: "ayar", label: "⚙️ Ayarlar" },
-    ...(isAdmin ? [{ id: "kullanici", label: "👥 Kullanıcılar" }] : []),
+    { id: "panel", icon: "📊", label: "Panel" },
+    { id: "asistan", icon: "💬", label: "Asistan" },
+    { id: "islemler", icon: "💳", label: "İşlemler" },
+    { id: "hesap", icon: "👛", label: "Hesaplar" },
+    { id: "yatirim", icon: "📈", label: "Yatırım" },
+    { id: "planlama", icon: "🎯", label: "Bütçe & Hedef" },
+    { id: "analiz", icon: "🔬", label: "Analiz" },
+    { id: "takvim", icon: "📅", label: "Takvim" },
+    { id: "hane", icon: "🏠", label: "Hane" },
+    { id: "veri", icon: "📦", label: "Veri" },
+    { id: "ayar", icon: "⚙️", label: "Ayarlar" },
   ];
+  // Mobil alt menüde gösterilecek ana sekmeler (gerisi "Daha"da)
+  const MOBIL_ANA = ["panel", "islemler", "yatirim", "asistan"];
 
   const guncelDeger = (y) => y.adet * (y.guncelFiyat || y.alisFiyati);
   const toplamGelir = findata.gelirler.reduce((s, x) => s + x.miktar, 0);
@@ -171,9 +168,11 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   const nakit = toplamGelir - toplamGider - toplamAbonelik;
   const netDeger = nakit + yatirimDeger;
 
-  function bildir(msg, tip = "ok") {
-    setBildirim({ msg, tip });
-    setTimeout(() => setBildirim(null), 3500);
+  const bildirimTimer = useRef(null);
+  function bildir(msg, tip = "ok", action = null) {
+    setBildirim({ msg, tip, action });
+    if (bildirimTimer.current) clearTimeout(bildirimTimer.current);
+    bildirimTimer.current = setTimeout(() => setBildirim(null), action ? 6000 : 3500);
   }
   function ekle(tur, kayit) {
     const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler", yatirim: "yatirimlar" };
@@ -187,7 +186,13 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   }
   function sil(tur, id) {
     const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler", yatirim: "yatirimlar" };
+    const kayit = findata[m[tur]].find((x) => x.id === id);
     setFindata((d) => ({ ...d, [m[tur]]: d[m[tur]].filter((x) => x.id !== id) }));
+    bildir("Silindi", "ok", kayit ? { label: "↩ Geri al", onClick: () => { setFindata((d) => ({ ...d, [m[tur]]: [...d[m[tur]], kayit] })); setBildirim(null); } } : null);
+  }
+  function guncelle(tur, id, veri) {
+    const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler", yatirim: "yatirimlar" };
+    setFindata((d) => ({ ...d, [m[tur]]: d[m[tur]].map((x) => (x.id === id ? { ...x, ...veri } : x)) }));
   }
   function kategoriOgren(baslik, kategori) {
     const k = (baslik || "").toLowerCase().trim().split(/\s+/).slice(0, 2).join(" ");
@@ -231,93 +236,158 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
 
   function kaydetIslem(tur) {
     if (!form.baslik || !form.miktar) return;
-    ekle(tur, { baslik: form.baslik, miktar: parseFloat(form.miktar), kategori: form.kategori, tarih: form.tarih, hane: !!form.hane });
+    const veri = { baslik: form.baslik, miktar: parseFloat(form.miktar), kategori: form.kategori, tarih: form.tarih, hane: !!form.hane };
+    if (form._editId) {
+      guncelle(tur, form._editId, veri);
+      kategoriOgren(form.baslik, form.kategori);
+      setModal(null);
+      bildir("Güncellendi");
+      return;
+    }
+    ekle(tur, veri);
     kategoriOgren(form.baslik, form.kategori);
     if (form.tekrarla)
       setFindata((d) => ({ ...d, sablonlar: [...(d.sablonlar || []), { id: uid(), tip: tur, baslik: form.baslik, miktar: parseFloat(form.miktar), kategori: form.kategori, frekans: form.frekans || "aylık", baslangic: form.tarih, sonUretilen: form.tarih, hane: !!form.hane }] }));
     setModal(null);
     bildir(form.tekrarla ? "Eklendi + otomatik tekrara alındı" : "Eklendi");
   }
+  function duzenleIslem(tur, kayit) {
+    setForm({ baslik: kayit.baslik, miktar: String(kayit.miktar), kategori: kayit.kategori, tarih: kayit.tarih, hane: !!kayit.hane, tekrarla: false, _editId: kayit.id });
+    setModal(tur);
+  }
+  function duzenleYatirim(kayit) {
+    setForm({ tip: kayit.tip, ad: kayit.ad, sembol: kayit.sembol, adet: String(kayit.adet), alisFiyati: String(kayit.alisFiyati), alisTarihi: kayit.alisTarihi, _editId: kayit.id });
+    setModal("yatirim");
+  }
+  function kaydetYatirim() {
+    if (!form.ad || !form.adet || !form.alisFiyati) return;
+    const adet = parseFloat(form.adet),
+      af = parseFloat(form.alisFiyati);
+    if (form._editId) {
+      guncelle("yatirim", form._editId, { tip: form.tip, ad: form.ad, sembol: form.sembol || form.ad, adet, alisFiyati: af, alisTarihi: form.alisTarihi });
+      setModal(null);
+      bildir("Yatırım güncellendi");
+      return;
+    }
+    ekle("yatirim", { tip: form.tip, ad: form.ad, sembol: form.sembol || form.ad, adet, alisFiyati: af, alisTarihi: form.alisTarihi, guncelFiyat: af, gecmis: [{ tarih: form.alisTarihi, deger: adet * af }] });
+    setModal(null);
+    bildir("Yatırım eklendi");
+  }
+
+  const netChip = (
+    <div className="fa-networth" style={{ textAlign: "right" }}>
+      <div className="nw-val" style={{ color: netDeger >= 0 ? C.greenL : C.redL }}>{TL(netDeger)}</div>
+      <div className="nw-lbl">net varlık</div>
+      {findata.kurlar && (
+        <div className="nw-fx">
+          ${(netDeger / findata.kurlar.usd).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} · €{(netDeger / findata.kurlar.eur).toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
+        </div>
+      )}
+    </div>
+  );
 
   return (
-    <div style={{ minHeight: "100vh", background: { gece: "#0A0F1E", antrasit: "#0D0D11" }[findata.ayarlar?.tema] || C.bg, fontFamily: F, color: C.text }}>
+    <div className="fa-root" style={{ minHeight: "100vh", background: { gece: "#0A0F1E", antrasit: "#0D0D11" }[findata.ayarlar?.tema] || C.bg, fontFamily: F, color: C.text, "--accent": accent }}>
       {bildirim && (
-        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 2000, background: bildirim.tip === "err" ? "#1F0A0A" : "#0D2718", border: `1px solid ${bildirim.tip === "err" ? "#7F1D1D" : "#166534"}`, color: bildirim.tip === "err" ? C.redL : C.greenL, padding: "0.75rem 1.1rem", borderRadius: "0.6rem", fontSize: "0.85rem", maxWidth: 340, boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
-          {bildirim.msg}
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 2000, background: bildirim.tip === "err" ? "#1F0A0A" : "#0D2718", border: `1px solid ${bildirim.tip === "err" ? "#7F1D1D" : "#166534"}`, color: bildirim.tip === "err" ? C.redL : C.greenL, padding: "0.75rem 1.1rem", borderRadius: "0.6rem", fontSize: "0.85rem", maxWidth: 360, boxShadow: "0 10px 30px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span>{bildirim.msg}</span>
+          {bildirim.action && (
+            <button onClick={bildirim.action.onClick} style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontFamily: F, fontWeight: 700, fontSize: "0.78rem", padding: "0.3rem 0.6rem", borderRadius: "0.45rem", cursor: "pointer", whiteSpace: "nowrap" }}>
+              {bildirim.action.label}
+            </button>
+          )}
         </div>
       )}
 
-      <div style={{ borderBottom: `1px solid ${C.line}`, padding: "1rem 1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card2, flexWrap: "wrap", gap: "0.75rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <div style={{ width: 36, height: 36, borderRadius: "0.6rem", background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.1rem" }}>₺</div>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>FinansApp Pro</h1>
-            <p style={{ margin: 0, fontSize: "0.7rem", color: C.faint }}>{user.ad} · {isAdmin ? "Yönetici" : "Kullanıcı"}</p>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
-          <div style={{ background: netDeger >= 0 ? "#0D2718" : "#1F0A0A", border: `1px solid ${netDeger >= 0 ? "#166534" : "#7F1D1D"}`, borderRadius: "0.6rem", padding: "0.4rem 0.85rem", textAlign: "right" }}>
+      <div className="fa-shell">
+        <aside className="fa-sidebar">
+          <div className="fa-brand">
+            <div className="fa-logo">₺</div>
             <div>
-              <span style={{ color: netDeger >= 0 ? C.greenL : C.redL, fontWeight: 700, fontSize: "0.9rem" }}>{TL(netDeger)}</span>
-              <span style={{ color: C.dimmer, fontSize: "0.68rem", marginLeft: "0.4rem" }}>net varlık</span>
+              <h1 style={{ margin: 0, fontSize: "1rem", fontWeight: 700 }}>FinansApp Pro</h1>
+              <p style={{ margin: 0, fontSize: "0.7rem", color: C.faint }}>{user.ad} · {isAdmin ? "Yönetici" : "Kullanıcı"}</p>
             </div>
-            {findata.kurlar && (
-              <div style={{ color: C.faint, fontSize: "0.65rem", marginTop: 1 }}>
-                ${(netDeger / findata.kurlar.usd).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} · €{(netDeger / findata.kurlar.eur).toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
-              </div>
-            )}
           </div>
-          <Btn variant="ghost" onClick={onLogout} style={{ padding: "0.45rem 0.8rem", fontSize: "0.8rem" }}>Çıkış</Btn>
-        </div>
-      </div>
+          <nav className="fa-navlist">
+            {TABS.map((t) => (
+              <button key={t.id} className={`fa-navbtn ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+                <span className="ico">{t.icon}</span>
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <div className="fa-sidefoot">
+            {netChip}
+            <Btn variant="ghost" onClick={onLogout} style={{ width: "100%" }}>Çıkış</Btn>
+          </div>
+        </aside>
 
-      <div style={{ display: "flex", gap: "0.25rem", padding: "0.85rem 1.5rem 0", borderBottom: `1px solid ${C.line}`, overflowX: "auto" }}>
-        {TABS.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ background: tab === t.id ? accent : "transparent", border: `1px solid ${tab === t.id ? accent : "transparent"}`, color: tab === t.id ? "#fff" : C.dimmer, padding: "0.5rem 0.9rem", borderRadius: "0.5rem 0.5rem 0 0", cursor: "pointer", fontFamily: F, fontWeight: tab === t.id ? 600 : 400, fontSize: "0.8rem", whiteSpace: "nowrap", marginBottom: -1 }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+        <main className="fa-main">
+          <header className="fa-topbar">
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              <div className="fa-logo" style={{ width: 32, height: 32, fontSize: "1rem" }}>₺</div>
+              <h1 style={{ margin: 0, fontSize: "1rem", fontWeight: 700 }}>FinansApp</h1>
+            </div>
+            {netChip}
+          </header>
 
-      <div style={{ padding: "1.5rem", maxWidth: 1150, margin: "0 auto" }}>
+          <div className="fa-content">
+            <div className="fa-page" key={tab}>
         {tab === "panel" && <Panel findata={findata} setFindata={setFindata} ekle={ekle} kategoriOgren={kategoriOgren} guncelDeger={guncelDeger} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} yatirimMaliyet={yatirimMaliyet} nakit={nakit} netDeger={netDeger} bildir={bildir} />}
         {tab === "asistan" && <Asistan findata={findata} guncelDeger={guncelDeger} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} netDeger={netDeger} bildir={bildir} />}
-        {tab === "yatirim" && <Yatirimlar findata={findata} setFindata={setFindata} guncelDeger={guncelDeger} onEkle={() => { setForm({ tip: "kripto", ad: "", sembol: "", adet: "", alisFiyati: "", alisTarihi: bugun() }); setModal("yatirim"); }} onSil={(id) => sil("yatirim", id)} onGuncelle={tumFiyatlariGuncelle} guncelleniyor={fiyatGuncelleniyor} />}
+        {tab === "islemler" && <Islemler findata={findata} bildir={bildir} onSil={sil} onDuzenle={duzenleIslem} onGelirEkle={() => { setForm({ baslik: "", miktar: "", kategori: "Maaş", tarih: bugun(), tekrarla: false, hane: false }); setModal("gelir"); }} onGiderEkle={() => { setForm({ baslik: "", miktar: "", kategori: "Market", tarih: bugun(), tekrarla: false, hane: false }); setModal("gider"); }} onAbonelikEkle={() => { setForm({ baslik: "", miktar: "", kategori: "Eğlence", tarih: bugun() }); setModal("abonelik"); }} />}
         {tab === "hesap" && <Hesaplar findata={findata} setFindata={setFindata} bildir={bildir} />}
-        {tab === "gelir" && <Liste baslik="Gelirler" renk={C.greenL} toplam={toplamGelir} kayitlar={findata.gelirler} onEkle={() => { setForm({ baslik: "", miktar: "", kategori: "Maaş", tarih: bugun(), tekrarla: false, hane: false }); setModal("gelir"); }} onSil={(id) => sil("gelir", id)} altBilgi={(x) => `${x.kategori} · ${x.tarih}`} />}
-        {tab === "gider" && <GiderListe findata={findata} onEkle={() => { setForm({ baslik: "", miktar: "", kategori: "Market", tarih: bugun(), tekrarla: false, hane: false }); setModal("gider"); }} onSil={(id) => sil("gider", id)} />}
-        {tab === "abonelik" && <Abonelikler findata={findata} bildir={bildir} onEkle={() => { setForm({ baslik: "", miktar: "", kategori: "Eğlence", tarih: bugun() }); setModal("abonelik"); }} onSil={(id) => sil("abonelik", id)} />}
+        {tab === "yatirim" && <Yatirimlar findata={findata} setFindata={setFindata} guncelDeger={guncelDeger} onEkle={() => { setForm({ tip: "kripto", ad: "", sembol: "", adet: "", alisFiyati: "", alisTarihi: bugun() }); setModal("yatirim"); }} onSil={(id) => sil("yatirim", id)} onDuzenle={duzenleYatirim} onGuncelle={tumFiyatlariGuncelle} guncelleniyor={fiyatGuncelleniyor} />}
         {tab === "planlama" && <Planlama findata={findata} setFindata={setFindata} bildir={bildir} />}
-        {tab === "analiz" && <Analiz findata={findata} guncelDeger={guncelDeger} />}
-        {tab === "gorsel" && <Gorseller findata={findata} guncelDeger={guncelDeger} toplamGelir={toplamGelir} netDeger={netDeger} />}
+        {tab === "analiz" && <Analiz findata={findata} toplamGelir={toplamGelir} />}
         {tab === "takvim" && <Takvim findata={findata} />}
         {tab === "hane" && <Hane users={users} />}
-        {tab === "ice" && <IceAktar findata={findata} bildir={bildir} ekle={ekle} kategoriOgren={kategoriOgren} />}
-        {tab === "rapor" && <Rapor findata={findata} setFindata={setFindata} user={user} bildir={bildir} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} netDeger={netDeger} guncelDeger={guncelDeger} />}
-        {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} />}
-        {tab === "kullanici" && isAdmin && <Kullanicilar users={users} onChange={onUsersChange} bildir={bildir} mevcut={user} />}
+        {tab === "veri" && <Veri findata={findata} setFindata={setFindata} user={user} bildir={bildir} ekle={ekle} kategoriOgren={kategoriOgren} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} netDeger={netDeger} guncelDeger={guncelDeger} />}
+        {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} users={users} onUsersChange={onUsersChange} />}
+            </div>
+          </div>
+        </main>
       </div>
 
-      {modal === "yatirim" && (
-        <YatirimModal
-          form={form}
-          setForm={setForm}
-          onClose={() => setModal(null)}
-          onKaydet={() => {
-            if (!form.ad || !form.adet || !form.alisFiyati) return;
-            const adet = parseFloat(form.adet),
-              af = parseFloat(form.alisFiyati);
-            ekle("yatirim", { tip: form.tip, ad: form.ad, sembol: form.sembol || form.ad, adet, alisFiyati: af, alisTarihi: form.alisTarihi, guncelFiyat: af, gecmis: [{ tarih: form.alisTarihi, deger: adet * af }] });
-            setModal(null);
-            bildir("Yatırım eklendi");
-          }}
-        />
+      <nav className="fa-bottomnav">
+        {MOBIL_ANA.map((id) => {
+          const t = TABS.find((x) => x.id === id);
+          return (
+            <button key={id} className={`fa-tabbtn ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>
+              <span className="ico">{t.icon}</span>
+              {t.label}
+            </button>
+          );
+        })}
+        <button className={`fa-tabbtn ${!MOBIL_ANA.includes(tab) ? "active" : ""}`} onClick={() => setDaha(true)}>
+          <span className="ico">⋯</span>
+          Daha
+        </button>
+      </nav>
+
+      {daha && (
+        <div className="fa-sheet-overlay" onClick={() => setDaha(false)}>
+          <div className="fa-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="fa-sheet-grip" />
+            <div className="fa-sheet-grid">
+              {TABS.map((t) => (
+                <button key={t.id} className={`fa-sheet-item ${tab === t.id ? "active" : ""}`} onClick={() => { setTab(t.id); setDaha(false); }}>
+                  <span className="ico">{t.icon}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <Btn variant="ghost" onClick={() => { setDaha(false); onLogout(); }} style={{ width: "100%", marginTop: "1rem" }}>Çıkış Yap</Btn>
+          </div>
+        </div>
       )}
-      {modal === "gelir" && <IslemModal title="Gelir Ekle" form={form} setForm={setForm} kategoriler={GELIR_KAT} variant="green" hafiza={findata.kategoriHafiza} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gelir")} />}
-      {modal === "gider" && <IslemModal title="Gider Ekle" form={form} setForm={setForm} kategoriler={GIDER_KAT} variant="red" hafiza={findata.kategoriHafiza} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gider")} />}
+
+      {modal === "yatirim" && <YatirimModal title={form._editId ? "Yatırımı Düzenle" : "Yatırım Ekle"} form={form} setForm={setForm} onClose={() => setModal(null)} onKaydet={kaydetYatirim} />}
+      {modal === "gelir" && <IslemModal title={form._editId ? "Gelir Düzenle" : "Gelir Ekle"} form={form} setForm={setForm} kategoriler={GELIR_KAT} variant="green" hafiza={findata.kategoriHafiza} noTekrar={!!form._editId} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gelir")} />}
+      {modal === "gider" && <IslemModal title={form._editId ? "Gider Düzenle" : "Gider Ekle"} form={form} setForm={setForm} kategoriler={GIDER_KAT} variant="red" hafiza={findata.kategoriHafiza} noTekrar={!!form._editId} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gider")} />}
       {modal === "abonelik" && (
         <IslemModal
-          title="Abonelik Ekle"
+          title={form._editId ? "Abonelik Düzenle" : "Abonelik Ekle"}
           form={form}
           setForm={setForm}
           kategoriler={["Eğlence", "Müzik", "Yazılım", "Sağlık", "Eğitim", "Haberler", "Diğer"]}
@@ -326,11 +396,7 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
           noTekrar
           noHane
           onClose={() => setModal(null)}
-          onKaydet={() => {
-            if (!form.baslik || !form.miktar) return;
-            ekle("abonelik", { baslik: form.baslik, miktar: parseFloat(form.miktar), kategori: form.kategori, tarih: form.tarih });
-            setModal(null);
-          }}
+          onKaydet={() => kaydetIslem("abonelik")}
         />
       )}
     </div>

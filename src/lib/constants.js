@@ -17,9 +17,9 @@ export const C = {
   red: "#EF4444",
   redL: "#F87171",
   amber: "#F59E0B",
-  indigo: "#6366F1",
-  indigoL: "#818CF8",
-  purple: "#8B5CF6",
+  indigo: "#10B981",
+  indigoL: "#34D399",
+  purple: "#EAB308",
   cyan: "#06B6D4",
 };
 
@@ -74,8 +74,8 @@ export const tagStyle = (col) => ({
 });
 
 export const PALET = [
-  "#6366F1", "#EF4444", "#F59E0B", "#22C55E", "#06B6D4", "#8B5CF6",
-  "#EC4899", "#14B8A6", "#F97316", "#A855F7", "#84CC16",
+  "#10B981", "#EAB308", "#06B6D4", "#EF4444", "#F59E0B", "#14B8A6",
+  "#EC4899", "#8B5CF6", "#F97316", "#84CC16", "#A855F7",
 ];
 
 export const AY_ADI = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"];
@@ -112,10 +112,12 @@ export const HESAP_TIP = [
 ];
 
 export const ACCENT_SECENEK = [
-  { ad: "Indigo", renk: "#6366F1" },
-  { ad: "Mor", renk: "#8B5CF6" },
+  { ad: "Zümrüt", renk: "#10B981" },
+  { ad: "Altın", renk: "#EAB308" },
+  { ad: "Turkuaz", renk: "#14B8A6" },
   { ad: "Camgöbeği", renk: "#06B6D4" },
-  { ad: "Yeşil", renk: "#22C55E" },
+  { ad: "Lime", renk: "#84CC16" },
   { ad: "Amber", renk: "#F59E0B" },
+  { ad: "Mor", renk: "#8B5CF6" },
   { ad: "Pembe", renk: "#EC4899" },
 ];

@@ -14,7 +14,7 @@ export const bosVeri = () => ({
   hedefler: [],
   sablonlar: [],
   hedefDagilim: {},
-  ayarlar: { enflasyon: 50, pin: null, tema: "koyu", accent: "#6366F1", kuruldu: false, apiKey: "" },
+  ayarlar: { enflasyon: 50, pin: null, tema: "koyu", accent: "#10B981", kuruldu: false, apiKey: "" },
   kategoriHafiza: {},
   kurlar: null,
   hesaplar: [],

@@ -28,6 +28,12 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   function bakiye(id, val) {
     setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, bakiye: parseFloat(val) || 0 } : h)) }));
   }
+  function adGuncelle(id, val) {
+    setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, ad: val } : h)) }));
+  }
+  function tipGuncelle(id, val) {
+    setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, tip: val } : h)) }));
+  }
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.6rem" }}>
@@ -55,16 +61,15 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           const ht = HESAP_TIP.find((t) => t.id === h.tip);
           return (
             <Card key={h.id} accent={ht?.renk}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span style={{ fontSize: "1.4rem" }}>{ht?.icon}</span>
-                  <div>
-                    <p style={{ margin: 0, fontWeight: 700, fontSize: "0.95rem" }}>{h.ad}</p>
-                    <p style={{ margin: 0, color: C.dimmer, fontSize: "0.72rem" }}>{ht?.label}</p>
-                  </div>
-                </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem" }}>
+                <span style={{ fontSize: "1.5rem" }}>{ht?.icon}</span>
                 <DelBtn onClick={() => sil(h.id)} />
               </div>
+              <input value={h.ad} onChange={(e) => adGuncelle(h.id, e.target.value)} placeholder="Hesap adı" style={{ ...inputStyle, fontWeight: 600, marginBottom: "0.5rem" }} />
+              <select value={h.tip} onChange={(e) => tipGuncelle(h.id, e.target.value)} style={{ ...inputStyle, marginBottom: "0.5rem", fontSize: "0.82rem" }}>
+                {HESAP_TIP.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+              </select>
+              <label style={{ display: "block", color: C.dimmer, fontSize: "0.7rem", marginBottom: "0.2rem" }}>{h.tip === "kart" ? "Borç (₺)" : "Bakiye (₺)"}</label>
               <input type="number" value={h.bakiye} onChange={(e) => bakiye(h.id, e.target.value)} style={{ ...inputStyle, fontSize: "1.1rem", fontWeight: 700, color: h.tip === "kart" ? C.redL : C.text }} />
             </Card>
           );

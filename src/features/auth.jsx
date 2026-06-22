@@ -17,7 +17,7 @@ export function Login({ onLogin }) {
     <div style={{ minHeight: "100vh", background: `radial-gradient(circle at 30% 20%, #1A1530, ${C.bg} 60%)`, fontFamily: F, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
       <div style={{ width: "100%", maxWidth: 380 }}>
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <div style={{ width: 56, height: 56, borderRadius: "1rem", background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", margin: "0 auto 1rem" }}>₺</div>
+          <div style={{ width: 56, height: 56, borderRadius: "1rem", background: "linear-gradient(135deg,#10B981,#F59E0B)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", margin: "0 auto 1rem" }}>₺</div>
           <h1 style={{ color: C.text, margin: "0 0 0.3rem", fontSize: "1.5rem", fontWeight: 800 }}>FinansApp Pro</h1>
           <p style={{ color: C.dimmer, margin: 0, fontSize: "0.85rem" }}>Çok kullanıcılı finans yönetimi</p>
         </div>
@@ -83,7 +83,7 @@ export function Onboarding({ user, setFindata }) {
   const [gelir, setGelir] = useState("");
   const [bakiye, setBakiye] = useState("");
   const [enf, setEnf] = useState("50");
-  const [accent, setAccent] = useState("#6366F1");
+  const [accent, setAccent] = useState("#10B981");
   function atla() {
     setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), kuruldu: true } }));
   }

@@ -7,8 +7,9 @@ import { C, pageTitle, sectionTitle, inputStyle, rowStyle, GIDER_KAT, ACCENT_SEC
 import { uid, TL2 } from "../lib/format.js";
 import { kurCek, MODEL_SECENEK, aiHazir } from "../lib/ai.js";
 import { Card, Btn, DelBtn, Field } from "../components/ui.jsx";
+import { Kullanicilar } from "./users.jsx";
 
-export function Ayarlar({ findata, setFindata, bildir }) {
+export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChange }) {
   const [pin, setPin] = useState("");
   const [enf, setEnf] = useState(String(findata.ayarlar?.enflasyon ?? 50));
   const [kurBekle, setKurBekle] = useState(false);
@@ -93,6 +94,12 @@ export function Ayarlar({ findata, setFindata, bildir }) {
         <KurallarKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <TemaKart findata={findata} setFindata={setFindata} />
       </div>
+
+      {user?.rol === "admin" && users && (
+        <div style={{ marginTop: "1.75rem", paddingTop: "1.5rem", borderTop: `1px solid ${C.line}` }}>
+          <Kullanicilar users={users} onChange={onUsersChange} bildir={bildir} mevcut={user} />
+        </div>
+      )}
     </div>
   );
 }
@@ -178,7 +185,7 @@ function KurallarKart({ findata, setFindata, bildir }) {
 
 function TemaKart({ findata, setFindata }) {
   const tema = findata.ayarlar?.tema || "koyu";
-  const accent = findata.ayarlar?.accent || "#6366F1";
+  const accent = findata.ayarlar?.accent || "#10B981";
   const setAyar = (k, v) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), [k]: v } }));
   return (
     <Card accent={accent} style={{ gridColumn: "1 / -1" }}>

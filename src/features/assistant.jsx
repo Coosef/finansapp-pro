@@ -56,7 +56,7 @@ export function Asistan({ findata, guncelDeger, toplamGelir, toplamGider, toplam
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div ref={kaydirRef} style={{ height: 420, overflowY: "auto", padding: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {mesajlar.map((m, i) => (
-            <div key={i} style={{ alignSelf: m.rol === "user" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.rol === "user" ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : C.card2, color: m.rol === "user" ? "#fff" : C.text, border: m.rol === "user" ? "none" : `1px solid ${C.line}`, padding: "0.7rem 0.95rem", borderRadius: m.rol === "user" ? "1rem 1rem 0.2rem 1rem" : "1rem 1rem 1rem 0.2rem", fontSize: "0.88rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+            <div key={i} style={{ alignSelf: m.rol === "user" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.rol === "user" ? "linear-gradient(135deg,#10B981,#059669)" : C.card2, color: m.rol === "user" ? "#fff" : C.text, border: m.rol === "user" ? "none" : `1px solid ${C.line}`, padding: "0.7rem 0.95rem", borderRadius: m.rol === "user" ? "1rem 1rem 0.2rem 1rem" : "1rem 1rem 1rem 0.2rem", fontSize: "0.88rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
               {m.metin}
             </div>
           ))}

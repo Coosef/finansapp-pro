@@ -2,7 +2,7 @@
 // İçe Aktar: fiş tarama (görsel OCR) + banka ekstresi (PDF/CSV/görsel)
 // ============================================================
 import { useState, useRef } from "react";
-import { C, pageTitle, tagStyle, sectionTitle } from "../lib/constants.js";
+import { C, tagStyle, sectionTitle } from "../lib/constants.js";
 import { TL, bugun, fileToBase64, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { Card, Btn } from "../components/ui.jsx";
@@ -115,7 +115,6 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
 
   return (
     <div>
-      <h2 style={pageTitle}>İçe Aktar</h2>
       <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1.25rem" }}>
         Fiş veya ekstre yükleyin; AI okur, kategoriler, tekrarları işaretler.
         {!aiHazir() && <span style={{ color: C.amber }}> (AI okuma için Ayarlar'dan anahtar gir.)</span>}

@@ -4,21 +4,18 @@
 import { useState } from "react";
 import { C, pageTitle, sectionTitle } from "../lib/constants.js";
 import { TL } from "../lib/format.js";
-import { Card, Btn, Stat, Field } from "../components/ui.jsx";
+import { Card, Btn, Stat, Field, SubNav } from "../components/ui.jsx";
 import { Sparkline } from "../components/charts.jsx";
+import { Gorseller } from "./visuals.jsx";
 
-export function Analiz({ findata }) {
+export function Analiz({ findata, toplamGelir }) {
   const [alt, setAlt] = useState("karsilastir");
   return (
     <div>
       <h2 style={pageTitle}>Analiz</h2>
-      <div style={{ display: "flex", gap: "0.5rem", margin: "0.75rem 0 1.25rem", flexWrap: "wrap" }}>
-        <Btn variant={alt === "karsilastir" ? "primary" : "ghost"} onClick={() => setAlt("karsilastir")}>📊 Dönem Karşılaştırma</Btn>
-        <Btn variant={alt === "birikim" ? "primary" : "ghost"} onClick={() => setAlt("birikim")}>💰 Birikim Simülasyonu</Btn>
-        <Btn variant={alt === "borc" ? "primary" : "ghost"} onClick={() => setAlt("borc")}>🏦 Borç Hesaplayıcı</Btn>
-        <Btn variant={alt === "enflasyon" ? "primary" : "ghost"} onClick={() => setAlt("enflasyon")}>🔥 Enflasyon Aşındırma</Btn>
-      </div>
+      <SubNav value={alt} onChange={setAlt} items={[{ id: "karsilastir", label: "📊 Karşılaştırma" }, { id: "gorsel", label: "🌊 Görseller" }, { id: "birikim", label: "💰 Birikim" }, { id: "borc", label: "🏦 Borç" }, { id: "enflasyon", label: "🔥 Enflasyon" }]} />
       {alt === "karsilastir" && <DonemKarsilastir findata={findata} />}
+      {alt === "gorsel" && <Gorseller findata={findata} toplamGelir={toplamGelir} />}
       {alt === "birikim" && <BirikimSim />}
       {alt === "borc" && <BorcHesap />}
       {alt === "enflasyon" && <EnflasyonAsindirma findata={findata} />}

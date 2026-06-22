@@ -15,29 +15,32 @@ Yapay zekâ özellikleri (asistan, fiş/ekstre okuma, doğal dil giriş, içgör
 
 ---
 
-## 2. Sekmeler & Özellikler
+## 2. Sekmeler & Özellikler (11 üst sekme)
+
+İlgili ekranlar birleştirildi; bazıları içinde **alt sekmeli** (segmented `SubNav`) gezinme var.
 
 | Sekme | Açıklama |
 |------|----------|
-| 📊 **Panel** | Hızlı ekle (doğal dil + ses), 4 özet kart, acil fon kapsamı, net varlık geçmişi, nakit akış tahmini, yaklaşan ödemeler, olağandışı harcama tespiti, AI içgörü, aylık gelir/gider grafiği, portföy büyümesi, bütçe durumu, varlık dağılımı |
+| 📊 **Panel** | Hızlı ekle (doğal dil + ses), 4 özet kart, acil fon kapsamı, net varlık geçmişi, nakit akış tahmini, yaklaşan ödemeler, olağandışı harcama tespiti, AI içgörü, aylık gelir/gider grafiği, bütçe durumu *(sadeleştirildi: portföy/varlık görselleri Yatırım'a taşındı)* |
 | 💬 **Asistan** | Verilere bakarak cevap veren sohbet botu (AI) |
-| 📈 **Yatırım** | Kripto/altın/döviz/hisse/fon/BES; canlı fiyat güncelleme, nominal & reel (enflasyon düzeltmeli) K/Z, günlük/haftalık değişim, hedef dağılım vs gerçek, sparkline geçmiş |
+| 💳 **İşlemler** | *Alt sekmeli:* **Gider** (fiş kalemleri, kaynak etiketleri) · **Gelir** · **Abonelik** (+ AI tasarruf denetimi) |
 | 👛 **Hesaplar** | Nakit/banka/kredi kartı/birikim hesapları; varlık-borç-net özeti |
-| 💰 **Gelir** | Gelir listesi + ekleme (kategori, tekrar, hane) |
-| 💸 **Gider** | Gider listesi; fiş kalemlerini açma, kaynak etiketleri (fiş/ekstre/otomatik) |
-| 🔄 **Abonelik** | Abonelikler + AI denetimi (tasarruf önerisi) |
-| 🎯 **Bütçe & Hedef** | Kategori bütçeleri, zarf bütçe, hedefler (birikim/borç), tekrarlayanlar, rozetler + tasarruf meydan okumaları |
-| 🔬 **Analiz** | Dönem karşılaştırma, birikim simülasyonu (bileşik getiri), borç ödeme hesaplayıcı, enflasyon aşındırma |
-| 🌊 **Görseller** | Para akışı (Sankey diyagramı) + harcama ısı haritası |
+| 📈 **Yatırım** | Kripto/altın/döviz/hisse/fon/BES; canlı fiyat, nominal & reel (enflasyon düzeltmeli) K/Z, günlük/haftalık değişim, hedef dağılım, **portföy büyümesi + varlık dağılımı** (Panel'den taşındı) |
+| 🎯 **Bütçe & Hedef** | *Alt sekmeli:* kategori bütçeleri · zarf bütçe · hedefler (birikim/borç) · tekrarlayanlar · rozetler + tasarruf meydan okumaları |
+| 🔬 **Analiz** | *Alt sekmeli:* dönem karşılaştırma · **görseller** (Sankey + ısı haritası) · birikim simülasyonu · borç hesaplayıcı · enflasyon aşındırma |
 | 📅 **Takvim** | Aylık takvim; gün bazında gelir/gider/abonelik |
 | 🏠 **Hane** | "Hane" işaretli tüm kullanıcı işlemlerini birleştiren ortak bütçe |
-| 📥 **İçe Aktar** | Fiş fotoğrafı (OCR) ve banka ekstresi (PDF/CSV/görsel) — AI okur, kategoriler, tekrarları işaretler |
-| 📄 **Rapor** | CSV (Excel), PDF (yazdırılabilir HTML), JSON yedek/geri yükle, AI aylık rapor |
-| ⚙️ **Ayarlar** | PIN kilidi, enflasyon oranı, döviz kuru çekme, kategori hafızası, otomatik kurallar, tema/renk, **AI anahtarı + model seçimi** |
-| 👥 **Kullanıcılar** | (Admin) kullanıcı ekle/sil/rol değiştir |
+| 📦 **Veri** | *Alt sekmeli:* **İçe Aktar** (fiş/ekstre OCR) · **Rapor & Yedek** (CSV, PDF, JSON yedek/geri yükle, AI rapor) |
+| ⚙️ **Ayarlar** | PIN, enflasyon, döviz kuru, kategori hafızası, otomatik kurallar, tema/renk, **AI anahtarı + model**; admin için en altta **Kullanıcı Yönetimi** |
 
-**Diğer:** Onboarding sihirbazı, 4 haneli PIN kilidi, çoklu tema (koyu/gece/antrasit),
-6 vurgu rengi, kategori hafızası (öğrenen otomatik kategori önerisi).
+**Diğer:** Onboarding sihirbazı, 4 haneli PIN kilidi, çoklu arka plan tonu (koyu/gece/antrasit),
+8 vurgu rengi, kategori hafızası (öğrenen otomatik kategori önerisi).
+
+### Tasarım & Tema
+- **Renk:** Zümrüt & Altın — marka zümrüt yeşili (#10B981), vurgu altın (#EAB308). Eski indigo
+  kayıtlı accent otomatik zümrüt'e eşlenir.
+- **Stil:** Koyu + camsı (glassmorphism) kartlar, accent'e göre arka plan parıltısı, akıcı geçiş/animasyonlar.
+- **Gezinme:** Masaüstünde sol kenar menü; mobilde üst bar + sabit alt sekme çubuğu (Panel/İşlemler/Yatırım/Asistan/Daha) + "Daha" alt sayfası. `prefers-reduced-motion` desteklenir.
 
 ---
 

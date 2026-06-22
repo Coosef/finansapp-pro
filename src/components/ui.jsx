@@ -31,10 +31,10 @@ export function Toggle({ label, checked, onChange }) {
   );
 }
 
-export function Card({ children, style = {}, accent }) {
+export function Card({ children, style = {}, accent, className = "" }) {
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: "1rem", padding: "1.4rem", position: "relative", overflow: "hidden", ...style }}>
-      {accent && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: accent }} />}
+    <div className={`fa-card ${className}`.trim()} style={style}>
+      {accent && <div className="fa-card-accent" style={{ background: accent }} />}
       {children}
     </div>
   );
@@ -42,23 +42,36 @@ export function Card({ children, style = {}, accent }) {
 
 export function Btn({ children, onClick, variant = "primary", style = {}, disabled }) {
   const v = {
-    primary: { background: "linear-gradient(135deg,#6366F1,#8B5CF6)", color: "#fff" },
+    primary: { background: "linear-gradient(135deg,#10B981,#059669)", color: "#fff" },
     green: { background: "linear-gradient(135deg,#22C55E,#16A34A)", color: "#fff" },
     red: { background: "linear-gradient(135deg,#EF4444,#B91C1C)", color: "#fff" },
     amber: { background: "linear-gradient(135deg,#F59E0B,#D97706)", color: "#fff" },
     ghost: { background: "#1A1D27", color: C.dim, border: `1px solid ${C.line2}` },
   };
   return (
-    <button onClick={onClick} disabled={disabled} style={{ border: "none", padding: "0.6rem 1.1rem", borderRadius: "0.6rem", cursor: disabled ? "not-allowed" : "pointer", fontFamily: F, fontWeight: 600, fontSize: "0.85rem", opacity: disabled ? 0.5 : 1, ...v[variant], ...style }}>
+    <button className="fa-btn" onClick={onClick} disabled={disabled} style={{ border: "none", padding: "0.6rem 1.1rem", borderRadius: "0.6rem", cursor: disabled ? "not-allowed" : "pointer", fontFamily: F, fontWeight: 600, fontSize: "0.85rem", opacity: disabled ? 0.5 : 1, ...v[variant], ...style }}>
       {children}
     </button>
   );
 }
 
+// Ekranlar arası tutarlı alt-sekme (segmented pill) gezinmesi
+export function SubNav({ items, value, onChange }) {
+  return (
+    <div className="fa-subnav">
+      {items.map((it) => (
+        <button key={it.id} className={`fa-subnav-btn ${value === it.id ? "active" : ""}`} onClick={() => onChange(it.id)}>
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Modal({ title, onClose, children, wide }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", overflow: "auto" }}>
-      <div style={{ background: C.card, border: `1px solid ${C.line2}`, borderRadius: "1rem", padding: "1.75rem", width: "100%", maxWidth: wide ? 640 : 440, maxHeight: "90vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.6)" }}>
+    <div className="fa-modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", overflow: "auto" }}>
+      <div className="fa-modal" style={{ background: C.card, border: `1px solid ${C.line2}`, borderRadius: "1rem", padding: "1.75rem", width: "100%", maxWidth: wide ? 640 : 440, maxHeight: "90vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.6)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
           <h3 style={{ color: C.text, fontFamily: F, fontSize: "1.1rem", fontWeight: 600, margin: 0 }}>{title}</h3>
           <button onClick={onClose} style={{ background: "#1E2130", border: "none", color: C.dim, width: 30, height: 30, borderRadius: "50%", cursor: "pointer" }}>✕</button>
@@ -81,7 +94,7 @@ export function ProgressBar({ value, max, color, height = 8 }) {
 
 export function Stat({ title, value, sub, subColor, color, icon }) {
   return (
-    <Card accent={color}>
+    <Card accent={color} className="fa-stat">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <p style={{ color: C.dimmer, fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 0.5rem" }}>{title}</p>
@@ -96,8 +109,16 @@ export function Stat({ title, value, sub, subColor, color, icon }) {
 
 export function DelBtn({ onClick }) {
   return (
-    <button onClick={onClick} style={{ background: "#1E1525", border: "1px solid #3D1A2E", color: C.redL, width: 28, height: 28, borderRadius: "0.4rem", cursor: "pointer", fontSize: "0.78rem", flexShrink: 0 }}>
+    <button className="fa-btn" onClick={onClick} style={{ background: "#1E1525", border: "1px solid #3D1A2E", color: C.redL, width: 28, height: 28, borderRadius: "0.4rem", cursor: "pointer", fontSize: "0.78rem", flexShrink: 0 }}>
       ✕
+    </button>
+  );
+}
+
+export function EditBtn({ onClick }) {
+  return (
+    <button className="fa-btn" onClick={onClick} title="Düzenle" style={{ background: "#10241A", border: "1px solid #1E3A2C", color: C.greenL, width: 28, height: 28, borderRadius: "0.4rem", cursor: "pointer", fontSize: "0.8rem", flexShrink: 0 }}>
+      ✎
     </button>
   );
 }

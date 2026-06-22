@@ -6,20 +6,14 @@ import { useState } from "react";
 import { C, pageTitle, sectionTitle, inputStyle, rowStyle, tagStyle, GIDER_KAT } from "../lib/constants.js";
 import { uid, TL, buAy, bugun } from "../lib/format.js";
 import { rozetleriHesapla } from "../lib/finance.js";
-import { Card, Btn, ProgressBar, DelBtn, Bos, Field } from "../components/ui.jsx";
+import { Card, Btn, ProgressBar, DelBtn, Bos, Field, SubNav } from "../components/ui.jsx";
 
 export function Planlama({ findata, setFindata, bildir }) {
   const [alt, setAlt] = useState("butce");
   return (
     <div>
       <h2 style={pageTitle}>Bütçe & Hedef</h2>
-      <div style={{ display: "flex", gap: "0.5rem", margin: "0.75rem 0 1.25rem", flexWrap: "wrap" }}>
-        <Btn variant={alt === "butce" ? "primary" : "ghost"} onClick={() => setAlt("butce")}>📊 Kategori Bütçeleri</Btn>
-        <Btn variant={alt === "zarf" ? "primary" : "ghost"} onClick={() => setAlt("zarf")}>✉️ Zarf Bütçe</Btn>
-        <Btn variant={alt === "hedef" ? "primary" : "ghost"} onClick={() => setAlt("hedef")}>🎯 Hedefler</Btn>
-        <Btn variant={alt === "tekrar" ? "primary" : "ghost"} onClick={() => setAlt("tekrar")}>🔁 Tekrarlayanlar</Btn>
-        <Btn variant={alt === "basarim" ? "primary" : "ghost"} onClick={() => setAlt("basarim")}>🏆 Başarımlar</Btn>
-      </div>
+      <SubNav value={alt} onChange={setAlt} items={[{ id: "butce", label: "📊 Kategori Bütçeleri" }, { id: "zarf", label: "✉️ Zarf Bütçe" }, { id: "hedef", label: "🎯 Hedefler" }, { id: "tekrar", label: "🔁 Tekrarlayanlar" }, { id: "basarim", label: "🏆 Başarımlar" }]} />
       {alt === "butce" && <Butceler findata={findata} setFindata={setFindata} />}
       {alt === "zarf" && <Zarflar findata={findata} setFindata={setFindata} />}
       {alt === "hedef" && <Hedefler findata={findata} setFindata={setFindata} bildir={bildir} />}
@@ -123,7 +117,7 @@ function Hedefler({ findata, setFindata, bildir }) {
     <div>
       <Card style={{ marginBottom: "1.25rem" }}>
         <h3 style={sectionTitle}>Yeni Hedef</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+        <div className="fa-grid-2">
           <Field label="Ad" value={form.ad} onChange={(v) => setForm((f) => ({ ...f, ad: v }))} placeholder="Acil fon / Araba kredisi" />
           <Field label="Tür" value={form.tip} onChange={(v) => setForm((f) => ({ ...f, tip: v }))} options={[{ id: "birikim", label: "Birikim" }, { id: "borc", label: "Borç Ödeme" }]} />
           <Field label="Hedef Tutar (₺)" type="number" value={form.hedefTutar} onChange={(v) => setForm((f) => ({ ...f, hedefTutar: v }))} />
