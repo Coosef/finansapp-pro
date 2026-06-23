@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula } from "./finance.js";
 
 describe("bosVeri", () => {
   it("beklenen alanları içerir", () => {
@@ -75,5 +75,47 @@ describe("etkin kategoriler", () => {
   });
   it("özel kategoriler tanımlıysa onları döner", () => {
     expect(giderKategorileri({ kategoriler: { gider: ["A", "B"] } })).toEqual(["A", "B"]);
+  });
+});
+
+describe("hesapDelta", () => {
+  it("normal hesap: gelir +, gider −", () => {
+    expect(hesapDelta("gelir", 100, "banka")).toBe(100);
+    expect(hesapDelta("gider", 100, "banka")).toBe(-100);
+  });
+  it("kredi kartı: gider borcu artırır, gelir azaltır", () => {
+    expect(hesapDelta("gider", 100, "kart")).toBe(100);
+    expect(hesapDelta("gelir", 100, "kart")).toBe(-100);
+  });
+});
+
+describe("hesabaUygula", () => {
+  const d = { hesaplar: [{ id: 1, tip: "banka", bakiye: 1000 }] };
+  it("gider bakiyeyi azaltır", () => {
+    expect(hesabaUygula(d, 1, "gider", 200, +1).hesaplar[0].bakiye).toBe(800);
+  });
+  it("geri alma (isaret −1) tersine çevirir", () => {
+    expect(hesabaUygula(d, 1, "gider", 200, -1).hesaplar[0].bakiye).toBe(1200);
+  });
+  it("hesapId yoksa değişmez", () => {
+    expect(hesabaUygula(d, "", "gider", 200, +1)).toBe(d);
+  });
+});
+
+describe("transferUygula", () => {
+  const d = { hesaplar: [{ id: 1, tip: "banka", bakiye: 1000 }, { id: 2, tip: "banka", bakiye: 500 }, { id: 3, tip: "kart", bakiye: 800 }] };
+  it("kaynaktan çıkar, hedefe ekler", () => {
+    const r = transferUygula(d, 1, 2, 300);
+    expect(r.hesaplar[0].bakiye).toBe(700);
+    expect(r.hesaplar[1].bakiye).toBe(800);
+  });
+  it("kredi kartına transfer borcu azaltır", () => {
+    const r = transferUygula(d, 1, 3, 200);
+    expect(r.hesaplar[0].bakiye).toBe(800); // kaynak
+    expect(r.hesaplar[2].bakiye).toBe(600); // kart borcu 800 → 600
+  });
+  it("aynı hesap / sıfır tutar → değişmez", () => {
+    expect(transferUygula(d, 1, 1, 100)).toBe(d);
+    expect(transferUygula(d, 1, 2, 0)).toBe(d);
   });
 });

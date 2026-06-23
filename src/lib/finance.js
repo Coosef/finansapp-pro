@@ -8,6 +8,34 @@ import { GIDER_KAT, GELIR_KAT } from "./constants.js";
 export const giderKategorileri = (findata) => (findata?.kategoriler?.gider?.length ? findata.kategoriler.gider : GIDER_KAT);
 export const gelirKategorileri = (findata) => (findata?.kategoriler?.gelir?.length ? findata.kategoriler.gelir : GELIR_KAT);
 
+// ---- Hesap bakiyesi yardımcıları (saf, test edilebilir) ----
+// Normal hesapta gelir +, gider −; kredi kartında (borç) gider +borç, gelir −borç
+export function hesapDelta(tur, miktar, hesapTip) {
+  if (hesapTip === "kart") return (tur === "gider" ? 1 : -1) * miktar;
+  return (tur === "gelir" ? 1 : -1) * miktar;
+}
+// Bir işlemin etkisini hesaba uygula (isaret: +1 uygula, −1 geri al)
+export function hesabaUygula(d, hesapId, tur, miktar, isaret) {
+  if (!hesapId) return d;
+  return {
+    ...d,
+    hesaplar: (d.hesaplar || []).map((h) => (String(h.id) === String(hesapId) ? { ...h, bakiye: (+h.bakiye || 0) + isaret * hesapDelta(tur, miktar, h.tip) } : h)),
+  };
+}
+// Hesaplar arası transfer: kaynaktan çıkar, hedefe ekle (kredi kartı borç yönüyle)
+export function transferUygula(d, kaynakId, hedefId, miktar) {
+  const m = +miktar || 0;
+  if (!kaynakId || !hedefId || kaynakId === hedefId || m <= 0) return d;
+  return {
+    ...d,
+    hesaplar: (d.hesaplar || []).map((h) => {
+      if (String(h.id) === String(kaynakId)) return { ...h, bakiye: (+h.bakiye || 0) + (h.tip === "kart" ? m : -m) };
+      if (String(h.id) === String(hedefId)) return { ...h, bakiye: (+h.bakiye || 0) + (h.tip === "kart" ? -m : m) };
+      return h;
+    }),
+  };
+}
+
 // Boş kullanıcı verisi — tüm okuma noktaları { ...bosVeri(), ...kayitli }
 // ile birleştirilir, böylece eski yedeklerde eksik alanlar otomatik dolar.
 export const bosVeri = () => ({

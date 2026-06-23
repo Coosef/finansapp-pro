@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { C, F } from "./lib/constants.js";
 import { uid, bugun } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
-import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri } from "./lib/finance.js";
+import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula } from "./lib/finance.js";
 import { fiyatCek, configureAI } from "./lib/ai.js";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -207,15 +207,6 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   function guncelle(tur, id, veri) {
     const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler", yatirim: "yatirimlar" };
     setFindata((d) => ({ ...d, [m[tur]]: d[m[tur]].map((x) => (x.id === id ? { ...x, ...veri } : x)) }));
-  }
-  // Hesap bakiyesi: normal hesapta gelir +, gider −; kredi kartında gider +borç, gelir −borç
-  function hesapDelta(tur, miktar, hesapTip) {
-    if (hesapTip === "kart") return (tur === "gider" ? 1 : -1) * miktar;
-    return (tur === "gelir" ? 1 : -1) * miktar;
-  }
-  function hesabaUygula(d, hesapId, tur, miktar, isaret) {
-    if (!hesapId) return d;
-    return { ...d, hesaplar: (d.hesaplar || []).map((h) => (String(h.id) === String(hesapId) ? { ...h, bakiye: (+h.bakiye || 0) + isaret * hesapDelta(tur, miktar, h.tip) } : h)) };
   }
   function kategoriOgren(baslik, kategori) {
     const k = (baslik || "").toLowerCase().trim().split(/\s+/).slice(0, 2).join(" ");

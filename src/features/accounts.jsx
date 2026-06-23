@@ -4,11 +4,13 @@
 import { useState } from "react";
 import { C, pageTitle, inputStyle, HESAP_TIP } from "../lib/constants.js";
 import { uid, TL } from "../lib/format.js";
-import { Card, Btn, DelBtn, Bos, Field } from "../components/ui.jsx";
+import { transferUygula } from "../lib/finance.js";
+import { Card, Btn, DelBtn, Bos, Field, Modal } from "../components/ui.jsx";
 
 export function Hesaplar({ findata, setFindata, bildir }) {
   const [form, setForm] = useState({ ad: "", tip: "banka", bakiye: "" });
   const [acik, setAcik] = useState(false);
+  const [transfer, setTransfer] = useState(null);
   const hesaplar = findata.hesaplar || [];
   const varlik = hesaplar.filter((h) => h.tip !== "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
   const borc = hesaplar.filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
@@ -34,6 +36,23 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   function tipGuncelle(id, val) {
     setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, tip: val } : h)) }));
   }
+  function transferAc() {
+    setTransfer({ kaynak: String(hesaplar[0]?.id || ""), hedef: String(hesaplar[1]?.id || ""), miktar: "" });
+  }
+  function transferYap() {
+    const m = parseFloat(transfer.miktar);
+    if (!transfer.kaynak || !transfer.hedef || transfer.kaynak === transfer.hedef) {
+      bildir("Farklı iki hesap seç", "err");
+      return;
+    }
+    if (!m || m <= 0) {
+      bildir("Geçerli tutar gir", "err");
+      return;
+    }
+    setFindata((d) => transferUygula(d, transfer.kaynak, transfer.hedef, m));
+    setTransfer(null);
+    bildir("Transfer yapıldı");
+  }
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.6rem" }}>
@@ -43,7 +62,10 @@ export function Hesaplar({ findata, setFindata, bildir }) {
             Varlık: <b style={{ color: C.greenL }}>{TL(varlik)}</b> · Kart borcu: <b style={{ color: C.redL }}>{TL(borc)}</b> · Net: <b style={{ color: varlik - borc >= 0 ? C.greenL : C.redL }}>{TL(varlik - borc)}</b>
           </p>
         </div>
-        <Btn onClick={() => setAcik(!acik)}>+ Hesap</Btn>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          {hesaplar.length >= 2 && <Btn variant="ghost" onClick={transferAc}>⇄ Transfer</Btn>}
+          <Btn onClick={() => setAcik(!acik)}>+ Hesap</Btn>
+        </div>
       </div>
       {acik && (
         <Card style={{ marginBottom: "1rem" }}>
@@ -75,6 +97,16 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           );
         })}
       </div>
+
+      {transfer && (
+        <Modal title="Hesaplar Arası Transfer" onClose={() => setTransfer(null)}>
+          <Field label="Kaynak hesap" value={transfer.kaynak} onChange={(v) => setTransfer((t) => ({ ...t, kaynak: v }))} options={hesaplar.map((h) => ({ id: String(h.id), label: `${h.ad} (${TL(h.bakiye)})` }))} />
+          <Field label="Hedef hesap" value={transfer.hedef} onChange={(v) => setTransfer((t) => ({ ...t, hedef: v }))} options={hesaplar.map((h) => ({ id: String(h.id), label: `${h.ad} (${TL(h.bakiye)})` }))} />
+          <Field label="Tutar (₺)" type="number" value={transfer.miktar} onChange={(v) => setTransfer((t) => ({ ...t, miktar: v }))} />
+          <p style={{ color: C.faint, fontSize: "0.72rem", margin: "0 0 0.5rem" }}>Kredi kartına transfer borcu azaltır; karttan transfer borcu artırır.</p>
+          <Btn onClick={transferYap} style={{ width: "100%", padding: "0.7rem", marginTop: "0.2rem" }}>Transfer Et</Btn>
+        </Modal>
+      )}
     </div>
   );
 }
