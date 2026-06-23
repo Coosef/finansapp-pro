@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, yillikOzet } from "./finance.js";
 
 describe("bosVeri", () => {
   it("beklenen alanları içerir", () => {
@@ -117,5 +117,26 @@ describe("transferUygula", () => {
   it("aynı hesap / sıfır tutar → değişmez", () => {
     expect(transferUygula(d, 1, 1, 100)).toBe(d);
     expect(transferUygula(d, 1, 2, 0)).toBe(d);
+  });
+});
+
+describe("yillikOzet", () => {
+  const d = {
+    gelirler: [{ tarih: "2026-01-05", miktar: 5000 }, { tarih: "2026-03-10", miktar: 5000 }, { tarih: "2025-01-01", miktar: 9999 }],
+    giderler: [{ tarih: "2026-01-20", miktar: 2000 }],
+  };
+  const o = yillikOzet(d, 2026);
+  it("yalnız seçili yılı toplar", () => {
+    expect(o.toplamGelir).toBe(10000); // 2025 hariç
+    expect(o.toplamGider).toBe(2000);
+    expect(o.net).toBe(8000);
+  });
+  it("ayları doğru dağıtır", () => {
+    expect(o.aylar[0].gelir).toBe(5000); // Ocak
+    expect(o.aylar[2].gelir).toBe(5000); // Mart
+    expect(o.aylar).toHaveLength(12);
+  });
+  it("tasarruf oranı = net/gelir", () => {
+    expect(o.tasarrufOrani).toBe(80);
   });
 });

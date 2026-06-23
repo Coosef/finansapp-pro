@@ -2,7 +2,27 @@
 // Veri modeli ve finansal mantık (saf fonksiyonlar)
 // ============================================================
 import { uid, bugun, sonrakiTarih } from "./format.js";
-import { GIDER_KAT, GELIR_KAT } from "./constants.js";
+import { GIDER_KAT, GELIR_KAT, AY_ADI } from "./constants.js";
+
+// Bir yılın aylık gelir/gider özeti + tasarruf oranı (saf, test edilebilir)
+export function yillikOzet(findata, yil) {
+  const aylar = Array.from({ length: 12 }, (_, i) => ({ ay: AY_ADI[i], gelir: 0, gider: 0 }));
+  const pre = String(yil);
+  const ekle = (liste, alan) =>
+    (liste || []).forEach((x) => {
+      if ((x.tarih || "").startsWith(pre)) {
+        const m = parseInt((x.tarih || "").slice(5, 7), 10) - 1;
+        if (m >= 0 && m < 12) aylar[m][alan] += x.miktar || 0;
+      }
+    });
+  ekle(findata.gelirler, "gelir");
+  ekle(findata.giderler, "gider");
+  const toplamGelir = aylar.reduce((s, a) => s + a.gelir, 0);
+  const toplamGider = aylar.reduce((s, a) => s + a.gider, 0);
+  const net = toplamGelir - toplamGider;
+  const tasarrufOrani = toplamGelir > 0 ? (net / toplamGelir) * 100 : 0;
+  return { aylar, toplamGelir, toplamGider, net, tasarrufOrani };
+}
 
 // Etkin kategori listeleri (özel kategoriler varsa onları, yoksa varsayılanı)
 export const giderKategorileri = (findata) => (findata?.kategoriler?.gider?.length ? findata.kategoriler.gider : GIDER_KAT);

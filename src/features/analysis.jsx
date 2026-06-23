@@ -5,20 +5,49 @@ import { useState } from "react";
 import { C, pageTitle, sectionTitle } from "../lib/constants.js";
 import { TL } from "../lib/format.js";
 import { Card, Btn, Stat, Field, SubNav } from "../components/ui.jsx";
-import { Sparkline } from "../components/charts.jsx";
+import { Sparkline, BarChart } from "../components/charts.jsx";
 import { Gorseller } from "./visuals.jsx";
+import { yillikOzet } from "../lib/finance.js";
 
 export function Analiz({ findata, toplamGelir }) {
   const [alt, setAlt] = useState("karsilastir");
   return (
     <div>
       <h2 style={pageTitle}>Analiz</h2>
-      <SubNav value={alt} onChange={setAlt} items={[{ id: "karsilastir", label: "📊 Karşılaştırma" }, { id: "gorsel", label: "🌊 Görseller" }, { id: "birikim", label: "💰 Birikim" }, { id: "borc", label: "🏦 Borç" }, { id: "enflasyon", label: "🔥 Enflasyon" }]} />
+      <SubNav value={alt} onChange={setAlt} items={[{ id: "karsilastir", label: "📊 Karşılaştırma" }, { id: "yillik", label: "📆 Yıllık" }, { id: "gorsel", label: "🌊 Görseller" }, { id: "birikim", label: "💰 Birikim" }, { id: "borc", label: "🏦 Borç" }, { id: "enflasyon", label: "🔥 Enflasyon" }]} />
       {alt === "karsilastir" && <DonemKarsilastir findata={findata} />}
+      {alt === "yillik" && <YillikOzet findata={findata} />}
       {alt === "gorsel" && <Gorseller findata={findata} toplamGelir={toplamGelir} />}
       {alt === "birikim" && <BirikimSim />}
       {alt === "borc" && <BorcHesap />}
       {alt === "enflasyon" && <EnflasyonAsindirma findata={findata} />}
+    </div>
+  );
+}
+
+function YillikOzet({ findata }) {
+  const yillar = [...new Set([...(findata.gelirler || []), ...(findata.giderler || [])].map((x) => (x.tarih || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  const [yil, setYil] = useState(yillar[0] || String(new Date().getFullYear()));
+  const o = yillikOzet(findata, yil);
+  return (
+    <div>
+      <div style={{ maxWidth: 200, marginBottom: "1rem" }}>
+        <Field label="Yıl" value={yil} onChange={setYil} options={yillar.length ? yillar : [String(new Date().getFullYear())]} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "1rem", marginBottom: "1rem" }}>
+        <Stat title="Yıllık Gelir" value={TL(o.toplamGelir)} color={C.green} icon="💰" />
+        <Stat title="Yıllık Gider" value={TL(o.toplamGider)} color={C.red} icon="💸" />
+        <Stat title="Net" value={TL(o.net)} subColor={o.net >= 0 ? C.greenL : C.redL} color={C.purple} icon="⚖️" />
+        <Stat title="Tasarruf Oranı" value={`%${o.tasarrufOrani.toFixed(0)}`} sub={o.tasarrufOrani >= 20 ? "İyi 👍" : o.tasarrufOrani >= 0 ? "İdare eder" : "Açık var"} subColor={o.tasarrufOrani >= 0 ? C.greenL : C.redL} color={C.cyan} icon="🐷" />
+      </div>
+      <Card>
+        <h3 style={sectionTitle}>Aylık Gelir / Gider ({yil})</h3>
+        <BarChart data={o.aylar} />
+        <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem", fontSize: "0.75rem" }}>
+          <span style={{ color: C.greenL }}>● Gelir</span>
+          <span style={{ color: C.redL }}>● Gider</span>
+        </div>
+      </Card>
     </div>
   );
 }
