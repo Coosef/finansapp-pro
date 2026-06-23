@@ -5,8 +5,8 @@
 import { useState } from "react";
 import { C, pageTitle, sectionTitle, inputStyle, rowStyle, tagStyle, GIDER_KAT } from "../lib/constants.js";
 import { uid, TL, buAy, bugun } from "../lib/format.js";
-import { rozetleriHesapla, giderKategorileri } from "../lib/finance.js";
-import { Card, Btn, ProgressBar, DelBtn, Bos, Field, SubNav } from "../components/ui.jsx";
+import { rozetleriHesapla, giderKategorileri, etkinButce, butceDevri } from "../lib/finance.js";
+import { Card, Btn, ProgressBar, DelBtn, Bos, Field, SubNav, Toggle } from "../components/ui.jsx";
 
 export function Planlama({ findata, setFindata, bildir }) {
   const [alt, setAlt] = useState("butce");
@@ -27,24 +27,32 @@ function Butceler({ findata, setFindata }) {
   const ay = buAy();
   const ayGider = {};
   findata.giderler.filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
+  const devir = !!findata.ayarlar?.butceDevri;
   const set = (kat, val) => setFindata((d) => ({ ...d, butceler: { ...(d.butceler || {}), [kat]: parseFloat(val) || 0 } }));
+  const devirAyar = (v) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), butceDevri: v } }));
   return (
     <Card>
       <h3 style={sectionTitle}>Aylık Kategori Limitleri ({ay})</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1.25rem" }}>Limit gir; %80'de sarı, aşımda kırmızı uyarı verir, panelde takip edilir.</p>
+      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Limit gir; %80'de sarı, aşımda kırmızı uyarı verir, panelde takip edilir.</p>
+      <Toggle label="Bütçe devri — önceki ayın kalanı/aşımı bu aya taşınsın" checked={devir} onChange={devirAyar} />
       {giderKategorileri(findata).map((k) => {
-        const h = ayGider[k] || 0,
-          l = (findata.butceler || {})[k] || 0;
+        const h = ayGider[k] || 0;
+        const l = (findata.butceler || {})[k] || 0;
+        const dv = devir ? butceDevri(findata, k, ay) : 0;
+        const etk = etkinButce(findata, k, ay);
         return (
           <div key={k} style={{ marginBottom: "1rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem", gap: "0.75rem" }}>
-              <span style={{ color: C.dim, fontSize: "0.85rem", minWidth: 90 }}>{k}</span>
+              <span style={{ color: C.dim, fontSize: "0.85rem", minWidth: 90 }}>
+                {k}
+                {devir && l > 0 && dv !== 0 && <span style={{ color: dv > 0 ? C.greenL : C.redL, fontSize: "0.72rem", marginLeft: 6 }}>{dv > 0 ? "+" : ""}{TL(dv)} devir</span>}
+              </span>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                 <span style={{ color: C.dimmer, fontSize: "0.78rem" }}>{TL(h)} /</span>
                 <input type="number" value={l || ""} onChange={(e) => set(k, e.target.value)} placeholder="limit" style={{ ...inputStyle, width: 110, padding: "0.35rem 0.5rem", fontSize: "0.82rem" }} />
               </div>
             </div>
-            {l > 0 && <ProgressBar value={h} max={l} />}
+            {l > 0 && <ProgressBar value={h} max={devir ? Math.max(1, etk) : l} />}
           </div>
         );
       })}
@@ -96,15 +104,15 @@ function Zarflar({ findata, setFindata }) {
 }
 
 function Hedefler({ findata, setFindata, bildir }) {
-  const [form, setForm] = useState({ ad: "", tip: "birikim", hedefTutar: "", mevcutTutar: "", aylikKatki: "" });
+  const [form, setForm] = useState({ ad: "", tip: "birikim", hedefTutar: "", mevcutTutar: "", aylikKatki: "", otomatikKatki: false });
   const hedefler = findata.hedefler || [];
   function ekle() {
     if (!form.ad || !form.hedefTutar) {
       bildir("Ad ve hedef tutar gerekli", "err");
       return;
     }
-    setFindata((d) => ({ ...d, hedefler: [...(d.hedefler || []), { id: uid(), ad: form.ad, tip: form.tip, hedefTutar: parseFloat(form.hedefTutar), mevcutTutar: parseFloat(form.mevcutTutar) || 0, aylikKatki: parseFloat(form.aylikKatki) || 0 }] }));
-    setForm({ ad: "", tip: "birikim", hedefTutar: "", mevcutTutar: "", aylikKatki: "" });
+    setFindata((d) => ({ ...d, hedefler: [...(d.hedefler || []), { id: uid(), ad: form.ad, tip: form.tip, hedefTutar: parseFloat(form.hedefTutar), mevcutTutar: parseFloat(form.mevcutTutar) || 0, aylikKatki: parseFloat(form.aylikKatki) || 0, otomatikKatki: !!form.otomatikKatki, sonKatki: buAy() }] }));
+    setForm({ ad: "", tip: "birikim", hedefTutar: "", mevcutTutar: "", aylikKatki: "", otomatikKatki: false });
     bildir("Hedef eklendi");
   }
   function guncelle(id, delta) {
@@ -124,6 +132,7 @@ function Hedefler({ findata, setFindata, bildir }) {
           <Field label={form.tip === "borc" ? "Kalan Borç (₺)" : "Mevcut (₺)"} type="number" value={form.mevcutTutar} onChange={(v) => setForm((f) => ({ ...f, mevcutTutar: v }))} />
           <Field label="Aylık Katkı/Ödeme (₺)" type="number" value={form.aylikKatki} onChange={(v) => setForm((f) => ({ ...f, aylikKatki: v }))} />
         </div>
+        <Toggle label="Otomatik aylık katkı — her ay kendiliğinden uygulansın" checked={!!form.otomatikKatki} onChange={(v) => setForm((f) => ({ ...f, otomatikKatki: v }))} />
         <Btn onClick={ekle}>+ Hedef Ekle</Btn>
       </Card>
       {!hedefler.length && <Bos mesaj="Henüz hedef yok." />}
@@ -137,7 +146,7 @@ function Hedefler({ findata, setFindata, bildir }) {
             <Card key={h.id} accent={borc ? C.red : C.green}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
                 <div>
-                  <p style={{ margin: "0 0 0.15rem", fontWeight: 700, fontSize: "1rem" }}>{h.ad}</p>
+                  <p style={{ margin: "0 0 0.15rem", fontWeight: 700, fontSize: "1rem" }}>{h.ad}{h.otomatikKatki && <span style={tagStyle(C.cyan)}>OTO</span>}</p>
                   <p style={{ margin: 0, color: C.dimmer, fontSize: "0.73rem" }}>{borc ? "Borç ödeme" : "Birikim"}</p>
                 </div>
                 <DelBtn onClick={() => sil(h.id)} />

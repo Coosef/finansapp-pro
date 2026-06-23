@@ -1,8 +1,71 @@
 // ============================================================
 // Veri modeli ve finansal mantık (saf fonksiyonlar)
 // ============================================================
-import { uid, bugun, sonrakiTarih } from "./format.js";
+import { uid, bugun, buAy, sonrakiTarih } from "./format.js";
 import { GIDER_KAT, GELIR_KAT, AY_ADI } from "./constants.js";
+
+// "YYYY-MM" → bir sonraki ay (UTC, kararlı)
+function sonrakiAy(ay) {
+  const [y, m] = ay.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 7);
+}
+
+// ---- Bütçe devri ----
+// Devir açıksa, bir kategorinin önceki aydan devreden tutarı (+ artan / − aşım)
+export function butceDevri(findata, kategori, ay) {
+  if (!findata?.ayarlar?.butceDevri) return 0;
+  const base = (findata.butceler || {})[kategori] || 0;
+  if (!base) return 0;
+  const [y, m] = ay.split("-").map(Number);
+  const onceki = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
+  const harcanan = (findata.giderler || []).filter((g) => g.kategori === kategori && (g.tarih || "").startsWith(onceki)).reduce((s, g) => s + g.miktar, 0);
+  return base - harcanan;
+}
+export function etkinButce(findata, kategori, ay) {
+  return ((findata.butceler || {})[kategori] || 0) + butceDevri(findata, kategori, ay);
+}
+
+// ---- Hedeflere otomatik aylık katkı ----
+// otomatikKatki açık hedeflerde, sonKatki'dan bu aya kadar her ay aylikKatki uygulanır
+export function hedefKatkilariUret(data) {
+  const t = buAy();
+  let degisti = false;
+  const hedefler = (data.hedefler || []).map((h) => {
+    if (!h.otomatikKatki || !(h.aylikKatki > 0)) return h;
+    let son = h.sonKatki || t;
+    let mevcut = h.mevcutTutar || 0;
+    let cursor = sonrakiAy(son);
+    let guard = 0;
+    while (cursor <= t && guard < 600) {
+      mevcut = h.tip === "borc" ? Math.max(0, mevcut - h.aylikKatki) : Math.min(h.hedefTutar, mevcut + h.aylikKatki);
+      son = cursor;
+      degisti = true;
+      cursor = sonrakiAy(cursor);
+      guard++;
+    }
+    return { ...h, mevcutTutar: mevcut, sonKatki: son };
+  });
+  return { data: { ...data, hedefler }, degisti };
+}
+
+// ---- Yaklaşan ödemeler (abonelik + tekrarlayan gider) ----
+export function yaklasanOdemeler(findata, bugunStr, gun = 7) {
+  const bugunD = new Date(bugunStr + "T00:00:00");
+  const list = [];
+  (findata.abonelikler || []).forEach((a) => {
+    const g = new Date(a.tarih + "T00:00:00").getDate();
+    const sonraki = new Date(bugunD.getFullYear(), bugunD.getMonth(), g);
+    if (sonraki < bugunD) sonraki.setMonth(sonraki.getMonth() + 1);
+    const fark = Math.ceil((sonraki - bugunD) / 86400000);
+    if (fark >= 0 && fark <= gun) list.push({ ad: a.baslik, miktar: a.miktar, gun: fark, tip: "Abonelik" });
+  });
+  (findata.sablonlar || []).filter((s) => s.tip === "gider").forEach((s) => {
+    const sonraki = s.sonUretilen ? sonrakiTarih(s.sonUretilen, s.frekans) : s.baslangic;
+    const fark = Math.ceil((new Date(sonraki + "T00:00:00") - bugunD) / 86400000);
+    if (fark >= 0 && fark <= gun) list.push({ ad: s.baslik, miktar: s.miktar, gun: fark, tip: "Tekrar" });
+  });
+  return list.sort((a, b) => a.gun - b.gun);
+}
 
 // Bir yılın aylık gelir/gider özeti + tasarruf oranı (saf, test edilebilir)
 export function yillikOzet(findata, yil) {
@@ -68,10 +131,11 @@ export const bosVeri = () => ({
   hedefler: [],
   sablonlar: [],
   hedefDagilim: {},
-  ayarlar: { enflasyon: 50, pin: null, tema: "koyu", accent: "#10B981", kuruldu: false, apiKey: "", aiSaglayici: "anthropic", yerelAdres: "", yerelModel: "" },
+  ayarlar: { enflasyon: 50, pin: null, tema: "koyu", accent: "#10B981", kuruldu: false, apiKey: "", aiSaglayici: "anthropic", yerelAdres: "", yerelModel: "", butceDevri: false, bildirimler: false, sonBildirim: "" },
   kategoriHafiza: {},
   kurlar: null,
   hesaplar: [],
+  transferler: [],
   zarflar: {},
   kurallar: [],
   meydanOkumalar: [],

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { C, sectionTitle, tagStyle, inputStyle, GIDER_KAT } from "../lib/constants.js";
 import { TL, bugun, buAy, aylikEsdeger, sonrakiTarih, kategoriAnahtar, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
+import { yaklasanOdemeler, etkinButce } from "../lib/finance.js";
 import { Card, Btn, Stat, ProgressBar } from "../components/ui.jsx";
 import { Sparkline, BarChart } from "../components/charts.jsx";
 
@@ -126,21 +127,7 @@ export function Panel({ findata, ekle, kategoriOgren, guncelDeger, toplamGelir, 
   Object.keys(ortKategori).forEach((k) => { ortKategori[k] /= aySayisi; });
   const anomaliler = Object.entries(ayGider).filter(([k, v]) => ortKategori[k] && v > ortKategori[k] * 1.5).map(([k, v]) => ({ kategori: k, simdi: v, ort: ortKategori[k], kat: (v / ortKategori[k]).toFixed(1) }));
 
-  const bugunD = new Date();
-  const yaklasan = [];
-  findata.abonelikler.forEach((a) => {
-    const gun = new Date(a.tarih + "T00:00:00").getDate();
-    const sonraki = new Date(bugunD.getFullYear(), bugunD.getMonth(), gun);
-    if (sonraki < bugunD) sonraki.setMonth(sonraki.getMonth() + 1);
-    const fark = Math.ceil((sonraki - bugunD) / 86400000);
-    if (fark <= 7) yaklasan.push({ ad: a.baslik, miktar: a.miktar, gun: fark, tip: "Abonelik" });
-  });
-  (findata.sablonlar || []).filter((s) => s.tip === "gider").forEach((s) => {
-    const sonraki = s.sonUretilen ? sonrakiTarih(s.sonUretilen, s.frekans) : s.baslangic;
-    const fark = Math.ceil((new Date(sonraki + "T00:00:00") - bugunD) / 86400000);
-    if (fark >= 0 && fark <= 7) yaklasan.push({ ad: s.baslik, miktar: s.miktar, gun: fark, tip: "Tekrar" });
-  });
-  yaklasan.sort((a, b) => a.gun - b.gun);
+  const yaklasan = yaklasanOdemeler(findata, bugun(), 7);
 
   async function icgoruOlustur() {
     setIcYukleniyor(true);
@@ -243,8 +230,8 @@ export function Panel({ findata, ekle, kategoriOgren, guncelDeger, toplamGelir, 
           <h3 style={sectionTitle}>Bu Ay Bütçe Durumu ({ay})</h3>
           {butceliler.map((k) => {
             const h = ayGider[k] || 0,
-              l = findata.butceler[k],
-              pct = (h / l) * 100;
+              l = etkinButce(findata, k, ay),
+              pct = l > 0 ? (h / l) * 100 : 0;
             return (
               <div key={k} style={{ marginBottom: "0.85rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem", fontSize: "0.82rem" }}>

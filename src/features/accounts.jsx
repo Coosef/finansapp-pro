@@ -3,7 +3,7 @@
 // ============================================================
 import { useState } from "react";
 import { C, pageTitle, inputStyle, HESAP_TIP } from "../lib/constants.js";
-import { uid, TL } from "../lib/format.js";
+import { uid, TL, bugun } from "../lib/format.js";
 import { transferUygula } from "../lib/finance.js";
 import { Card, Btn, DelBtn, Bos, Field, Modal } from "../components/ui.jsx";
 
@@ -49,9 +49,17 @@ export function Hesaplar({ findata, setFindata, bildir }) {
       bildir("Geçerli tutar gir", "err");
       return;
     }
-    setFindata((d) => transferUygula(d, transfer.kaynak, transfer.hedef, m));
+    const kayit = { id: uid(), kaynakId: transfer.kaynak, hedefId: transfer.hedef, miktar: m, tarih: bugun() };
+    setFindata((d) => ({ ...transferUygula(d, transfer.kaynak, transfer.hedef, m), transferler: [...(d.transferler || []), kayit] }));
     setTransfer(null);
     bildir("Transfer yapıldı");
+  }
+  function transferSil(tr) {
+    setFindata((d) => ({ ...transferUygula(d, tr.hedefId, tr.kaynakId, tr.miktar), transferler: (d.transferler || []).filter((x) => x.id !== tr.id) }));
+    bildir("Transfer geri alındı", "ok", {
+      label: "↩ Tekrar uygula",
+      onClick: () => setFindata((d) => ({ ...transferUygula(d, tr.kaynakId, tr.hedefId, tr.miktar), transferler: [...(d.transferler || []), tr] })),
+    });
   }
   return (
     <div>
@@ -97,6 +105,25 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           );
         })}
       </div>
+
+      {(findata.transferler || []).length > 0 && (
+        <Card style={{ marginTop: "1rem" }}>
+          <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.82rem", color: C.dim, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>Son Transferler</h3>
+          {findata.transferler.slice().reverse().slice(0, 8).map((tr) => {
+            const k = hesaplar.find((h) => String(h.id) === String(tr.kaynakId));
+            const hd = hesaplar.find((h) => String(h.id) === String(tr.hedefId));
+            return (
+              <div key={tr.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.5rem 0", borderBottom: `1px solid ${C.line}`, fontSize: "0.82rem" }}>
+                <span style={{ color: C.dim }}>{k?.ad || "?"} → {hd?.ad || "?"} <span style={{ color: C.faint }}>· {tr.tarih}</span></span>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                  <span style={{ fontWeight: 700 }}>{TL(tr.miktar)}</span>
+                  <DelBtn onClick={() => transferSil(tr)} />
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
 
       {transfer && (
         <Modal title="Hesaplar Arası Transfer" onClose={() => setTransfer(null)}>

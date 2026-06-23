@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, yillikOzet } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler } from "./finance.js";
 
 describe("bosVeri", () => {
   it("beklenen alanları içerir", () => {
@@ -138,5 +138,60 @@ describe("yillikOzet", () => {
   });
   it("tasarruf oranı = net/gelir", () => {
     expect(o.tasarrufOrani).toBe(80);
+  });
+});
+
+describe("bütçe devri", () => {
+  const base = { butceler: { Market: 1000 }, giderler: [{ kategori: "Market", tarih: "2026-02-10", miktar: 600 }], ayarlar: { butceDevri: true } };
+  it("devir kapalıysa 0", () => {
+    expect(butceDevri({ ...base, ayarlar: { butceDevri: false } }, "Market", "2026-03")).toBe(0);
+  });
+  it("önceki ay 600 harcandıysa 400 devreder", () => {
+    expect(butceDevri(base, "Market", "2026-03")).toBe(400);
+  });
+  it("etkin bütçe = baz + devir", () => {
+    expect(etkinButce(base, "Market", "2026-03")).toBe(1400);
+  });
+  it("aşım negatif devreder", () => {
+    const asan = { ...base, giderler: [{ kategori: "Market", tarih: "2026-02-10", miktar: 1300 }] };
+    expect(butceDevri(asan, "Market", "2026-03")).toBe(-300);
+  });
+});
+
+describe("hedefKatkilariUret", () => {
+  it("otomatik kapalıysa değişmez", () => {
+    const d = { hedefler: [{ id: 1, tip: "birikim", hedefTutar: 10000, mevcutTutar: 0, aylikKatki: 500, otomatikKatki: false }] };
+    expect(hedefKatkilariUret(d).degisti).toBe(false);
+  });
+  it("birikim: katkı uygular, hedefi aşmaz", () => {
+    const d = { hedefler: [{ id: 1, tip: "birikim", hedefTutar: 10000, mevcutTutar: 0, aylikKatki: 500, otomatikKatki: true, sonKatki: "2020-01" }] };
+    const r = hedefKatkilariUret(d);
+    expect(r.degisti).toBe(true);
+    expect(r.data.hedefler[0].mevcutTutar).toBeGreaterThan(0);
+    expect(r.data.hedefler[0].mevcutTutar).toBeLessThanOrEqual(10000);
+  });
+  it("borç: mevcut azalır, 0'ın altına inmez", () => {
+    const d = { hedefler: [{ id: 1, tip: "borc", hedefTutar: 10000, mevcutTutar: 3000, aylikKatki: 500, otomatikKatki: true, sonKatki: "2020-01" }] };
+    const r = hedefKatkilariUret(d);
+    expect(r.data.hedefler[0].mevcutTutar).toBeGreaterThanOrEqual(0);
+    expect(r.data.hedefler[0].mevcutTutar).toBeLessThan(3000);
+  });
+});
+
+describe("yaklasanOdemeler", () => {
+  it("aralıktaki ödemeleri güne göre sıralar", () => {
+    const findata = {
+      abonelikler: [{ baslik: "Netflix", miktar: 100, tarih: "2026-06-25" }],
+      sablonlar: [{ tip: "gider", baslik: "Kira", miktar: 5000, frekans: "aylık", sonUretilen: "2026-05-22", baslangic: "2026-05-22" }],
+    };
+    const r = yaklasanOdemeler(findata, "2026-06-20", 7);
+    expect(r.length).toBe(2);
+    expect(r[0].ad).toBe("Kira");
+    expect(r[0].gun).toBe(2);
+    expect(r[1].gun).toBe(5);
+  });
+  it("aralık dışındakileri elemeler", () => {
+    const r = yaklasanOdemeler({ abonelikler: [{ baslik: "X", miktar: 1, tarih: "2026-06-25" }], sablonlar: [] }, "2026-06-01", 3);
+    expect(r.length).toBe(0);
   });
 });

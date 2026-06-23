@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { C, F } from "./lib/constants.js";
 import { uid, bugun } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
-import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula } from "./lib/finance.js";
+import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler } from "./lib/finance.js";
 import { fiyatCek, configureAI } from "./lib/ai.js";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -73,7 +73,10 @@ export default function FinansAppPro() {
     } catch {
       /* yoksay */
     }
-    const { data, degisti } = tekrarlariUret(veri);
+    let { data, degisti } = tekrarlariUret(veri);
+    const hk = hedefKatkilariUret(data); // otomatik hedef katkıları
+    data = hk.data;
+    degisti = degisti || hk.degisti;
     if (degisti) {
       try {
         await storage.set(`findata:${username}`, JSON.stringify(data));
@@ -245,6 +248,23 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
     if (ilk.current && findata.yatirimlar.length && findata.ayarlar?.apiKey) {
       ilk.current = false;
       tumFiyatlariGuncelle();
+    }
+  }, []); // eslint-disable-line
+
+  // Yaklaşan ödeme bildirimi (uygulama açıkken, günde bir)
+  useEffect(() => {
+    const ay = findata.ayarlar || {};
+    if (!ay.bildirimler || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const t = bugun();
+    if (ay.sonBildirim === t) return;
+    const yak = yaklasanOdemeler(findata, t, 3);
+    if (yak.length) {
+      try {
+        new Notification("FinansApp — Yaklaşan ödeme", { body: yak.slice(0, 3).map((y) => `${y.ad} · ${y.gun === 0 ? "bugün" : y.gun + " gün"} · ${TL(y.miktar)}`).join("\n"), icon: "/pwa-192.png" });
+      } catch {
+        /* yoksay */
+      }
+      setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), sonBildirim: t } }));
     }
   }, []); // eslint-disable-line
 

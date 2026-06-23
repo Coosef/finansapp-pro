@@ -91,6 +91,7 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
           <Btn variant="ghost" onClick={hafizaTemizle} style={{ width: "100%" }} disabled={!hafizaSayi}>Hafızayı Temizle</Btn>
         </Card>
 
+        <BildirimKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <ApiKeyKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <KategoriKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <KurallarKart findata={findata} setFindata={setFindata} bildir={bildir} />
@@ -203,6 +204,41 @@ function ApiKeyKart({ findata, setFindata, bildir }) {
         <Btn variant="ghost" onClick={baglantiTest}>Bağlantıyı Test Et</Btn>
         {test && <span style={{ color: test.durum === "ok" ? C.greenL : test.durum === "err" ? C.redL : C.dim, fontSize: "0.8rem" }}>{test.mesaj}</span>}
       </div>
+    </Card>
+  );
+}
+
+function BildirimKart({ findata, setFindata, bildir }) {
+  const acik = !!findata.ayarlar?.bildirimler;
+  const izin = typeof Notification !== "undefined" ? Notification.permission : "yok";
+  async function ac() {
+    if (typeof Notification === "undefined") {
+      bildir("Tarayıcı bildirimi desteklemiyor", "err");
+      return;
+    }
+    let p = Notification.permission;
+    if (p !== "granted") p = await Notification.requestPermission();
+    if (p === "granted") {
+      setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), bildirimler: true } }));
+      bildir("Bildirimler açıldı");
+    } else {
+      bildir("Bildirim izni verilmedi", "err");
+    }
+  }
+  function kapat() {
+    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), bildirimler: false } }));
+    bildir("Bildirimler kapandı");
+  }
+  return (
+    <Card accent={C.amber}>
+      <h3 style={sectionTitle}>🔔 Bildirimler</h3>
+      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Yaklaşan abonelik/ödemeler için uygulama açıkken günde bir hatırlatma.</p>
+      {acik && izin === "granted" ? (
+        <Btn variant="ghost" onClick={kapat} style={{ width: "100%" }}>Bildirimleri Kapat</Btn>
+      ) : (
+        <Btn onClick={ac} style={{ width: "100%" }}>Bildirimlere İzin Ver</Btn>
+      )}
+      {izin === "denied" && <p style={{ color: C.redL, fontSize: "0.72rem", margin: "0.5rem 0 0" }}>Tarayıcı izni reddedilmiş; tarayıcı ayarlarından açman gerekir.</p>}
     </Card>
   );
 }
