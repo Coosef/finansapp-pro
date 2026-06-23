@@ -15,10 +15,12 @@ export const buAy = () => new Date().toISOString().slice(0, 7);
 export const uid = () => Date.now() + Math.floor(Math.random() * 100000);
 
 export function sonrakiTarih(dateStr, frekans) {
-  const d = new Date(dateStr + "T00:00:00");
-  if (frekans === "haftalık") d.setDate(d.getDate() + 7);
-  else if (frekans === "yıllık") d.setFullYear(d.getFullYear() + 1);
-  else d.setMonth(d.getMonth() + 1);
+  // UTC ile çalış: saat diliminden bağımsız, kararlı takvim aritmetiği
+  const [y, m, gun] = dateStr.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, gun));
+  if (frekans === "haftalık") d.setUTCDate(d.getUTCDate() + 7);
+  else if (frekans === "yıllık") d.setUTCFullYear(d.getUTCFullYear() + 1);
+  else d.setUTCMonth(d.getUTCMonth() + 1);
   return d.toISOString().split("T")[0];
 }
 
@@ -43,13 +45,16 @@ export function sayiCikar(txt) {
 // AI yanıtındaki JSON'u (```json bloklarını temizleyerek) ayrıştır
 export function parseJSON(text) {
   const clean = (text || "").replace(/```json/gi, "").replace(/```/g, "").trim();
+  // İlk { veya [ ile son } veya ] arasını al (yerel modeller öncesine/sonrasına metin ekleyebilir)
   const start = Math.min(
     ...["{", "["].map((c) => {
       const i = clean.indexOf(c);
       return i === -1 ? Infinity : i;
     })
   );
-  return JSON.parse(start === Infinity ? clean : clean.slice(start));
+  const end = Math.max(clean.lastIndexOf("}"), clean.lastIndexOf("]"));
+  const sub = start === Infinity || end === -1 || end < start ? clean : clean.slice(start, end + 1);
+  return JSON.parse(sub);
 }
 
 export function fileToBase64(file) {

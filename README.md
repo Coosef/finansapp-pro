@@ -32,6 +32,12 @@ npm run preview    # üretim derlemesini yerel önizle → http://localhost:4173
 `dist/` içeriği herhangi bir statik sunucuya (Netlify, Vercel, nginx, GitHub Pages…)
 yüklenebilir.
 
+### Testler
+
+```bash
+npm test           # çekirdek mantık birim testleri (Vitest)
+```
+
 ---
 
 ## Docker ile çalıştırma
