@@ -14,7 +14,7 @@ export function Field({ label, type = "text", value, onChange, options, placehol
           {options.map((o) => (typeof o === "object" ? <option key={o.id} value={o.id}>{o.label}</option> : <option key={o} value={o}>{o}</option>))}
         </select>
       ) : (
-        <input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} style={inputStyle} />
+        <input type={type} {...(type === "number" ? { inputMode: "decimal", step: "any" } : {})} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} style={inputStyle} />
       )}
     </div>
   );

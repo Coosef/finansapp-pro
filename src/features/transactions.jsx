@@ -215,7 +215,7 @@ export function Abonelikler({ findata, bildir, onEkle, onSil, onDuzenle }) {
   );
 }
 
-export function IslemModal({ title, form, setForm, kategoriler, miktarLabel, variant, noTekrar, noHane, hafiza, onClose, onKaydet }) {
+export function IslemModal({ title, form, setForm, kategoriler, miktarLabel, variant, noTekrar, noHane, noHesap, hesaplar, hafiza, onClose, onKaydet }) {
   const oneri = (hafiza || {})[kategoriAnahtar(form.baslik)];
   return (
     <Modal title={title} onClose={onClose}>
@@ -228,6 +228,14 @@ export function IslemModal({ title, form, setForm, kategoriler, miktarLabel, var
       <Field label={miktarLabel || "Miktar (₺)"} type="number" value={form.miktar} onChange={(v) => setForm((f) => ({ ...f, miktar: v }))} />
       <Field label="Kategori" value={form.kategori} onChange={(v) => setForm((f) => ({ ...f, kategori: v }))} options={kategoriler} />
       <Field label="Tarih" type="date" value={form.tarih} onChange={(v) => setForm((f) => ({ ...f, tarih: v }))} />
+      {!noHesap && hesaplar && hesaplar.length > 0 && (
+        <Field
+          label="Hesap (seçilirse bakiyesi güncellenir)"
+          value={form.hesapId || ""}
+          onChange={(v) => setForm((f) => ({ ...f, hesapId: v }))}
+          options={[{ id: "", label: "— (hesap güncelleme yok)" }, ...hesaplar.map((h) => ({ id: String(h.id), label: h.ad || "Hesap" }))]}
+        />
+      )}
       {!noTekrar && <Toggle label="Otomatik tekrarla" checked={!!form.tekrarla} onChange={(v) => setForm((f) => ({ ...f, tekrarla: v }))} />}
       {!noTekrar && form.tekrarla && <Field label="Sıklık" value={form.frekans || "aylık"} onChange={(v) => setForm((f) => ({ ...f, frekans: v }))} options={["haftalık", "aylık", "yıllık"]} />}
       {!noHane && <Toggle label="Ortak hane bütçesine dahil et" checked={!!form.hane} onChange={(v) => setForm((f) => ({ ...f, hane: v }))} />}

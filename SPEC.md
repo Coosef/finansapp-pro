@@ -165,10 +165,17 @@ tam çalışır.
 
 ---
 
-## 7. Bilinen Sınırlamalar / Gelecek İşler
+## 7. Ek Özellikler & Sınırlamalar
 
-- **Güvenlik:** Şifre/PIN düz metin, "çok kullanıcı" aynı tarayıcıda — gerçek
-  izolasyon yok. Gerçek çok kullanıcılı kullanım için backend + DB + auth gerekir.
-- **AI anahtarı tarayıcıda** — üretim için sunucu proxy'si önerilir.
-- Otomatik testler henüz yok.
-- İsteğe bağlı: PWA/çevrimdışı kurulum, masaüstü (Tauri) paketleme.
+**Sonradan eklenenler:**
+- **Düzenleme/undo/filtre:** kayıt düzenleme (✎), silmede geri-al, listelerde arama+kategori/ay filtresi
+- **Yerel AI:** Ollama / LM Studio (OpenAI-uyumlu), anahtarsız/ücretsiz
+- **PWA:** `vite-plugin-pwa` (manifest + service worker) → telefona kurulabilir, çevrimdışı çalışır
+- **Özel kategoriler:** Ayarlar → Kategoriler; bütçe/zarf/kural/işlem otomatik uyum
+- **Hesap–işlem bağlantısı:** gelir/gider'e hesap seç → bakiye ekle/düzenle/sil/geri-al'da tutarlı güncellenir (kredi kartında borç yönü)
+
+**Bilinen sınırlamalar / gelecek:**
+- **Güvenlik:** Şifre/PIN düz metin, "çok kullanıcı" aynı tarayıcıda — gerçek izolasyon yok
+  (gerçek çok kullanıcı için backend + DB + auth gerekir).
+- **Anthropic anahtarı tarayıcıda** — üretim için sunucu proxy'si önerilir (yerel model bu sorunu yaşamaz).
+- Otomatik testler henüz yok. İsteğe bağlı: masaüstü (Tauri) paketleme, çoklu para birimi.

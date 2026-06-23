@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { C, F } from "./lib/constants.js";
 import { uid, bugun } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
-import { bosVeri, tekrarlariUret, kurallariUygula } from "./lib/finance.js";
+import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri } from "./lib/finance.js";
 import { fiyatCek, configureAI } from "./lib/ai.js";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -186,12 +186,36 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   function sil(tur, id) {
     const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler", yatirim: "yatirimlar" };
     const kayit = findata[m[tur]].find((x) => x.id === id);
-    setFindata((d) => ({ ...d, [m[tur]]: d[m[tur]].filter((x) => x.id !== id) }));
-    bildir("Silindi", "ok", kayit ? { label: "↩ Geri al", onClick: () => { setFindata((d) => ({ ...d, [m[tur]]: [...d[m[tur]], kayit] })); setBildirim(null); } } : null);
+    const hesapEtkili = kayit?.hesapId && (tur === "gelir" || tur === "gider");
+    setFindata((d) => {
+      let nd = { ...d, [m[tur]]: d[m[tur]].filter((x) => x.id !== id) };
+      if (hesapEtkili) nd = hesabaUygula(nd, kayit.hesapId, tur, kayit.miktar, -1);
+      return nd;
+    });
+    bildir("Silindi", "ok", kayit ? {
+      label: "↩ Geri al",
+      onClick: () => {
+        setFindata((d) => {
+          let nd = { ...d, [m[tur]]: [...d[m[tur]], kayit] };
+          if (hesapEtkili) nd = hesabaUygula(nd, kayit.hesapId, tur, kayit.miktar, +1);
+          return nd;
+        });
+        setBildirim(null);
+      },
+    } : null);
   }
   function guncelle(tur, id, veri) {
     const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler", yatirim: "yatirimlar" };
     setFindata((d) => ({ ...d, [m[tur]]: d[m[tur]].map((x) => (x.id === id ? { ...x, ...veri } : x)) }));
+  }
+  // Hesap bakiyesi: normal hesapta gelir +, gider −; kredi kartında gider +borç, gelir −borç
+  function hesapDelta(tur, miktar, hesapTip) {
+    if (hesapTip === "kart") return (tur === "gider" ? 1 : -1) * miktar;
+    return (tur === "gelir" ? 1 : -1) * miktar;
+  }
+  function hesabaUygula(d, hesapId, tur, miktar, isaret) {
+    if (!hesapId) return d;
+    return { ...d, hesaplar: (d.hesaplar || []).map((h) => (String(h.id) === String(hesapId) ? { ...h, bakiye: (+h.bakiye || 0) + isaret * hesapDelta(tur, miktar, h.tip) } : h)) };
   }
   function kategoriOgren(baslik, kategori) {
     const k = (baslik || "").toLowerCase().trim().split(/\s+/).slice(0, 2).join(" ");
@@ -235,23 +259,30 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
 
   function kaydetIslem(tur) {
     if (!form.baslik || !form.miktar) return;
-    const veri = { baslik: form.baslik, miktar: parseFloat(form.miktar), kategori: form.kategori, tarih: form.tarih, hane: !!form.hane };
+    const miktar = parseFloat(form.miktar);
+    const hesapId = tur === "gelir" || tur === "gider" ? form.hesapId || "" : "";
+    const veri = { baslik: form.baslik, miktar, kategori: form.kategori, tarih: form.tarih, hane: !!form.hane, hesapId };
     if (form._editId) {
+      const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler" };
+      const eski = (findata[m[tur]] || []).find((x) => x.id === form._editId);
       guncelle(tur, form._editId, veri);
+      if (eski?.hesapId) setFindata((d) => hesabaUygula(d, eski.hesapId, tur, eski.miktar, -1));
+      if (hesapId) setFindata((d) => hesabaUygula(d, hesapId, tur, miktar, +1));
       kategoriOgren(form.baslik, form.kategori);
       setModal(null);
       bildir("Güncellendi");
       return;
     }
     ekle(tur, veri);
+    if (hesapId) setFindata((d) => hesabaUygula(d, hesapId, tur, miktar, +1));
     kategoriOgren(form.baslik, form.kategori);
     if (form.tekrarla)
-      setFindata((d) => ({ ...d, sablonlar: [...(d.sablonlar || []), { id: uid(), tip: tur, baslik: form.baslik, miktar: parseFloat(form.miktar), kategori: form.kategori, frekans: form.frekans || "aylık", baslangic: form.tarih, sonUretilen: form.tarih, hane: !!form.hane }] }));
+      setFindata((d) => ({ ...d, sablonlar: [...(d.sablonlar || []), { id: uid(), tip: tur, baslik: form.baslik, miktar, kategori: form.kategori, frekans: form.frekans || "aylık", baslangic: form.tarih, sonUretilen: form.tarih, hane: !!form.hane }] }));
     setModal(null);
     bildir(form.tekrarla ? "Eklendi + otomatik tekrara alındı" : "Eklendi");
   }
   function duzenleIslem(tur, kayit) {
-    setForm({ baslik: kayit.baslik, miktar: String(kayit.miktar), kategori: kayit.kategori, tarih: kayit.tarih, hane: !!kayit.hane, tekrarla: false, _editId: kayit.id });
+    setForm({ baslik: kayit.baslik, miktar: String(kayit.miktar), kategori: kayit.kategori, tarih: kayit.tarih, hane: !!kayit.hane, hesapId: kayit.hesapId || "", tekrarla: false, _editId: kayit.id });
     setModal(tur);
   }
   function duzenleYatirim(kayit) {
@@ -382,8 +413,8 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
       )}
 
       {modal === "yatirim" && <YatirimModal title={form._editId ? "Yatırımı Düzenle" : "Yatırım Ekle"} form={form} setForm={setForm} onClose={() => setModal(null)} onKaydet={kaydetYatirim} />}
-      {modal === "gelir" && <IslemModal title={form._editId ? "Gelir Düzenle" : "Gelir Ekle"} form={form} setForm={setForm} kategoriler={GELIR_KAT} variant="green" hafiza={findata.kategoriHafiza} noTekrar={!!form._editId} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gelir")} />}
-      {modal === "gider" && <IslemModal title={form._editId ? "Gider Düzenle" : "Gider Ekle"} form={form} setForm={setForm} kategoriler={GIDER_KAT} variant="red" hafiza={findata.kategoriHafiza} noTekrar={!!form._editId} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gider")} />}
+      {modal === "gelir" && <IslemModal title={form._editId ? "Gelir Düzenle" : "Gelir Ekle"} form={form} setForm={setForm} kategoriler={gelirKategorileri(findata)} hesaplar={findata.hesaplar} variant="green" hafiza={findata.kategoriHafiza} noTekrar={!!form._editId} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gelir")} />}
+      {modal === "gider" && <IslemModal title={form._editId ? "Gider Düzenle" : "Gider Ekle"} form={form} setForm={setForm} kategoriler={giderKategorileri(findata)} hesaplar={findata.hesaplar} variant="red" hafiza={findata.kategoriHafiza} noTekrar={!!form._editId} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("gider")} />}
       {modal === "abonelik" && (
         <IslemModal
           title={form._editId ? "Abonelik Düzenle" : "Abonelik Ekle"}
@@ -394,6 +425,7 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
           variant="amber"
           noTekrar
           noHane
+          noHesap
           onClose={() => setModal(null)}
           onKaydet={() => kaydetIslem("abonelik")}
         />

@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { C, pageTitle, sectionTitle, inputStyle, rowStyle, tagStyle, GIDER_KAT } from "../lib/constants.js";
 import { uid, TL, buAy, bugun } from "../lib/format.js";
-import { rozetleriHesapla } from "../lib/finance.js";
+import { rozetleriHesapla, giderKategorileri } from "../lib/finance.js";
 import { Card, Btn, ProgressBar, DelBtn, Bos, Field, SubNav } from "../components/ui.jsx";
 
 export function Planlama({ findata, setFindata, bildir }) {
@@ -32,7 +32,7 @@ function Butceler({ findata, setFindata }) {
     <Card>
       <h3 style={sectionTitle}>Aylık Kategori Limitleri ({ay})</h3>
       <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1.25rem" }}>Limit gir; %80'de sarı, aşımda kırmızı uyarı verir, panelde takip edilir.</p>
-      {GIDER_KAT.map((k) => {
+      {giderKategorileri(findata).map((k) => {
         const h = ayGider[k] || 0,
           l = (findata.butceler || {})[k] || 0;
         return (
@@ -68,7 +68,7 @@ function Zarflar({ findata, setFindata }) {
         </p>
       </Card>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "1rem" }}>
-        {GIDER_KAT.map((k) => {
+        {giderKategorileri(findata).map((k) => {
           const tah = zarflar[k] || 0,
             harc = ayGider[k] || 0,
             kalanZ = tah - harc;

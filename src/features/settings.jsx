@@ -8,6 +8,7 @@ import { uid, TL2 } from "../lib/format.js";
 import { kurCek, MODEL_SECENEK, aiHazir, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
 import { Card, Btn, DelBtn, Field } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
+import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 
 export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChange }) {
   const [pin, setPin] = useState("");
@@ -91,6 +92,7 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
         </Card>
 
         <ApiKeyKart findata={findata} setFindata={setFindata} bildir={bildir} />
+        <KategoriKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <KurallarKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <TemaKart findata={findata} setFindata={setFindata} />
       </div>
@@ -205,6 +207,59 @@ function ApiKeyKart({ findata, setFindata, bildir }) {
   );
 }
 
+function KategoriKart({ findata, setFindata, bildir }) {
+  const [yeniGider, setYeniGider] = useState("");
+  const [yeniGelir, setYeniGelir] = useState("");
+  const gider = giderKategorileri(findata);
+  const gelir = gelirKategorileri(findata);
+  function setKat(tur, liste) {
+    setFindata((d) => ({ ...d, kategoriler: { ...(d.kategoriler || { gider, gelir }), [tur]: liste } }));
+  }
+  function ekle(tur, deger, temizle) {
+    const v = (deger || "").trim();
+    if (!v) return;
+    const liste = tur === "gider" ? gider : gelir;
+    if (liste.includes(v)) {
+      bildir("Bu kategori zaten var", "err");
+      return;
+    }
+    setKat(tur, [...liste, v]);
+    temizle("");
+    bildir("Kategori eklendi");
+  }
+  function sil(tur, k) {
+    const liste = tur === "gider" ? gider : gelir;
+    setKat(tur, liste.filter((x) => x !== k));
+  }
+  const blok = (tur, liste, yeni, setYeni) => (
+    <div>
+      <p style={{ color: C.dim, fontSize: "0.78rem", fontWeight: 600, margin: "0 0 0.5rem" }}>{tur === "gider" ? "Gider" : "Gelir"} kategorileri</p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.6rem" }}>
+        {liste.map((k) => (
+          <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", background: "rgba(255,255,255,0.04)", border: `1px solid ${C.line2}`, borderRadius: "0.5rem", padding: "0.25rem 0.5rem", fontSize: "0.78rem", color: C.dim }}>
+            {k}
+            <button onClick={() => sil(tur, k)} title="Sil" style={{ background: "none", border: "none", color: C.redL, cursor: "pointer", fontSize: "0.8rem", lineHeight: 1, padding: 0 }}>✕</button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "0.4rem" }}>
+        <input value={yeni} onChange={(e) => setYeni(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ekle(tur, yeni, setYeni)} placeholder="Yeni kategori" style={{ ...inputStyle, flex: 1 }} />
+        <Btn variant="ghost" onClick={() => ekle(tur, yeni, setYeni)}>+ Ekle</Btn>
+      </div>
+    </div>
+  );
+  return (
+    <Card accent={C.green} style={{ gridColumn: "1 / -1" }}>
+      <h3 style={sectionTitle}>🏷️ Kategoriler</h3>
+      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1rem" }}>Kendi gelir/gider kategorilerini ekle veya kaldır; işlem, bütçe, zarf ve kural ekranları otomatik uyum sağlar. (Silmek eski kayıtları değiştirmez.)</p>
+      <div className="fa-grid-2">
+        {blok("gider", gider, yeniGider, setYeniGider)}
+        {blok("gelir", gelir, yeniGelir, setYeniGelir)}
+      </div>
+    </Card>
+  );
+}
+
 function KurallarKart({ findata, setFindata, bildir }) {
   const [form, setForm] = useState({ tip: "kategori", kelime: "", tutarUstu: "", kategori: "Market", mesaj: "" });
   const kurallar = findata.kurallar || [];
@@ -229,7 +284,7 @@ function KurallarKart({ findata, setFindata, bildir }) {
         <Field label="Kelime" value={form.kelime} onChange={(v) => setForm((f) => ({ ...f, kelime: v }))} placeholder="Migros" />
         <Field label="Tutar üstü (₺)" type="number" value={form.tutarUstu} onChange={(v) => setForm((f) => ({ ...f, tutarUstu: v }))} />
         {form.tip === "kategori" ? (
-          <Field label="Kategori" value={form.kategori} onChange={(v) => setForm((f) => ({ ...f, kategori: v }))} options={GIDER_KAT} />
+          <Field label="Kategori" value={form.kategori} onChange={(v) => setForm((f) => ({ ...f, kategori: v }))} options={giderKategorileri(findata)} />
         ) : (
           <Field label="Uyarı mesajı" value={form.mesaj} onChange={(v) => setForm((f) => ({ ...f, mesaj: v }))} placeholder="Çok harcadın!" />
         )}

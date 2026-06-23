@@ -2,6 +2,11 @@
 // Veri modeli ve finansal mantık (saf fonksiyonlar)
 // ============================================================
 import { uid, bugun, sonrakiTarih } from "./format.js";
+import { GIDER_KAT, GELIR_KAT } from "./constants.js";
+
+// Etkin kategori listeleri (özel kategoriler varsa onları, yoksa varsayılanı)
+export const giderKategorileri = (findata) => (findata?.kategoriler?.gider?.length ? findata.kategoriler.gider : GIDER_KAT);
+export const gelirKategorileri = (findata) => (findata?.kategoriler?.gelir?.length ? findata.kategoriler.gelir : GELIR_KAT);
 
 // Boş kullanıcı verisi — tüm okuma noktaları { ...bosVeri(), ...kayitli }
 // ile birleştirilir, böylece eski yedeklerde eksik alanlar otomatik dolar.
@@ -11,6 +16,7 @@ export const bosVeri = () => ({
   abonelikler: [],
   yatirimlar: [],
   butceler: {},
+  kategoriler: { gider: [...GIDER_KAT], gelir: [...GELIR_KAT] },
   hedefler: [],
   sablonlar: [],
   hedefDagilim: {},
