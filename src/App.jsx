@@ -6,7 +6,7 @@ import { C, F } from "./lib/constants.js";
 import { uid, bugun } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
 import { bosVeri, tekrarlariUret, kurallariUygula } from "./lib/finance.js";
-import { fiyatCek, setApiKey, setModel } from "./lib/ai.js";
+import { fiyatCek, configureAI } from "./lib/ai.js";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
 import { Panel } from "./features/dashboard.jsx";
@@ -60,9 +60,8 @@ export default function FinansAppPro() {
 
   // AI istemcisini aktif kullanıcının ayarlarına göre yapılandır
   useEffect(() => {
-    setApiKey(findata?.ayarlar?.apiKey || "");
-    setModel(findata?.ayarlar?.model || "claude-opus-4-8");
-  }, [findata?.ayarlar?.apiKey, findata?.ayarlar?.model]);
+    configureAI(findata?.ayarlar || {});
+  }, [findata?.ayarlar?.apiKey, findata?.ayarlar?.model, findata?.ayarlar?.aiSaglayici, findata?.ayarlar?.yerelAdres, findata?.ayarlar?.yerelModel]);
 
   async function girisYap(username, sifre) {
     const u = kullanicilar.find((x) => x.username === username && x.sifre === sifre);

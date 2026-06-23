@@ -122,21 +122,33 @@ src/
 
 ## 5. Yapay Zekâ Entegrasyonu (`src/lib/ai.js`)
 
-- **Sağlayıcı:** Anthropic Claude — `POST https://api.anthropic.com/v1/messages`
-- **Başlıklar:** `x-api-key`, `anthropic-version: 2023-06-01`,
-  `anthropic-dangerous-direct-browser-access: true` (tarayıcıdan doğrudan erişim)
-- **Model:** Ayarlar'dan seçilir — `claude-opus-4-8` (varsayılan), `claude-sonnet-4-6`,
-  `claude-haiku-4-5`
-- **Web arama:** Fiyat/kur sorgularında `web_search_20260209` aracı
-- **Kripto fiyatı:** CoinGecko (anahtarsız, CORS açık) — AI'a düşmeden önce denenir
-- **Görsel/PDF:** Fiş (`image`) ve ekstre (`document`/`image`) base64 içerik blokları
+İki sağlayıcı; Ayarlar → Yapay Zekâ'dan seçilir (`configureAI(ayarlar)` ile tek noktadan
+yapılandırılır). Tek ortak çağrı `claudeCall(messages, useSearch)` — mesajlar Anthropic
+biçiminde tutulur, yerel sağlayıcı için OpenAI biçimine çevrilir.
 
-**Anahtar yoksa** AI özellikleri zarifçe devre dışı kalır; uygulamanın geri kalanı
-(takip, bütçe, grafik, rapor, yedek) tam çalışır.
+**A) Anthropic Claude (bulut)** — `POST api.anthropic.com/v1/messages`
+- Başlıklar: `x-api-key`, `anthropic-version: 2023-06-01`,
+  `anthropic-dangerous-direct-browser-access: true`
+- Model: `claude-opus-4-8` (varsayılan), `claude-sonnet-4-6`, `claude-haiku-4-5`
+- Web arama: `web_search_20260209` (fiyat/kur); görsel/PDF: `image`/`document` blokları
 
-> ⚠️ **Güvenlik notu:** API anahtarı tarayıcıya yazılır → yerel/kişisel kullanım
-> içindir. Çok kullanıcılı/üretim için anahtarı sunucuda tutan bir proxy gerekir
-> (gelecek mimari kararı).
+**B) Yerel model (ücretsiz, anahtarsız)** — OpenAI-uyumlu `…/v1/chat/completions`
+- **Ollama** (varsayılan `http://localhost:11434/v1`) ve **LM Studio**
+  (`http://localhost:1234/v1`) ve "Özel" adres
+- Mesajlar OpenAI biçimine çevrilir; görsel → `image_url` (vision modeli gerekir)
+- Sınır: **PDF** ve **web arama (fiyat/kur)** yerelde yok. Tarayıcı→yerel istek
+  CORS gerektirir: Ollama `OLLAMA_ORIGINS=*`, LM Studio sunucu ayarında CORS açık
+- Ayarlar'da **"Bağlantıyı Test Et"** butonu (`testAIBaglanti`)
+
+**Kripto fiyatı:** CoinGecko (anahtarsız, CORS açık) — her iki sağlayıcıda da AI'a
+düşmeden çalışır. **Elle fiyat:** her yatırım kartından girilebilir (AI gerekmez).
+
+**Hazır değilse** AI özellikleri zarifçe devre dışı; takip/bütçe/grafik/rapor/yedek
+tam çalışır.
+
+> ⚠️ **Güvenlik notu:** Anthropic anahtarı tarayıcıya yazılır → yerel/kişisel kullanım
+> içindir. Yerel model seçilirse anahtar/ücret yoktur. Çok kullanıcılı/üretim için
+> bulut anahtarını sunucuda tutan bir proxy gerekir.
 
 ---
 

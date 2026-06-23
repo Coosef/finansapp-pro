@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { C, pageTitle, sectionTitle, inputStyle, rowStyle, GIDER_KAT, ACCENT_SECENEK } from "../lib/constants.js";
 import { uid, TL2 } from "../lib/format.js";
-import { kurCek, MODEL_SECENEK, aiHazir } from "../lib/ai.js";
+import { kurCek, MODEL_SECENEK, aiHazir, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
 import { Card, Btn, DelBtn, Field } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
 
@@ -105,35 +105,102 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
 }
 
 function ApiKeyKart({ findata, setFindata, bildir }) {
-  const [anahtar, setAnahtar] = useState(findata.ayarlar?.apiKey || "");
-  const model = findata.ayarlar?.model || "claude-opus-4-8";
+  const ay = findata.ayarlar || {};
+  const saglayici = ay.aiSaglayici || "anthropic";
+  const yerel = saglayici !== "anthropic";
+  const [anahtar, setAnahtar] = useState(ay.apiKey || "");
+  const [adres, setAdres] = useState(ay.yerelAdres || "");
+  const [yModel, setYModel] = useState(ay.yerelModel || "");
+  const [test, setTest] = useState(null);
+
+  const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
+
+  function saglayiciSec(v) {
+    const guncel = { aiSaglayici: v };
+    if (v !== "anthropic") {
+      const ad = adres || varsayilanAdres(v);
+      setAdres(ad);
+      guncel.yerelAdres = ad;
+    }
+    setAyar(guncel);
+    setTest(null);
+  }
   function kaydet() {
-    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), apiKey: anahtar.trim() } }));
-    bildir(anahtar.trim() ? "API anahtarı kaydedildi" : "API anahtarı kaldırıldı");
+    setAyar({ apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+    bildir("AI ayarları kaydedildi");
   }
-  function modelSec(m) {
-    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), model: m } }));
+  async function baglantiTest() {
+    configureAI({ ...ay, aiSaglayici: saglayici, apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+    setAyar({ apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+    setTest({ durum: "bekle", mesaj: "Test ediliyor…" });
+    try {
+      await testAIBaglanti();
+      setTest({ durum: "ok", mesaj: "✓ Bağlantı başarılı" });
+    } catch (e) {
+      setTest({ durum: "err", mesaj: "✗ " + (e?.message || "Bağlantı başarısız") });
+    }
   }
+
   return (
     <Card accent={C.cyan} style={{ gridColumn: "1 / -1" }}>
-      <h3 style={sectionTitle}>🤖 Yapay Zekâ (Anthropic API)</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>
-        Asistan, fiş/ekstre okuma, doğal dil giriş, içgörü ve fiyat çekme bu anahtarla çalışır.
-        Anahtarını <b style={{ color: C.dim }}>console.anthropic.com</b>'dan alabilirsin. Anahtar yalnızca bu tarayıcıda saklanır.
+      <h3 style={sectionTitle}>🤖 Yapay Zekâ</h3>
+      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.85rem" }}>
+        Asistan, doğal dil giriş, içgörü, fiş okuma vb. bunu kullanır. Bulut (Anthropic, anahtar gerekir) ya da
+        bilgisayarında çalışan ücretsiz yerel model (Ollama / LM Studio) seçebilirsin.
         Durum: {aiHazir() ? <b style={{ color: C.greenL }}>aktif</b> : <b style={{ color: C.amber }}>tanımlı değil</b>}
       </p>
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <Field label="API Anahtarı" type="password" value={anahtar} onChange={setAnahtar} placeholder="sk-ant-..." />
-        </div>
-        <Btn onClick={kaydet} style={{ marginBottom: "0.9rem" }}>Kaydet</Btn>
+
+      <div style={{ maxWidth: 380 }}>
+        <Field label="Sağlayıcı" value={saglayici} onChange={saglayiciSec} options={SAGLAYICI_SECENEK} />
       </div>
-      <div style={{ maxWidth: 320 }}>
-        <Field label="Model" value={model} onChange={modelSec} options={MODEL_SECENEK} />
+
+      {!yerel && (
+        <>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <Field label="API Anahtarı" type="password" value={anahtar} onChange={setAnahtar} placeholder="sk-ant-..." />
+            </div>
+            <Btn onClick={kaydet} style={{ marginBottom: "0.9rem" }}>Kaydet</Btn>
+          </div>
+          <div style={{ maxWidth: 320 }}>
+            <Field label="Model" value={ay.model || "claude-opus-4-8"} onChange={(m) => setAyar({ model: m })} options={MODEL_SECENEK} />
+          </div>
+          <p style={{ color: C.faint, fontSize: "0.72rem", margin: "0 0 0.5rem" }}>
+            Anahtarını <b style={{ color: C.dim }}>console.anthropic.com</b>'dan alırsın; yalnızca bu tarayıcıda saklanır.
+          </p>
+        </>
+      )}
+
+      {yerel && (
+        <>
+          <div className="fa-grid-2">
+            <Field label="Yerel Adres (…/v1)" value={adres} onChange={setAdres} placeholder={varsayilanAdres(saglayici) || "http://localhost:11434/v1"} />
+            <Field label="Model adı" value={yModel} onChange={setYModel} placeholder={saglayici === "lmstudio" ? "yüklü model adı" : "llama3.1"} />
+          </div>
+          <Btn onClick={kaydet} style={{ marginTop: "0.2rem" }}>Kaydet</Btn>
+          <div style={{ color: C.faint, fontSize: "0.72rem", margin: "0.75rem 0 0", lineHeight: 1.5 }}>
+            {saglayici === "ollama" && (
+              <span>
+                <b style={{ color: C.dim }}>Ollama:</b> modeli indir (<code>ollama pull llama3.1</code>), CORS için şöyle başlat:
+                <br /><code>OLLAMA_ORIGINS=* ollama serve</code> &nbsp;·&nbsp; adres <code>http://localhost:11434/v1</code>
+              </span>
+            )}
+            {saglayici === "lmstudio" && (
+              <span>
+                <b style={{ color: C.dim }}>LM Studio:</b> "Local Server" sekmesinde modeli yükle, sunucuyu başlat ve <b>CORS'u aç</b>.
+                Adres <code>http://localhost:1234/v1</code>, model = yüklü model adı.
+              </span>
+            )}
+            {saglayici === "ozel" && <span>OpenAI-uyumlu herhangi bir <code>/v1</code> adresi (CORS açık olmalı).</span>}
+            <br />Fiş (görsel) için görme yeteneği olan model gerekir (örn. <code>llama3.2-vision</code>). <b>PDF</b> ve <b>web arama (fiyat/kur)</b> yerelde çalışmaz.
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: "0.9rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+        <Btn variant="ghost" onClick={baglantiTest}>Bağlantıyı Test Et</Btn>
+        {test && <span style={{ color: test.durum === "ok" ? C.greenL : test.durum === "err" ? C.redL : C.dim, fontSize: "0.8rem" }}>{test.mesaj}</span>}
       </div>
-      <p style={{ color: C.faint, fontSize: "0.72rem", margin: 0 }}>
-        ⚠️ Not: Anahtar tarayıcıya yazıldığı için yerel/kişisel kullanım içindir. Paylaşılan cihazlarda dikkatli ol.
-      </p>
     </Card>
   );
 }
