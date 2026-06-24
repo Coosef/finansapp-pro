@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { V } from "./lib/constants.js";
 import { uid, bugun, TL } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
-import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbFindataCek, pbFindataGonder } from "./lib/sync.js";
+import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre } from "./lib/finance.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { Icon, IK } from "./components/icons.jsx";
@@ -100,6 +100,7 @@ export default function FinansAppPro() {
       let veri = bosVeri();
       let bulutVar = false;
       if (syncBagliMi()) {
+        try { await pbHaneBul(); } catch { /* hane sorgusu başarısızsa kişisel devam */ }
         try { const b = await pbFindataCek(); if (b?.data) { veri = { ...bosVeri(), ...b.data }; bulutVar = true; } } catch { /* çevrimdışı */ }
       }
       if (!bulutVar) {
@@ -111,6 +112,7 @@ export default function FinansAppPro() {
     if (username.includes("@")) {
       try {
         await pbGiris(syncDurum().url, username.trim(), sifre);
+        try { await pbHaneBul(); } catch { /* hane sorgusu başarısızsa kişisel devam */ }
         let veri = bosVeri();
         const b = await pbFindataCek();
         const bulutBos = !b?.data;
@@ -137,6 +139,25 @@ export default function FinansAppPro() {
     },
     [aktif]
   );
+
+  // Ortak hane modunda, uygulamaya geri dönünce (pencere odağı) en güncel ortak
+  // veriyi çek; böylece diğer üyelerin değişiklikleri görünür. Kişisel modda gerek
+  // yok. Sessiz güncelleme (setFindataState) — yazıma yol açmaz, eko döngüsü olmaz.
+  useEffect(() => {
+    if (!aktif) return undefined;
+    let iptal = false;
+    const cek = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (!syncBagliMi() || !syncDurum().haneId) return;
+      try {
+        const b = await pbFindataCek();
+        if (!iptal && b?.data) setFindataState((prev) => ({ ...prev, ...b.data }));
+      } catch { /* çevrimdışı */ }
+    };
+    window.addEventListener("focus", cek);
+    document.addEventListener("visibilitychange", cek);
+    return () => { iptal = true; window.removeEventListener("focus", cek); document.removeEventListener("visibilitychange", cek); };
+  }, [aktif]);
 
   async function kullanicilariKaydet(yeni) {
     setKullanicilar(yeni);

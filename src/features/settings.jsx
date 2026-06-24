@@ -10,7 +10,7 @@ import { uid, bugun, buAy } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
-import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder } from "../lib/sync.js";
+import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 import { Kullanicilar } from "./users.jsx";
@@ -60,15 +60,20 @@ function BulutKart({ findata, setFindata, bildir }) {
   const [email, setEmail] = useState(durum.email || "");
   const [sifre, setSifre] = useState("");
   const [mesgul, setMesgul] = useState(false);
+  const [haneAd, setHaneAd] = useState("");
+  const [katilKod, setKatilKod] = useState("");
+  const [haneForm, setHaneForm] = useState(""); // "" | "olustur" | "katil"
 
   async function baglan(yeni) {
     if (!email.trim() || !sifre) { bildir("E-posta ve şifre gerekli", "err"); return; }
     setMesgul(true);
     try {
       const d = yeni ? await pbKayit(adres, email.trim(), sifre) : await pbGiris(adres, email.trim(), sifre);
-      setDurum(d);
+      // Üye olunan bir hane varsa hane moduna geç (veri oradan gelir)
+      try { await pbHaneBul(); } catch { /* kişisel devam */ }
+      setDurum(syncDurum());
       setSifre("");
-      // Bağlandık → buluttan çek; veri varsa uygula, yoksa mevcudu yükle
+      // Bağlandık → (hane veya kişisel) buluttan çek; veri varsa uygula, yoksa mevcudu yükle
       const bulut = await pbFindataCek();
       if (bulut?.data) { setFindata({ ...bosVeri(), ...bulut.data }); bildir("Bağlandı · bulut verisi yüklendi"); }
       else { await pbFindataGonder(findata); bildir("Bağlandı · mevcut veri buluta yüklendi"); }
@@ -86,6 +91,48 @@ function BulutKart({ findata, setFindata, bildir }) {
     finally { setMesgul(false); }
   }
 
+  async function haneOlustur() {
+    setMesgul(true);
+    try {
+      const h = await pbHaneOlustur(haneAd.trim() || "Ortak Hane", findata); // mevcut veriyi tohumla
+      setDurum(syncDurum());
+      setHaneForm(""); setHaneAd("");
+      bildir(`Hane oluşturuldu · davet kodu: ${h.kod}`);
+    } catch (e) { bildir(e?.message || "Hane oluşturulamadı", "err"); }
+    finally { setMesgul(false); }
+  }
+  async function haneKatil() {
+    const kod = katilKod.trim().toUpperCase();
+    if (!kod) { bildir("Davet kodu gerekli", "err"); return; }
+    if (!confirm("Haneye katılınca bu cihazdaki görünümün ORTAK veriyle değişir (kişisel verin hesabında saklı kalır). Devam edilsin mi?")) return;
+    setMesgul(true);
+    try {
+      await pbHaneKatil(kod);
+      const bulut = await pbFindataCek(); // artık hane verisi
+      if (bulut?.data) setFindata({ ...bosVeri(), ...bulut.data });
+      setDurum(syncDurum());
+      setHaneForm(""); setKatilKod("");
+      bildir("Haneye katıldın · ortak veri yüklendi");
+    } catch (e) { bildir(e?.message || "Katılınamadı", "err"); }
+    finally { setMesgul(false); }
+  }
+  async function haneAyril() {
+    if (!confirm("Haneden ayrılınca kendi kişisel veri görünümüne dönersin. Ortak veri diğer üyelerde kalır. Ayrılınsın mı?")) return;
+    setMesgul(true);
+    try {
+      await pbHaneAyril();
+      const bulut = await pbFindataCek(); // artık kişisel veri
+      if (bulut?.data) setFindata({ ...bosVeri(), ...bulut.data });
+      setDurum(syncDurum());
+      bildir("Haneden ayrıldın · kişisel verine dönüldü");
+    } catch (e) { bildir(e?.message || "Ayrılınamadı", "err"); }
+    finally { setMesgul(false); }
+  }
+  function koduKopyala() {
+    try { navigator.clipboard?.writeText(durum.haneKod); bildir("Davet kodu kopyalandı"); }
+    catch { bildir(`Davet kodu: ${durum.haneKod}`); }
+  }
+
   return (
     <Card style={{ padding: 20 }}>
       <div style={{ ...baslik, marginBottom: 6 }}>Bulut Senkron</div>
@@ -100,6 +147,55 @@ function BulutKart({ findata, setFindata, bildir }) {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <Btn onClick={simdiSenkronla} disabled={mesgul}>{mesgul ? "…" : "↻ Şimdi Senkronla"}</Btn>
             <Btn variant="soft" onClick={cikis}>Bağlantıyı Kes</Btn>
+          </div>
+
+          {/* ---- Ortak Hane ---- */}
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${V.border}` }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, marginBottom: 4 }}>Ortak Hane</div>
+            {durum.haneId ? (
+              <div>
+                <p style={{ ...altYazi, marginTop: 0 }}>Bu hanedeki herkes <b>aynı veriyi</b> görür ve düzenler. Davet kodunu paylaşarak yeni üye ekleyebilirsin.</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "var(--chip-green)", border: `1px solid ${V.accent}55`, borderRadius: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                  <Icon d="users" size={16} stroke={V.accent} />
+                  <span style={{ fontSize: 13, color: V.ink }}>{durum.haneAd || "Ortak Hane"}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 15, color: V.ink, fontFamily: MONO, fontWeight: 700, letterSpacing: "0.12em" }}>{durum.haneKod}</span>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <Btn onClick={koduKopyala}>Davet Kodunu Kopyala</Btn>
+                  <Btn variant="soft" onClick={haneAyril} disabled={mesgul} style={{ color: V.neg }}>Haneden Ayrıl</Btn>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p style={{ ...altYazi, marginTop: 0 }}>Eşin/ailenle aynı veriyi paylaşmak için bir hane oluştur ya da davet koduyla katıl.</p>
+                {haneForm === "" && (
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <Btn onClick={() => setHaneForm("olustur")}>Hane Oluştur</Btn>
+                    <Btn variant="soft" onClick={() => setHaneForm("katil")}>Haneye Katıl</Btn>
+                  </div>
+                )}
+                {haneForm === "olustur" && (
+                  <div>
+                    <Field label="Hane adı" value={haneAd} onChange={setHaneAd} placeholder="örn. Bizim Ev" />
+                    <p style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 10px" }}>Şu anki verin haneye aktarılır ve bir davet kodu üretilir. Kodu diğer kişiyle paylaş.</p>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <Btn onClick={haneOlustur} disabled={mesgul}>{mesgul ? "…" : "Oluştur"}</Btn>
+                      <Btn variant="soft" onClick={() => setHaneForm("")}>Vazgeç</Btn>
+                    </div>
+                  </div>
+                )}
+                {haneForm === "katil" && (
+                  <div>
+                    <Field label="Davet kodu" value={katilKod} onChange={setKatilKod} placeholder="6 haneli kod" mono />
+                    <p style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 10px" }}>Katılınca görünümün ortak veriye geçer; kişisel verin hesabında saklı kalır.</p>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <Btn onClick={haneKatil} disabled={mesgul}>{mesgul ? "…" : "Katıl"}</Btn>
+                      <Btn variant="soft" onClick={() => setHaneForm("")}>Vazgeç</Btn>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : (

@@ -14,10 +14,12 @@ beforeAll(() => {
   globalThis.Notification = function () {};
   globalThis.Notification.permission = "default";
   globalThis.Notification.requestPermission = async () => "default";
-  // Bulut senkron BAĞLI durumu: Ayarlar > BulutKart'ın bağlı dalı (Icon kullanır)
-  // de render edilsin ki eksik import gibi hatalar testte yakalansın.
+  // Bulut senkron BAĞLI + ORTAK HANE durumu: Ayarlar > BulutKart'ın bağlı ve
+  // hane dalları (Icon kullanır) render edilsin ki eksik import gibi hatalar
+  // testte yakalansın.
   globalThis.localStorage.setItem("finansapp:sync", JSON.stringify({
     url: "http://localhost:8090", token: "test-token", userId: "test-user", email: "test@ornek.com",
+    haneId: "test-hane", haneAd: "Test Hane", haneKod: "ABC234",
   }));
 });
 
