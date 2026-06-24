@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { configureAI, aiHazir, yerelMi, varsayilanAdres, GEMINI_MODEL_SECENEK, SAGLAYICI_SECENEK } from "./ai.js";
+import { configureAI, aiHazir, yerelMi, varsayilanAdres, GEMINI_MODEL_SECENEK, SAGLAYICI_SECENEK, toGemini } from "./ai.js";
 
 describe("AI sağlayıcı yapılandırması", () => {
   it("sağlayıcı listesi gemini içerir", () => {
@@ -25,6 +25,24 @@ describe("AI sağlayıcı yapılandırması", () => {
     expect(yerelMi()).toBe(true); // web arama yok, localCall yolu
     expect(GEMINI_MODEL_SECENEK.length).toBeGreaterThan(0);
   });
+  it("toGemini: metin/görsel/belge bloklarını native parts'a çevirir", () => {
+    const { contents } = toGemini([
+      { role: "user", content: [
+        { type: "text", text: "Ekstre" },
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: "QUJD" } },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "SU1H" } },
+      ] },
+      { role: "assistant", content: "tamam" },
+    ]);
+    expect(contents).toHaveLength(2);
+    expect(contents[0].role).toBe("user");
+    expect(contents[0].parts[0]).toEqual({ text: "Ekstre" });
+    expect(contents[0].parts[1].inline_data).toEqual({ mime_type: "application/pdf", data: "QUJD" });
+    expect(contents[0].parts[2].inline_data.mime_type).toBe("image/png");
+    expect(contents[1].role).toBe("model"); // assistant → model
+    expect(contents[1].parts[0]).toEqual({ text: "tamam" });
+  });
+
   it("yerel (ollama): adres varsa hazır, anahtar gerekmez", () => {
     configureAI({ aiSaglayici: "ollama", yerelAdres: "http://localhost:11434/v1", yerelModel: "qwen2.5vl:7b" });
     expect(aiHazir()).toBe(true);

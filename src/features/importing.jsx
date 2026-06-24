@@ -26,8 +26,9 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
     });
   }
 
+  // Gerçek hata mesajını göster (yutma); yoksa çağıran genel metni kullanır
   function aiHata(e) {
-    return e?.name === "AIAnahtarYok" ? e.message : null;
+    return e?.message || null;
   }
 
   async function fisYukle(e) {

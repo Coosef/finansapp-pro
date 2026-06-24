@@ -18,6 +18,8 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const WEB_SEARCH_TOOL = { type: "web_search_20260209", name: "web_search" };
 // Google Gemini — OpenAI-uyumlu uç (görsel/fiş okuma destekler; web arama yok)
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+// Gemini native uç — PDF/belge okuma (OpenAI-uyumlu uç PDF desteklemez)
+const GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta";
 
 // ---- Çalışma zamanı yapılandırması ----
 let _provider = "anthropic"; // "anthropic" | "ollama" | "lmstudio" | "ozel"
@@ -180,13 +182,57 @@ async function localCall(messages) {
   return txt.trim();
 }
 
+// ---- Gemini native çağrısı (PDF/belge için) ----
+// Mesajlardan herhangi biri belge (PDF) bloğu içeriyor mu?
+function belgeVarMi(messages) {
+  return (messages || []).some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "document"));
+}
+// Anthropic mesaj bloklarını Gemini native "contents" biçimine çevir (saf, test edilebilir)
+export function toGemini(messages) {
+  const contents = (messages || []).map((m) => {
+    const role = m.role === "assistant" ? "model" : "user";
+    if (typeof m.content === "string") return { role, parts: [{ text: m.content }] };
+    const parts = (m.content || []).map((b) => {
+      if (b.type === "text") return { text: b.text };
+      if (b.type === "image" || b.type === "document") {
+        const s = b.source || {};
+        return { inline_data: { mime_type: s.media_type || (b.type === "document" ? "application/pdf" : "image/jpeg"), data: s.data } };
+      }
+      return { text: "" };
+    });
+    return { role, parts };
+  });
+  return { contents };
+}
+async function geminiNativeCall(messages) {
+  if (!_apiKey) throw yapilandirmaHatasi();
+  const url = `${GEMINI_NATIVE}/models/${_localModel}:generateContent?key=${encodeURIComponent(_apiKey)}`;
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toGemini(messages)) });
+  } catch {
+    throw new Error("Gemini'ye ulaşılamadı. İnternet bağlantını ve API anahtarını kontrol et.");
+  }
+  if (!res.ok) {
+    let detay = "";
+    try { detay = (await res.json())?.error?.message || ""; } catch { /* yoksay */ }
+    throw new Error(`Gemini hatası ${res.status}${detay ? ": " + detay.slice(0, 160) : ""}`);
+  }
+  const data = await res.json();
+  const txt = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
+  if (!txt) throw new Error("Gemini yanıtı boş (belge çok büyük olabilir).");
+  return txt;
+}
+
 /**
  * Ortak AI çağrısı. messages = Anthropic biçimi.
  * useSearch yalnızca Anthropic'te etkilidir (yerelde web arama yok).
+ * Gemini'de PDF/belge varsa native uç kullanılır (OpenAI-uyumlu uç PDF okumaz).
  */
 export async function claudeCall(messages, useSearch = false) {
   if (!aiHazir()) throw yapilandirmaHatasi();
   if (_provider === "anthropic") return anthropicCall(messages, useSearch);
+  if (_provider === "gemini" && belgeVarMi(messages)) return geminiNativeCall(messages);
   return localCall(messages);
 }
 
