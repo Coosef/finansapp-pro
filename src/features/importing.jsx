@@ -122,6 +122,8 @@ Kategori kuralları:
 - "odeme" için kategori = "Kart Ödemesi".
 - Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/petrol/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
 
+ATLA (bunlar İŞLEM DEĞİL, listeye EKLEME): "<isim> Harcamaları" gibi kart sahibi başlık satırı; "Önceki Dönem (Hesap Özeti) Bakiyesi" / "Devreden Bakiye" gibi bakiye satırları; "Ara Toplam" / "Toplam" / "Genel Toplam" gibi toplam satırları; "Dönem Borcu" / "Asgari Ödeme" / "Son Ödeme" gibi özet satırları. Yalnızca gerçek alışveriş/harcama/faiz/ücret satırlarını çıkar.
+
 Tarih kuralı: tarihleri ekstreden AYNEN al (YIL dahil, ör. 2026). Tarih veya saat UYDURMA; açıklamaya saat ekleme.
 
 Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfalardaki işlemleri tek bir listede birleştir, tekrar etme. miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 200).`;
@@ -178,7 +180,9 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       const atlanan = ham.filter((x) => x.tip === "odeme").length;
       const kayitlar = [];
       let taksitSayisi = 0;
-      ham.filter((x) => x.tip !== "odeme").forEach((x) => {
+      // Başlık/bakiye/özet satırlarını ele (model bazen işlem sanıyor)
+      const atlaDesen = /harcamalar[ıi]\s*$|önceki dönem|devreden bakiye|ara toplam|genel toplam|dönem borcu|asgari ödeme|hesap özeti bakiye/i;
+      ham.filter((x) => x.tip !== "odeme" && !atlaDesen.test(x.aciklama || "")).forEach((x) => {
         const tip = x.tip === "gelir" ? "gelir" : "gider";
         const miktar = Math.abs(parseFloat(x.miktar) || 0);
         const temel = { baslik: x.aciklama || "İşlem", miktar, kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip };
