@@ -43,6 +43,15 @@ describe("AI sağlayıcı yapılandırması", () => {
     expect(contents[1].parts[0]).toEqual({ text: "tamam" });
   });
 
+  it("openai: anahtar gerekir, sabit uç, openai-uyumlu sayılır", () => {
+    configureAI({ aiSaglayici: "openai", apiKey: "" });
+    expect(aiHazir()).toBe(false);
+    configureAI({ aiSaglayici: "openai", apiKey: "sk-x" });
+    expect(aiHazir()).toBe(true);
+    expect(yerelMi()).toBe(true);
+    expect(varsayilanAdres("openai")).toBe("https://api.openai.com/v1");
+  });
+
   it("yerel (ollama): adres varsa hazır, anahtar gerekmez", () => {
     configureAI({ aiSaglayici: "ollama", yerelAdres: "http://localhost:11434/v1", yerelModel: "qwen2.5vl:7b" });
     expect(aiHazir()).toBe(true);

@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from "react";
 import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
 import { uid, bugun, buAy } from "../lib/format.js";
 import { TL } from "../lib/format.js";
-import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
+import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
@@ -219,7 +219,8 @@ function AiKart({ findata, setFindata, bildir }) {
   const ay = findata.ayarlar || {};
   const saglayici = ay.aiSaglayici || "anthropic";
   const gemini = saglayici === "gemini";
-  const yerel = saglayici !== "anthropic" && saglayici !== "gemini";
+  const openai = saglayici === "openai";
+  const yerel = saglayici !== "anthropic" && saglayici !== "gemini" && saglayici !== "openai";
   const [anahtar, setAnahtar] = useState(ay.apiKey || "");
   const [adres, setAdres] = useState(ay.yerelAdres || "");
   const [yModel, setYModel] = useState(ay.yerelModel || "");
@@ -242,9 +243,9 @@ function AiKart({ findata, setFindata, bildir }) {
       setModelDurum(e?.message || "Modeller alınamadı");
     }
   }
-  // Yerel sağlayıcı seçiliyse modelleri otomatik getir
+  // Yerel sağlayıcı seçiliyse modelleri otomatik getir (bulut sağlayıcıların kendi listesi var)
   useEffect(() => {
-    if (saglayici !== "anthropic" && saglayici !== "gemini") modelleriGetir(adres || varsayilanAdres(saglayici));
+    if (saglayici !== "anthropic" && saglayici !== "gemini" && saglayici !== "openai") modelleriGetir(adres || varsayilanAdres(saglayici));
     else { setModeller([]); setModelDurum(""); }
   }, [saglayici]); // eslint-disable-line
 
@@ -255,6 +256,10 @@ function AiKart({ findata, setFindata, bildir }) {
       const gm = GEMINI_MODEL_SECENEK.some((m) => m.id === yModel) ? yModel : GEMINI_MODEL_SECENEK[0].id;
       setYModel(gm);
       guncel.yerelModel = gm;
+    } else if (v === "openai") {
+      const om = OPENAI_MODEL_SECENEK.some((m) => m.id === yModel) ? yModel : OPENAI_MODEL_SECENEK[0].id;
+      setYModel(om);
+      guncel.yerelModel = om;
     } else if (v !== "anthropic") {
       const ad = adres || varsayilanAdres(v);
       setAdres(ad);
@@ -285,7 +290,7 @@ function AiKart({ findata, setFindata, bildir }) {
   // Seg sağlayıcı: anthropic + yerel seçenekler (anthropic / ollama / lmstudio / ozel)
   const segItems = SAGLAYICI_SECENEK.map((s) => ({
     id: s.id,
-    label: s.id === "anthropic" ? "Claude" : s.id === "gemini" ? "Gemini" : s.id === "ollama" ? "Ollama" : s.id === "lmstudio" ? "LM Studio" : "Özel",
+    label: s.id === "anthropic" ? "Claude" : s.id === "gemini" ? "Gemini" : s.id === "openai" ? "OpenAI" : s.id === "ollama" ? "Ollama" : s.id === "lmstudio" ? "LM Studio" : "Özel",
   }));
 
   return (
@@ -362,6 +367,26 @@ function AiKart({ findata, setFindata, bildir }) {
           />
           <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 12px" }}>
             Ücretsiz anahtarı <span style={{ fontFamily: MONO }}>aistudio.google.com</span>'dan alırsın (Google hesabı yeter). Fiş okuma ve Türkçe desteklenir; yalnızca bu tarayıcıda saklanır. Canlı fiyat/kur (web arama) yalnızca Claude'da çalışır.
+          </div>
+        </>
+      ) : openai ? (
+        <>
+          <Field
+            label="OpenAI API Anahtarı"
+            type="password"
+            value={anahtar}
+            onChange={setAnahtar}
+            placeholder="sk-..."
+            mono
+          />
+          <Field
+            label="Model"
+            value={OPENAI_MODEL_SECENEK.some((m) => m.id === yModel) ? yModel : OPENAI_MODEL_SECENEK[0].id}
+            onChange={setYModel}
+            options={OPENAI_MODEL_SECENEK}
+          />
+          <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 12px" }}>
+            Anahtarı <span style={{ fontFamily: MONO }}>platform.openai.com</span>'dan alırsın (ücretli). GPT-4o görsel okur (fiş/ekstre). Yalnızca bu tarayıcıda saklanır.
           </div>
         </>
       ) : (

@@ -20,6 +20,8 @@ const WEB_SEARCH_TOOL = { type: "web_search_20260209", name: "web_search" };
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 // Gemini native uç — PDF/belge okuma (OpenAI-uyumlu uç PDF desteklemez)
 const GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta";
+// OpenAI (ChatGPT) — standart OpenAI-uyumlu uç (görsel destekler; web arama yok)
+const OPENAI_URL = "https://api.openai.com/v1";
 
 // ---- Çalışma zamanı yapılandırması ----
 let _provider = "anthropic"; // "anthropic" | "ollama" | "lmstudio" | "ozel"
@@ -34,10 +36,20 @@ export function aiBildirimAyarla(fn) { _bildirim = fn; }
 export const SAGLAYICI_SECENEK = [
   { id: "anthropic", label: "Anthropic Claude (bulut · anahtar gerekir)" },
   { id: "gemini", label: "Google Gemini (bulut · ücretsiz katman)" },
+  { id: "openai", label: "OpenAI ChatGPT (bulut · anahtar gerekir)" },
   { id: "ollama", label: "Ollama (yerel · ücretsiz)" },
   { id: "lmstudio", label: "LM Studio (yerel · ücretsiz)" },
   { id: "ozel", label: "Özel (OpenAI-uyumlu adres)" },
 ];
+
+// OpenAI modelleri (görsel destekli)
+export const OPENAI_MODEL_SECENEK = [
+  { id: "gpt-4o-mini", label: "GPT-4o mini (hızlı/ucuz · önerilen)" },
+  { id: "gpt-4o", label: "GPT-4o (güçlü · görsel)" },
+  { id: "gpt-4.1-mini", label: "GPT-4.1 mini" },
+  { id: "gpt-4.1", label: "GPT-4.1 (en yetenekli)" },
+];
+const OPENAI_VARSAYILAN_MODEL = "gpt-4o-mini";
 
 export const MODEL_SECENEK = [
   { id: "claude-opus-4-8", label: "Claude Opus 4.8 (en yetenekli)" },
@@ -57,6 +69,7 @@ export function varsayilanAdres(saglayici) {
   if (saglayici === "lmstudio") return "http://localhost:1234/v1";
   if (saglayici === "ollama") return "http://localhost:11434/v1";
   if (saglayici === "gemini") return GEMINI_URL;
+  if (saglayici === "openai") return OPENAI_URL;
   return "";
 }
 
@@ -66,7 +79,7 @@ function openAIUyumlu(p) {
 }
 // Sağlayıcı bir API anahtarı gerektiriyor mu? (bulut)
 function anahtarGerekli(p) {
-  return p === "anthropic" || p === "gemini";
+  return p === "anthropic" || p === "gemini" || p === "openai";
 }
 
 // Tüm AI ayarlarını tek noktadan uygula (App, ayarlar değişince çağırır)
@@ -79,6 +92,9 @@ export function configureAI(ayarlar = {}) {
     // Gemini ucu sabittir; bayat yerel adresi yok say
     _baseURL = GEMINI_URL;
     if (!_localModel) _localModel = GEMINI_VARSAYILAN_MODEL;
+  } else if (_provider === "openai") {
+    _baseURL = OPENAI_URL;
+    if (!_localModel) _localModel = OPENAI_VARSAYILAN_MODEL;
   } else {
     _baseURL = (ayarlar.yerelAdres || varsayilanAdres(_provider) || "").trim();
   }
@@ -98,7 +114,9 @@ function yapilandirmaHatasi() {
     ? "AI anahtarı tanımlı değil. Ayarlar → Yapay Zekâ'dan Anthropic API anahtarını gir."
     : _provider === "gemini"
       ? "Gemini API anahtarı tanımlı değil. Ayarlar → Yapay Zekâ'dan Google AI Studio anahtarını gir."
-      : "Yerel model adresi tanımlı değil. Ayarlar → Yapay Zekâ'dan Ollama/LM Studio adresini gir.";
+      : _provider === "openai"
+        ? "OpenAI API anahtarı tanımlı değil. Ayarlar → Yapay Zekâ'dan OpenAI anahtarını gir."
+        : "Yerel model adresi tanımlı değil. Ayarlar → Yapay Zekâ'dan Ollama/LM Studio adresini gir.";
   const e = new Error(msg);
   e.name = "AIAnahtarYok"; // özellikler bu adı kontrol ediyor
   return e;
