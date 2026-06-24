@@ -12,6 +12,7 @@ import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI,
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
 import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
 import { Kullanicilar } from "./users.jsx";
 
 const baslik = { fontSize: "15px", fontWeight: 600, color: V.ink, fontFamily: SERIF, margin: "0 0 14px" };
