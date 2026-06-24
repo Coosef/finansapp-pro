@@ -1,12 +1,14 @@
 // ============================================================
 // Rapor & Yedek: CSV, PDF (HTML), JSON yedek/geri yükle, AI rapor
+// Zümrüt & Altın — açık/koyu tema
 // ============================================================
 import { useState, useRef } from "react";
-import { C, pageTitle, sectionTitle } from "../lib/constants.js";
+import { V, F, SERIF } from "../lib/constants.js";
 import { TL, buAy, bugun } from "../lib/format.js";
 import { bosVeri } from "../lib/finance.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { Card, Btn, SubNav } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
 import { IceAktar } from "./importing.jsx";
 
 // Veri sekmesi: İçe Aktar + Rapor & Yedek (alt sekmeli)
@@ -14,8 +16,8 @@ export function Veri(props) {
   const [alt, setAlt] = useState("ice");
   return (
     <div>
-      <h2 style={pageTitle}>Veri</h2>
-      <SubNav value={alt} onChange={setAlt} items={[{ id: "ice", label: "📥 İçe Aktar" }, { id: "rapor", label: "📄 Rapor & Yedek" }]} />
+      <h2 className="serif" style={{ margin: "0 0 0.85rem", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF, color: V.ink }}>Veri</h2>
+      <SubNav value={alt} onChange={setAlt} items={[{ id: "ice", label: "İçe Aktar" }, { id: "rapor", label: "Rapor & Yedek" }]} />
       {alt === "ice" && <IceAktar findata={props.findata} bildir={props.bildir} ekle={props.ekle} kategoriOgren={props.kategoriOgren} />}
       {alt === "rapor" && <Rapor {...props} />}
     </div>
@@ -59,7 +61,7 @@ export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGi
     const ayGider = {};
     findata.giderler.filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
     const katSatir = Object.entries(ayGider).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${k}</td><td style="text-align:right">${TL(v)}</td></tr>`).join("");
-    const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Finans Raporu</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;padding:0 20px}h1{color:#10B981}.kart{display:inline-block;border:1px solid #ddd;border-radius:10px;padding:14px 18px;margin:6px 8px 6px 0}.kart b{display:block;font-size:1.3rem}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:8px;border-bottom:1px solid #eee;font-size:0.9rem}@media print{.no-print{display:none}}</style></head><body><h1>₺ FinansApp — Aylık Rapor</h1><p>${user.ad} · ${bugun()}</p><div><div class="kart">Net Varlık<b>${TL(netDeger)}</b></div><div class="kart">Toplam Gelir<b style="color:#16A34A">${TL(toplamGelir)}</b></div><div class="kart">Toplam Gider<b style="color:#DC2626">${TL(toplamGider)}</b></div><div class="kart">Yatırım<b style="color:#10B981">${TL(yatirimDeger)}</b></div></div><h3>Bu Ay Kategori Giderleri (${ay})</h3><table><tr><th style="text-align:left">Kategori</th><th style="text-align:right">Tutar</th></tr>${katSatir || '<tr><td colspan=2>Veri yok</td></tr>'}</table><button class="no-print" onclick="window.print()" style="margin-top:24px;padding:10px 18px;background:#10B981;color:#fff;border:none;border-radius:8px;cursor:pointer">PDF olarak yazdır / kaydet</button></body></html>`;
+    const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Finans Raporu</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;padding:0 20px}h1{color:#1D5240}.kart{display:inline-block;border:1px solid #ddd;border-radius:10px;padding:14px 18px;margin:6px 8px 6px 0}.kart b{display:block;font-size:1.3rem}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:8px;border-bottom:1px solid #eee;font-size:0.9rem}@media print{.no-print{display:none}}</style></head><body><h1>₺ FinansApp — Aylık Rapor</h1><p>${user.ad} · ${bugun()}</p><div><div class="kart">Net Varlık<b>${TL(netDeger)}</b></div><div class="kart">Toplam Gelir<b style="color:#1E7A50">${TL(toplamGelir)}</b></div><div class="kart">Toplam Gider<b style="color:#C75D4A">${TL(toplamGider)}</b></div><div class="kart">Yatırım<b style="color:#1D5240">${TL(yatirimDeger)}</b></div></div><h3>Bu Ay Kategori Giderleri (${ay})</h3><table><tr><th style="text-align:left">Kategori</th><th style="text-align:right">Tutar</th></tr>${katSatir || '<tr><td colspan=2>Veri yok</td></tr>'}</table><button class="no-print" onclick="window.print()" style="margin-top:24px;padding:10px 18px;background:#1D5240;color:#E9D9B4;border:none;border-radius:8px;cursor:pointer">PDF olarak yazdır / kaydet</button></body></html>`;
     indir(html, `finansapp-rapor-${bugun()}.html`, "text/html");
     bildir("Rapor indirildi — açıp 'PDF olarak yazdır' ile kaydedebilirsin");
   }
@@ -94,39 +96,77 @@ export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGi
       setYukleniyor(false);
     }
   }
+
+  const sectionTitle = { margin: "0 0 0.4rem", fontSize: "0.82rem", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 };
+  const enInk = "#F4F1E9"; // emerald hero üstü açık metin
+
+  // Tema kartı — başlık, açıklama, ikon, aksiyon
+  function AksiyonKart({ icon, baslik, aciklama, children }) {
+    return (
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "0.4rem" }}>
+          <Icon d={icon} size={16} stroke={V.accent} />
+          <h3 style={{ ...sectionTitle, margin: 0 }}>{baslik}</h3>
+        </div>
+        <p style={{ color: V.ink3, fontSize: "0.8rem", margin: "0 0 1rem" }}>{aciklama}</p>
+        {children}
+      </Card>
+    );
+  }
+
   return (
     <div>
-      <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1.25rem" }}>Dışa aktar, yedekle, PDF rapor al veya AI'dan analiz iste.</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: "1rem", marginBottom: "1.25rem" }}>
-        <Card>
-          <h3 style={sectionTitle}>📊 CSV (Excel)</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1rem" }}>Tüm işlemleri tablo olarak indir.</p>
-          <Btn variant="ghost" onClick={csvAktar} style={{ width: "100%" }}>CSV İndir</Btn>
-        </Card>
-        <Card>
-          <h3 style={sectionTitle}>📄 PDF Rapor</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1rem" }}>Formatlı rapor; açıp PDF kaydet/yazdır.</p>
-          <Btn variant="ghost" onClick={pdfRapor} style={{ width: "100%" }}>PDF Rapor</Btn>
-        </Card>
-        <Card>
-          <h3 style={sectionTitle}>💾 Yedekle</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1rem" }}>Tüm veriyi JSON indir.</p>
-          <Btn variant="ghost" onClick={yedekAl} style={{ width: "100%" }}>Yedek Al</Btn>
-        </Card>
-        <Card>
-          <h3 style={sectionTitle}>♻️ Geri Yükle</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1rem" }}>JSON yedeği geri yükle.</p>
-          <input ref={geriRef} type="file" accept=".json" onChange={geriYukle} style={{ display: "none" }} />
-          <Btn variant="ghost" onClick={() => geriRef.current?.click()} style={{ width: "100%" }}>Yedek Seç</Btn>
-        </Card>
-      </div>
-      <Card accent={C.cyan}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: rapor ? "1rem" : 0, flexWrap: "wrap", gap: "0.5rem" }}>
-          <h3 style={{ ...sectionTitle, margin: 0 }}>✨ AI Aylık Rapor</h3>
-          <Btn onClick={aiRapor} disabled={yukleniyor}>{yukleniyor ? "Yazılıyor…" : "Rapor Oluştur"}</Btn>
+      <p style={{ color: V.ink3, fontSize: "12.5px", margin: "0 0 1.25rem" }}>Dışa aktar, yedekle, PDF rapor al veya AI'dan analiz iste.</p>
+
+      {/* Emerald hero — net varlık */}
+      <div style={{ background: V.emerald, borderRadius: 16, padding: "22px 24px", marginBottom: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "1rem" }}>
+        <div>
+          <div style={{ fontSize: "11.5px", color: V.sage, textTransform: "uppercase", letterSpacing: "0.06em" }}>Net Varlık</div>
+          <div className="num" style={{ fontSize: "32px", fontWeight: 700, color: enInk, margin: "8px 0 0", letterSpacing: "-0.02em" }}>{TL(netDeger)}</div>
         </div>
-        {!aiHazir() && !rapor && <p style={{ color: C.amber, fontSize: "0.78rem", margin: "0.75rem 0 0" }}>AI rapor için Ayarlar'dan Anthropic anahtarı gir.</p>}
-        {rapor && <div style={{ color: C.dim, fontSize: "0.88rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rapor}</div>}
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "10.5px", color: V.sage, textTransform: "uppercase", letterSpacing: "0.06em" }}>Gelir</div>
+            <div className="num" style={{ fontSize: "15px", fontWeight: 600, color: V.cream, marginTop: 4 }}>{TL(toplamGelir)}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "10.5px", color: V.sage, textTransform: "uppercase", letterSpacing: "0.06em" }}>Gider</div>
+            <div className="num" style={{ fontSize: "15px", fontWeight: 600, color: V.cream, marginTop: 4 }}>{TL(toplamGider)}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "10.5px", color: V.sage, textTransform: "uppercase", letterSpacing: "0.06em" }}>Yatırım</div>
+            <div className="num" style={{ fontSize: "15px", fontWeight: 600, color: V.cream, marginTop: 4 }}>{TL(yatirimDeger)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: "12px", marginBottom: "1.25rem" }}>
+        <AksiyonKart icon="doc" baslik="CSV (Excel)" aciklama="Tüm işlemleri tablo olarak indir.">
+          <Btn variant="soft" onClick={csvAktar} style={{ width: "100%" }}><Icon d="download" size={15} /> CSV İndir</Btn>
+        </AksiyonKart>
+        <AksiyonKart icon="doc" baslik="PDF Rapor" aciklama="Formatlı rapor; açıp PDF kaydet/yazdır.">
+          <Btn variant="soft" onClick={pdfRapor} style={{ width: "100%" }}><Icon d="download" size={15} /> PDF Rapor</Btn>
+        </AksiyonKart>
+        <AksiyonKart icon="download" baslik="JSON Yedek Al" aciklama="Tüm veriyi JSON dosyası olarak indir.">
+          <Btn variant="soft" onClick={yedekAl} style={{ width: "100%" }}><Icon d="download" size={15} /> Yedek Al</Btn>
+        </AksiyonKart>
+        <AksiyonKart icon="upload" baslik="Yedek Yükle" aciklama="JSON yedeği geri yükle.">
+          <input ref={geriRef} type="file" accept="application/json,.json" onChange={geriYukle} style={{ display: "none" }} />
+          <Btn variant="soft" onClick={() => geriRef.current?.click()} style={{ width: "100%" }}><Icon d="upload" size={15} /> Yedek Seç</Btn>
+        </AksiyonKart>
+      </div>
+
+      {/* AI Aylık Rapor — altın aksanlı kart */}
+      <Card style={{ borderColor: V.border2 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: rapor ? "1rem" : 0, flexWrap: "wrap", gap: "0.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon d="spark" size={17} stroke={V.accent} />
+            <h3 style={{ ...sectionTitle, margin: 0 }}>AI Aylık Rapor</h3>
+          </div>
+          <Btn variant="gold" onClick={aiRapor} disabled={yukleniyor}>{yukleniyor ? "Yazılıyor…" : "Rapor Oluştur"}</Btn>
+        </div>
+        {!aiHazir() && !rapor && <p style={{ color: V.accent, fontSize: "0.78rem", margin: "0.75rem 0 0" }}>AI rapor için Ayarlar'dan Anthropic anahtarı gir.</p>}
+        {rapor && <div style={{ color: V.ink2, fontSize: "0.88rem", lineHeight: 1.6, whiteSpace: "pre-wrap", fontFamily: F, marginTop: "1rem" }}>{rapor}</div>}
       </Card>
     </div>
   );

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre } from "./finance.js";
 
 describe("bosVeri", () => {
   it("beklenen alanları içerir", () => {
@@ -8,9 +8,10 @@ describe("bosVeri", () => {
       expect(d).toHaveProperty(k);
     }
   });
-  it("varsayılan accent zümrüt, sağlayıcı anthropic", () => {
+  it("varsayılan accent altın, tema açık, sağlayıcı anthropic", () => {
     const a = bosVeri().ayarlar;
-    expect(a.accent).toBe("#10B981");
+    expect(a.accent).toBe("#C79A4B");
+    expect(a.tema).toBe("acik");
     expect(a.aiSaglayici).toBe("anthropic");
   });
   it("varsayılan kategoriler dolu", () => {
@@ -193,5 +194,40 @@ describe("yaklasanOdemeler", () => {
   it("aralık dışındakileri elemeler", () => {
     const r = yaklasanOdemeler({ abonelikler: [{ baslik: "X", miktar: 1, tarih: "2026-06-25" }], sablonlar: [] }, "2026-06-01", 3);
     expect(r.length).toBe(0);
+  });
+});
+
+describe("donemAraligi / donemde / donemFiltre", () => {
+  it("buAy ayın ilk ve son gününü döner", () => {
+    const a = donemAraligi("buAy", "2026-06-24");
+    expect(a).toEqual({ start: "2026-06-01", end: "2026-06-30" });
+  });
+  it("gecenAy bir önceki ayı döner", () => {
+    expect(donemAraligi("gecenAy", "2026-06-24")).toEqual({ start: "2026-05-01", end: "2026-05-31" });
+  });
+  it("yıl başında gecenAy önceki yılın aralığına geçer", () => {
+    expect(donemAraligi("gecenAy", "2026-01-10")).toEqual({ start: "2025-12-01", end: "2025-12-31" });
+  });
+  it("buYil tüm yılı, tum ise null döner", () => {
+    expect(donemAraligi("buYil", "2026-06-24")).toEqual({ start: "2026-01-01", end: "2026-12-31" });
+    expect(donemAraligi("tum", "2026-06-24")).toBe(null);
+  });
+  it("donemde aralığı kapsar (sınırlar dahil)", () => {
+    const a = donemAraligi("buAy", "2026-06-24");
+    expect(donemde("2026-06-01", a)).toBe(true);
+    expect(donemde("2026-06-30", a)).toBe(true);
+    expect(donemde("2026-05-31", a)).toBe(false);
+    expect(donemde("2026-07-01", a)).toBe(false);
+    expect(donemde("2026-05-31", null)).toBe(true);
+  });
+  it("donemFiltre gelir/gideri döneme göre eler, tum ise dokunmaz", () => {
+    const fd = {
+      gelirler: [{ tarih: "2026-06-10", miktar: 100 }, { tarih: "2026-05-10", miktar: 50 }],
+      giderler: [{ tarih: "2026-06-20", miktar: 30 }, { tarih: "2026-04-01", miktar: 20 }],
+    };
+    const r = donemFiltre(fd, "buAy", "2026-06-24");
+    expect(r.gelirler.length).toBe(1);
+    expect(r.giderler.length).toBe(1);
+    expect(donemFiltre(fd, "tum", "2026-06-24")).toBe(fd);
   });
 });

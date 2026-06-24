@@ -1,245 +1,227 @@
 // ============================================================
-// Listeler: Gelir, Gider, Abonelik + İşlem ekle/düzenle modalı
-// Arama/filtre + satır düzenleme (✎) destekli
+// İşlemler — birleşik liste (gelir + gider + abonelik), Zümrüt & Altın
+// Pill filtre + arama + satır düzenleme/silme; tek İşlem/Abonelik modalı
 // ============================================================
 import { useState } from "react";
-import { C, pageTitle, rowStyle, tagStyle, sectionTitle, inputStyle } from "../lib/constants.js";
-import { TL, TL2, kategoriAnahtar, parseJSON } from "../lib/format.js";
-import { claudeCall } from "../lib/ai.js";
-import { Card, Btn, DelBtn, EditBtn, Bos, Modal, Field, Toggle, SubNav } from "../components/ui.jsx";
+import { V, F, SERIF, MONO, AY_ADI } from "../lib/constants.js";
+import { TL } from "../lib/format.js";
+import { Icon } from "../components/icons.jsx";
+import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 
-// ---- Filtre yardımcıları ----
-function filtreUygula(kayitlar, f) {
-  const q = (f.q || "").toLowerCase();
-  return kayitlar.filter((x) => {
-    if (q && !(x.baslik || "").toLowerCase().includes(q)) return false;
-    if (f.kat && x.kategori !== f.kat) return false;
-    if (f.ay && !(x.tarih || "").startsWith(f.ay)) return false;
-    return true;
-  });
-}
+// ISO tarihi "23 Haz" gibi kısa biçimde göster
+const isoKisa = (iso) => {
+  const [, m, d] = String(iso).split("-");
+  return `${+d} ${AY_ADI[+m - 1]}`;
+};
 
-function ListeFiltre({ filtre, setFiltre, kategoriler, aylar }) {
+// Tip -> ikon dairesi + tutar rengi/işaret bilgileri
+const TIP_STIL = {
+  gelir: { bg: V.chipGreen, renk: V.pos, icon: "arrowUp", sign: "+", amtRenk: V.pos },
+  gider: { bg: V.chipRed, renk: V.neg, icon: "arrowDown", sign: "−", amtRenk: V.neg },
+  abonelik: { bg: V.chipGold, renk: V.gold, icon: "repeat", sign: "−", amtRenk: V.neg },
+};
+
+function IslemSatir({ t, son, onDuzenle, onSil }) {
+  const s = TIP_STIL[t.tip] || TIP_STIL.gider;
+  const tekrar = t.otomatik || t.tekrar || t.tip === "abonelik";
   return (
-    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-      <input value={filtre.q} onChange={(e) => setFiltre((f) => ({ ...f, q: e.target.value }))} placeholder="🔍 Ara…" style={{ ...inputStyle, flex: 1, minWidth: 140 }} />
-      <select value={filtre.kat} onChange={(e) => setFiltre((f) => ({ ...f, kat: e.target.value }))} style={{ ...inputStyle, width: "auto" }}>
-        <option value="">Tüm kategoriler</option>
-        {kategoriler.map((k) => <option key={k} value={k}>{k}</option>)}
-      </select>
-      <select value={filtre.ay} onChange={(e) => setFiltre((f) => ({ ...f, ay: e.target.value }))} style={{ ...inputStyle, width: "auto" }}>
-        <option value="">Tüm aylar</option>
-        {aylar.map((a) => <option key={a} value={a}>{a}</option>)}
-      </select>
-    </div>
-  );
-}
-
-function kategoriListesi(kayitlar) {
-  return [...new Set(kayitlar.map((x) => x.kategori).filter(Boolean))].sort();
-}
-function ayListesi(kayitlar) {
-  return [...new Set(kayitlar.map((x) => (x.tarih || "").slice(0, 7)).filter(Boolean))].sort().reverse();
-}
-
-// Gelir / Gider / Abonelik tek ekranda, alt sekmeli
-export function Islemler({ findata, onGelirEkle, onGiderEkle, onAbonelikEkle, onSil, onDuzenle, bildir }) {
-  const [alt, setAlt] = useState("gider");
-  const toplamGelir = findata.gelirler.reduce((s, x) => s + x.miktar, 0);
-  return (
-    <div>
-      <h2 style={pageTitle}>İşlemler</h2>
-      <SubNav value={alt} onChange={setAlt} items={[{ id: "gider", label: "💸 Gider" }, { id: "gelir", label: "💰 Gelir" }, { id: "abonelik", label: "🔄 Abonelik" }]} />
-      {alt === "gider" && <GiderListe findata={findata} onEkle={onGiderEkle} onSil={(id) => onSil("gider", id)} onDuzenle={(k) => onDuzenle("gider", k)} />}
-      {alt === "gelir" && <Liste baslik="Gelirler" renk={C.greenL} toplam={toplamGelir} kayitlar={findata.gelirler} onEkle={onGelirEkle} onSil={(id) => onSil("gelir", id)} onDuzenle={(k) => onDuzenle("gelir", k)} altBilgi={(x) => `${x.kategori} · ${x.tarih}`} />}
-      {alt === "abonelik" && <Abonelikler findata={findata} bildir={bildir} onEkle={onAbonelikEkle} onSil={(id) => onSil("abonelik", id)} onDuzenle={(k) => onDuzenle("abonelik", k)} />}
-    </div>
-  );
-}
-
-export function Liste({ baslik, renk, toplam, kayitlar, onEkle, onSil, onDuzenle, altBilgi }) {
-  const [filtre, setFiltre] = useState({ q: "", kat: "", ay: "" });
-  const gosterilen = filtreUygula(kayitlar, filtre).sort((a, b) => (b.tarih || "").localeCompare(a.tarih || ""));
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
-        <div>
-          <h2 style={pageTitle}>{baslik}</h2>
-          <p style={{ margin: 0, color: renk, fontWeight: 600 }}>Toplam: {TL(toplam)}</p>
-        </div>
-        <Btn onClick={onEkle}>+ Ekle</Btn>
+    <div
+      onClick={() => onDuzenle(t.tip, t)}
+      style={{
+        display: "flex", alignItems: "center", gap: "13px",
+        padding: "13px 0", borderBottom: son ? "none" : `1px solid ${V.line}`, cursor: "pointer",
+      }}
+    >
+      <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: s.bg, color: s.renk, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon d={s.icon} size={17} />
       </div>
-      {kayitlar.length >= 4 && <ListeFiltre filtre={filtre} setFiltre={setFiltre} kategoriler={kategoriListesi(kayitlar)} aylar={ayListesi(kayitlar)} />}
-      {!kayitlar.length && <Bos mesaj="Henüz kayıt yok." />}
-      {gosterilen.map((x) => (
-        <div key={x.id} style={rowStyle}>
-          <div>
-            <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem" }}>
-              {x.baslik}
-              {x.otomatik && <span style={tagStyle(C.cyan)}>OTOMATİK</span>}
-              {x.hane && <span style={tagStyle(C.purple)}>HANE</span>}
-            </p>
-            <p style={{ margin: 0, color: C.dimmer, fontSize: "0.73rem" }}>{altBilgi(x)}</p>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <p style={{ margin: "0 0.25rem 0 0", fontWeight: 700 }}>{TL(x.miktar)}</p>
-            {onDuzenle && <EditBtn onClick={() => onDuzenle(x)} />}
-            <DelBtn onClick={() => onSil(x.id)} />
-          </div>
-        </div>
-      ))}
-      {kayitlar.length > 0 && !gosterilen.length && <p style={{ color: C.faint, fontSize: "0.82rem", textAlign: "center", padding: "1rem" }}>Filtreye uyan kayıt yok.</p>}
-    </div>
-  );
-}
-
-export function GiderListe({ findata, onEkle, onSil, onDuzenle }) {
-  const toplam = findata.giderler.reduce((s, x) => s + x.miktar, 0);
-  const [acik, setAcik] = useState(null);
-  const [filtre, setFiltre] = useState({ q: "", kat: "", ay: "" });
-  const gosterilen = filtreUygula(findata.giderler, filtre).sort((a, b) => (b.tarih || "").localeCompare(a.tarih || ""));
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
-        <div>
-          <h2 style={pageTitle}>Giderler</h2>
-          <p style={{ margin: 0, color: C.redL, fontWeight: 600 }}>Toplam: {TL(toplam)}</p>
-        </div>
-        <Btn onClick={onEkle}>+ Ekle</Btn>
-      </div>
-      {findata.giderler.length >= 4 && <ListeFiltre filtre={filtre} setFiltre={setFiltre} kategoriler={kategoriListesi(findata.giderler)} aylar={ayListesi(findata.giderler)} />}
-      {!findata.giderler.length && <Bos mesaj="Henüz gider yok. Manuel ekleyin veya 'Veri → İçe Aktar'dan fiş/ekstre yükleyin." />}
-      {gosterilen.map((x) => (
-        <div key={x.id}>
-          <div style={{ ...rowStyle, cursor: x.kalemler?.length ? "pointer" : "default" }} onClick={() => x.kalemler?.length && setAcik(acik === x.id ? null : x.id)}>
-            <div>
-              <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem" }}>
-                {x.baslik}
-                {x.kalemler?.length ? <span style={{ color: C.indigoL, fontSize: "0.72rem", marginLeft: 6 }}>▸ {x.kalemler.length} kalem</span> : null}
-                {x.kaynak === "fis" && <span style={tagStyle("#10A37F")}>FİŞ</span>}
-                {x.kaynak === "ekstre" && <span style={tagStyle(C.indigo)}>EKSTRE</span>}
-                {x.otomatik && <span style={tagStyle(C.cyan)}>OTOMATİK</span>}
-                {x.hane && <span style={tagStyle(C.purple)}>HANE</span>}
-              </p>
-              <p style={{ margin: 0, color: C.dimmer, fontSize: "0.73rem" }}>{x.kategori} · {x.tarih}</p>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <p style={{ margin: "0 0.25rem 0 0", fontWeight: 700 }}>{TL(x.miktar)}</p>
-              {onDuzenle && <EditBtn onClick={(e) => { e.stopPropagation(); onDuzenle(x); }} />}
-              <DelBtn onClick={(e) => { e.stopPropagation(); onSil(x.id); }} />
-            </div>
-          </div>
-          {acik === x.id && x.kalemler?.length > 0 && (
-            <div style={{ background: "#080A10", border: `1px solid ${C.line}`, borderTop: "none", borderRadius: "0 0 0.6rem 0.6rem", padding: "0.5rem 1rem", marginTop: -8, marginBottom: "0.5rem" }}>
-              {x.kalemler.map((k, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "0.3rem 0", fontSize: "0.8rem", borderBottom: i < x.kalemler.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                  <span style={{ color: C.dim }}>{k.ad} {k.miktar ? <span style={{ color: C.faint }}>× {k.miktar}</span> : null}</span>
-                  <span style={{ color: C.text }}>{TL2(k.fiyat)}</span>
-                </div>
-              ))}
-            </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: "13.5px", fontWeight: 500, color: V.ink, display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.baslik}</span>
+          {tekrar && (
+            <span title="Her ay tekrarlanır" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "10px", color: V.gold, background: V.chipGold, padding: "1px 6px", borderRadius: 6, fontWeight: 600, flexShrink: 0 }}>⟳ aylık</span>
           )}
         </div>
-      ))}
-      {findata.giderler.length > 0 && !gosterilen.length && <p style={{ color: C.faint, fontSize: "0.82rem", textAlign: "center", padding: "1rem" }}>Filtreye uyan kayıt yok.</p>}
+        <div style={{ fontSize: "11.5px", color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {t.kategori} · {isoKisa(t.tarih)}
+        </div>
+      </div>
+      <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: s.amtRenk, flexShrink: 0 }}>
+        {s.sign}{TL(t.miktar)}
+      </span>
+      <DelBtn onClick={() => onSil(t.tip, t.id)} />
     </div>
   );
 }
 
-export function Abonelikler({ findata, bildir, onEkle, onSil, onDuzenle }) {
-  const toplam = findata.abonelikler.reduce((s, x) => s + x.miktar, 0);
-  const [denetim, setDenetim] = useState(null);
-  const [denetleniyor, setDenetleniyor] = useState(false);
-  async function denetle() {
-    if (!findata.abonelikler.length) {
-      bildir("Önce abonelik ekleyin");
-      return;
-    }
-    setDenetleniyor(true);
-    try {
-      const liste = findata.abonelikler.map((a) => ({ ad: a.baslik, kategori: a.kategori, aylik: a.miktar }));
-      const txt = await claudeCall(
-        [{ role: "user", content: `Türk kullanıcının abonelikleri: ${JSON.stringify(liste)}. Toplam aylık ${toplam}₺. Tasarruf gözüyle değerlendir: hangileri pahalı/gereksiz olabilir, yıllık plana geçilebilir mi, benzer ucuz alternatif var mı. SADECE JSON: {"ozet":"tek cümle","oneriler":["...","..."]}` }],
-        true
-      );
-      setDenetim(parseJSON(txt));
-    } catch (e) {
-      bildir(e?.name === "AIAnahtarYok" ? e.message : "Denetim yapılamadı", "err");
-    } finally {
-      setDenetleniyor(false);
-    }
-  }
+export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelirEkle, onGiderEkle, onAbonelikEkle }) {
+  const [filter, setFilter] = useState("tumu");
+  const [q, setQ] = useState("");
+
+  const hepsi = [
+    ...(fd.gelirler || []).map((x) => ({ ...x, tip: "gelir" })),
+    ...(fd.giderler || []).map((x) => ({ ...x, tip: "gider" })),
+    ...(findata.abonelikler || []).map((x) => ({ ...x, tip: "abonelik" })),
+  ].sort((a, b) => String(b.tarih || "").localeCompare(String(a.tarih || "")));
+
+  const aranan = q.trim().toLocaleLowerCase("tr");
+  const liste = hepsi.filter((t) => {
+    if (filter !== "tumu" && t.tip !== filter) return false;
+    if (!aranan) return true;
+    const metin = `${t.baslik || ""} ${t.kategori || ""}`.toLocaleLowerCase("tr");
+    return metin.includes(aranan);
+  });
+
+  const FILTRELER = [
+    { id: "tumu", label: "Tümü" },
+    { id: "gelir", label: "Gelir" },
+    { id: "gider", label: "Gider" },
+    { id: "abonelik", label: "Abonelik" },
+  ];
+
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", flexWrap: "wrap", gap: "0.6rem" }}>
-        <div>
-          <h2 style={pageTitle}>Abonelikler</h2>
-          <p style={{ margin: 0, color: C.amber, fontWeight: 600 }}>Aylık: {TL(toplam)} · Yıllık: {TL(toplam * 12)}</p>
+    <div className="fa-page">
+      <div style={{ display: "flex", gap: "9px", marginBottom: "18px", alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, padding: 4, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 11 }}>
+          {FILTRELER.map((ff) => {
+            const on = filter === ff.id;
+            return (
+              <button
+                key={ff.id}
+                onClick={() => setFilter(ff.id)}
+                className="fa-btn"
+                style={{ border: "none", borderRadius: 8, padding: "8px 13px", fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: F, background: on ? V.emerald : "transparent", color: on ? "#F4F1E9" : V.ink2, whiteSpace: "nowrap" }}
+              >
+                {ff.label}
+              </button>
+            );
+          })}
         </div>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <Btn variant="ghost" onClick={denetle} disabled={denetleniyor}>{denetleniyor ? "Denetleniyor…" : "🔍 Denetle"}</Btn>
-          <Btn onClick={onEkle}>+ Ekle</Btn>
+        <div style={{ flex: 1, minWidth: 160, display: "flex", alignItems: "center", gap: "8px", padding: "8px 13px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 11, color: V.ink3 }}>
+          <Icon d="search" size={15} stroke={V.ink3} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="İşlem ara…"
+            style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none", color: V.ink, fontSize: "13px", fontFamily: F }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: "7px", flexWrap: "wrap" }}>
+          <Btn variant="ghost" onClick={onGelirEkle} style={{ padding: "9px 13px" }}><Icon d="plus" size={15} /> Gelir</Btn>
+          <Btn variant="ghost" onClick={onGiderEkle} style={{ padding: "9px 13px" }}><Icon d="plus" size={15} /> Gider</Btn>
+          <Btn variant="ghost" onClick={onAbonelikEkle} style={{ padding: "9px 13px" }}><Icon d="plus" size={15} /> Abonelik</Btn>
         </div>
       </div>
-      {denetim && (
-        <Card accent={C.cyan} style={{ marginBottom: "1rem" }}>
-          <h3 style={sectionTitle}>🔍 Abonelik Denetimi</h3>
-          <p style={{ color: C.text, fontSize: "0.9rem", margin: "0 0 0.85rem", lineHeight: 1.5 }}>{denetim.ozet}</p>
-          {(denetim.oneriler || []).map((o, i) => (
-            <div key={i} style={{ display: "flex", gap: "0.6rem", marginBottom: "0.5rem", alignItems: "flex-start" }}>
-              <span style={{ color: C.amber, flexShrink: 0 }}>💡</span>
-              <span style={{ color: C.dim, fontSize: "0.85rem", lineHeight: 1.45 }}>{o}</span>
-            </div>
+
+      {liste.length === 0 ? (
+        <Bos baslik="İşlem yok" mesaj="Bu dönemde işlem bulunmuyor." icon="doc" />
+      ) : (
+        <Card style={{ padding: "6px 18px" }}>
+          {liste.map((t, i) => (
+            <IslemSatir key={`${t.tip}-${t.id}`} t={t} son={i === liste.length - 1} onDuzenle={onDuzenle} onSil={onSil} />
           ))}
         </Card>
       )}
-      {!findata.abonelikler.length && <Bos mesaj="Henüz abonelik yok." />}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "1rem" }}>
-        {findata.abonelikler.map((a) => (
-          <Card key={a.id} accent={C.amber}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <p style={{ margin: "0 0 0.25rem", fontWeight: 700, fontSize: "1rem" }}>{a.baslik}</p>
-                <p style={{ margin: "0 0 0.6rem", color: C.dimmer, fontSize: "0.74rem" }}>{a.kategori}</p>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: "1.1rem" }}>{TL(a.miktar)}<span style={{ color: C.faint, fontWeight: 400, fontSize: "0.72rem" }}>/ay</span></p>
-              </div>
-              <div style={{ display: "flex", gap: "0.4rem" }}>
-                {onDuzenle && <EditBtn onClick={() => onDuzenle(a)} />}
-                <DelBtn onClick={() => onSil(a.id)} />
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
     </div>
   );
 }
 
-export function IslemModal({ title, form, setForm, kategoriler, miktarLabel, variant, noTekrar, noHane, noHesap, hesaplar, hafiza, onClose, onKaydet }) {
-  const oneri = (hafiza || {})[kategoriAnahtar(form.baslik)];
+export function IslemModal({ mod, form, setForm, kategorilerGelir, kategorilerGider, hesaplar, hafiza, onClose, onKaydet }) {
+  const abonelik = mod === "abonelik";
+  const baslik = abonelik
+    ? (form._editId ? "Abonelik Düzenle" : "Abonelik Ekle")
+    : (form._editId ? "İşlem Düzenle" : "İşlem Ekle");
+
+  // İçinde bulunulan tip için kategori listesi
+  const katListe = abonelik ? (kategorilerGider || []) : (form.tip === "gelir" ? (kategorilerGelir || []) : (kategorilerGider || []));
+
+  // Gelir/Gider geçişi: kategori yeni listede yoksa listenin ilkine çek
+  function tipSec(tip) {
+    const liste = tip === "gelir" ? (kategorilerGelir || []) : (kategorilerGider || []);
+    setForm((f) => ({ ...f, tip, kategori: liste.includes(f.kategori) ? f.kategori : (liste[0] || f.kategori) }));
+  }
+
+  // Başlık değişiminde hafızadan kategori önerisi uygula
+  function baslikDegis(v) {
+    const key = (v || "").toLowerCase().trim().split(/\s+/).slice(0, 2).join(" ");
+    const oneri = key && hafiza ? hafiza[key] : undefined;
+    setForm((f) => ({ ...f, baslik: v, ...(oneri ? { kategori: oneri } : {}) }));
+  }
+
+  const segBtn = (tip, etiket) => {
+    const on = form.tip === tip;
+    return (
+      <button
+        type="button"
+        onClick={() => tipSec(tip)}
+        className="fa-btn"
+        style={{ flex: 1, border: "none", borderRadius: 9, padding: "10px", fontSize: "13.5px", fontWeight: 600, cursor: "pointer", fontFamily: F, background: on ? V.emerald : V.card2, color: on ? "#F4F1E9" : V.ink2, ...(on ? {} : { border: `1px solid ${V.border}` }) }}
+      >
+        {etiket}
+      </button>
+    );
+  };
+
   return (
-    <Modal title={title} onClose={onClose}>
-      <Field label="Başlık" value={form.baslik} onChange={(v) => setForm((f) => ({ ...f, baslik: v }))} />
-      {oneri && oneri !== form.kategori && (
-        <p style={{ margin: "-0.4rem 0 0.8rem", fontSize: "0.74rem", color: C.cyan, cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, kategori: oneri }))}>
-          💡 Önceki seçimine göre kategori: <b>{oneri}</b> (uygulamak için dokun)
-        </p>
+    <Modal title={baslik} onClose={onClose} maxWidth={420}>
+      {!abonelik && (
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+          {segBtn("gelir", "Gelir")}
+          {segBtn("gider", "Gider")}
+        </div>
       )}
-      <Field label={miktarLabel || "Miktar (₺)"} type="number" value={form.miktar} onChange={(v) => setForm((f) => ({ ...f, miktar: v }))} />
-      <Field label="Kategori" value={form.kategori} onChange={(v) => setForm((f) => ({ ...f, kategori: v }))} options={kategoriler} />
-      <Field label="Tarih" type="date" value={form.tarih} onChange={(v) => setForm((f) => ({ ...f, tarih: v }))} />
-      {!noHesap && hesaplar && hesaplar.length > 0 && (
-        <Field
-          label="Hesap (seçilirse bakiyesi güncellenir)"
-          value={form.hesapId || ""}
-          onChange={(v) => setForm((f) => ({ ...f, hesapId: v }))}
-          options={[{ id: "", label: "— (hesap güncelleme yok)" }, ...hesaplar.map((h) => ({ id: String(h.id), label: h.ad || "Hesap" }))]}
-        />
+
+      <Field label="Başlık" value={form.baslik} onChange={baslikDegis} placeholder="Örn: Migros market" />
+
+      <Field
+        label={abonelik ? "Aylık Ücret (₺)" : "Tutar (₺)"}
+        value={form.miktar}
+        onChange={(v) => setForm((f) => ({ ...f, miktar: v }))}
+        placeholder="0"
+        mono
+      />
+
+      <Field
+        label="Kategori"
+        value={form.kategori}
+        onChange={(v) => setForm((f) => ({ ...f, kategori: v }))}
+        options={katListe}
+      />
+
+      <Field
+        label="Tarih"
+        type="date"
+        value={form.tarih}
+        onChange={(v) => setForm((f) => ({ ...f, tarih: v }))}
+      />
+
+      {!abonelik && (
+        <>
+          <Field
+            label="Hesap"
+            value={form.hesapId || ""}
+            onChange={(v) => setForm((f) => ({ ...f, hesapId: v }))}
+            options={[{ id: "", label: "Hesap yok" }, ...((hesaplar || []).map((h) => ({ id: String(h.id), label: h.ad || "Hesap" })))]}
+          />
+
+          {!form._editId && (
+            <div style={{ marginBottom: "14px" }}>
+              <Toggle
+                label="Her ay tekrarla"
+                sub="Kira, maaş, abonelik gibi sabit kalemler"
+                checked={!!form.tekrarla}
+                onChange={(v) => setForm((f) => ({ ...f, tekrarla: v }))}
+              />
+            </div>
+          )}
+
+          <div style={{ marginBottom: "16px" }}>
+            <Toggle label="Hane ortak" checked={!!form.hane} onChange={(v) => setForm((f) => ({ ...f, hane: v }))} />
+          </div>
+        </>
       )}
-      {!noTekrar && <Toggle label="Otomatik tekrarla" checked={!!form.tekrarla} onChange={(v) => setForm((f) => ({ ...f, tekrarla: v }))} />}
-      {!noTekrar && form.tekrarla && <Field label="Sıklık" value={form.frekans || "aylık"} onChange={(v) => setForm((f) => ({ ...f, frekans: v }))} options={["haftalık", "aylık", "yıllık"]} />}
-      {!noHane && <Toggle label="Ortak hane bütçesine dahil et" checked={!!form.hane} onChange={(v) => setForm((f) => ({ ...f, hane: v }))} />}
-      <Btn variant={variant} onClick={onKaydet} style={{ width: "100%", padding: "0.7rem", marginTop: "0.3rem" }}>Kaydet</Btn>
+
+      <Btn variant="primary" onClick={onKaydet} style={{ width: "100%", padding: "13px", marginTop: "2px" }}>Kaydet</Btn>
     </Modal>
   );
 }

@@ -1,11 +1,28 @@
 // ============================================================
-// Finans Asistanı (sohbet)
+// Finans Asistanı (sohbet) — Zümrüt & Altın
 // ============================================================
 import { useState, useRef, useEffect } from "react";
-import { C, pageTitle, inputStyle } from "../lib/constants.js";
+import { V, F, SERIF } from "../lib/constants.js";
 import { buAy } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
-import { Card, Btn } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
+
+// App tarafından üretilen metni güvenli biçimde render et:
+// **kalın** → <strong>, satır araları korunur. HTML enjeksiyonu yok.
+function MesajMetni({ metin }) {
+  const parcalar = String(metin).split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <span style={{ whiteSpace: "pre-wrap" }}>
+      {parcalar.map((p, i) =>
+        p.startsWith("**") && p.endsWith("**") && p.length > 4 ? (
+          <strong key={i}>{p.slice(2, -2)}</strong>
+        ) : (
+          <span key={i}>{p}</span>
+        )
+      )}
+    </span>
+  );
+}
 
 export function Asistan({ findata, guncelDeger, toplamGelir, toplamGider, toplamAbonelik, yatirimDeger, netDeger, bildir }) {
   const [mesajlar, setMesajlar] = useState([
@@ -46,30 +63,83 @@ export function Asistan({ findata, guncelDeger, toplamGelir, toplamGider, toplam
     }
   }
 
+  const avatar = (
+    <div style={{ width: 30, height: 30, borderRadius: "50%", flex: "none", background: V.emerald, color: V.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: SERIF }}>₺</div>
+  );
+
+  const dot = (gecikme) => (
+    <span style={{ width: 7, height: 7, borderRadius: "50%", background: V.ink3, animation: `obfade .9s ease-in-out ${gecikme} infinite alternate` }} />
+  );
+
   return (
     <div>
-      <h2 style={pageTitle}>Finans Asistanı</h2>
-      <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1rem" }}>
+      <style>{"@keyframes obfade{from{opacity:.25}to{opacity:1}}"}</style>
+      <h2 style={{ margin: "0 0 0.2rem", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF, color: V.ink }}>Finans Asistanı</h2>
+      <p style={{ color: V.ink3, fontSize: "0.85rem", margin: "0 0 1rem" }}>
         Verilerine bakarak cevaplar; tüm sekmelerin yerine tek bir "sor" kutusu.
-        {!aiHazir() && <span style={{ color: C.amber }}> (Çalışması için Ayarlar'dan Anthropic API anahtarı gir.)</span>}
+        {!aiHazir() && <span style={{ color: V.accent }}> (Çalışması için Ayarlar'dan Anthropic API anahtarı gir.)</span>}
       </p>
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div ref={kaydirRef} style={{ height: 420, overflowY: "auto", padding: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {mesajlar.map((m, i) => (
-            <div key={i} style={{ alignSelf: m.rol === "user" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.rol === "user" ? "linear-gradient(135deg,#10B981,#059669)" : C.card2, color: m.rol === "user" ? "#fff" : C.text, border: m.rol === "user" ? "none" : `1px solid ${C.line}`, padding: "0.7rem 0.95rem", borderRadius: m.rol === "user" ? "1rem 1rem 0.2rem 1rem" : "1rem 1rem 1rem 0.2rem", fontSize: "0.88rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-              {m.metin}
+
+      <div className="fa-card" style={{ padding: 24, minHeight: 440, display: "flex", flexDirection: "column" }}>
+        <div ref={kaydirRef} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+          {mesajlar.map((m, i) =>
+            m.rol === "user" ? (
+              <div key={i} style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ maxWidth: "80%", background: V.emerald, color: V.cream, borderRadius: "14px 14px 4px 14px", padding: "14px 18px", fontSize: "13.5px", lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
+                  {m.metin}
+                </div>
+              </div>
+            ) : (
+              <div key={i} style={{ display: "flex", gap: 11, maxWidth: "85%" }}>
+                {avatar}
+                <div style={{ background: V.bubble, color: V.ink, borderRadius: "4px 14px 14px 14px", padding: "14px 18px", fontSize: "13.5px", lineHeight: 1.55 }}>
+                  <MesajMetni metin={m.metin} />
+                </div>
+              </div>
+            )
+          )}
+          {bekle && (
+            <div style={{ display: "flex", gap: 11, maxWidth: "80%" }}>
+              {avatar}
+              <div style={{ background: V.bubble, borderRadius: "4px 14px 14px 14px", padding: "14px 18px", display: "flex", gap: 5, alignItems: "center" }}>
+                {dot(".0s")}
+                {dot(".3s")}
+                {dot(".6s")}
+              </div>
             </div>
-          ))}
-          {bekle && <div style={{ alignSelf: "flex-start", color: C.dimmer, fontSize: "0.85rem", padding: "0.5rem 0.95rem" }}>yazıyor…</div>}
+          )}
         </div>
-        <div style={{ display: "flex", gap: "0.5rem", padding: "0.85rem", borderTop: `1px solid ${C.line}` }}>
-          <input value={girdi} onChange={(e) => setGirdi(e.target.value)} onKeyDown={(e) => e.key === "Enter" && gonder()} placeholder="Sorunu yaz…" style={{ ...inputStyle, flex: 1 }} />
-          <Btn onClick={gonder} disabled={bekle}>Gönder</Btn>
+
+        <div style={{ display: "flex", gap: 9, marginTop: 18 }}>
+          <input
+            value={girdi}
+            onChange={(e) => setGirdi(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && gonder()}
+            placeholder={'Bir şey sor ya da "350 lira market" yaz…'}
+            style={{ flex: 1, padding: "12px 15px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 11, color: V.ink, fontSize: "13.5px", fontFamily: F, outline: "none" }}
+          />
+          <button
+            onClick={gonder}
+            disabled={bekle}
+            className="fa-btn"
+            title="Gönder"
+            style={{ width: 46, borderRadius: 11, border: "none", background: V.emerald, color: V.cream, cursor: bekle ? "not-allowed" : "pointer", opacity: bekle ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+          >
+            <Icon d="send" size={18} stroke={V.cream} />
+          </button>
         </div>
-      </Card>
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.85rem", flexWrap: "wrap" }}>
+      </div>
+
+      <div style={{ display: "flex", gap: 9, marginTop: "0.85rem", flexWrap: "wrap" }}>
         {["Bu ay en çok nereye harcadım?", "Tasarruf için ne önerirsin?", "Bütçemi aşıyor muyum?"].map((s) => (
-          <Btn key={s} variant="ghost" onClick={() => setGirdi(s)} style={{ fontSize: "0.78rem" }}>{s}</Btn>
+          <button
+            key={s}
+            onClick={() => setGirdi(s)}
+            className="fa-btn"
+            style={{ background: V.card, color: V.ink2, border: `1px solid ${V.border2}`, borderRadius: 10, padding: "8px 13px", fontSize: "12.5px", fontFamily: F, fontWeight: 600, cursor: "pointer" }}
+          >
+            {s}
+          </button>
         ))}
       </div>
     </div>

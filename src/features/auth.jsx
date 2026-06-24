@@ -1,10 +1,16 @@
 // ============================================================
-// Giriş, PIN kilidi ve onboarding
+// Giriş, PIN kilidi ve onboarding — Zümrüt & Altın tasarımı
 // ============================================================
 import { useState } from "react";
-import { C, F, inputStyle, ACCENT_SECENEK } from "../lib/constants.js";
+import { V, F, SERIF, MONO } from "../lib/constants.js";
 import { uid, bugun } from "../lib/format.js";
-import { Card, Btn, Field } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
+
+// Tüm ekranların ortak zemini: tam ekran zümrüt
+const ekran = {
+  position: "fixed", inset: 0, zIndex: 500, background: V.emerald,
+  fontFamily: F, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
+};
 
 export function Login({ onLogin }) {
   const [u, setU] = useState(""),
@@ -13,23 +19,34 @@ export function Login({ onLogin }) {
   async function dene() {
     if (!(await onLogin(u.trim(), p))) setHata("Kullanıcı adı veya şifre hatalı");
   }
+  function onKey(e) {
+    if (e.key === "Enter") dene();
+  }
+  const inp = {
+    width: "100%", padding: "12px 14px", marginBottom: "14px", background: V.card2,
+    border: `1px solid ${V.border}`, borderRadius: "11px", color: V.ink,
+    fontSize: "14px", fontFamily: F, outline: "none", boxSizing: "border-box",
+  };
+  const lbl = { display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" };
   return (
-    <div style={{ minHeight: "100vh", background: `radial-gradient(circle at 30% 20%, #1A1530, ${C.bg} 60%)`, fontFamily: F, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
-      <div style={{ width: "100%", maxWidth: 380 }}>
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <div style={{ width: 56, height: 56, borderRadius: "1rem", background: "linear-gradient(135deg,#10B981,#F59E0B)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", margin: "0 auto 1rem" }}>₺</div>
-          <h1 style={{ color: C.text, margin: "0 0 0.3rem", fontSize: "1.5rem", fontWeight: 800 }}>FinansApp Pro</h1>
-          <p style={{ color: C.dimmer, margin: 0, fontSize: "0.85rem" }}>Çok kullanıcılı finans yönetimi</p>
+    <div style={ekran}>
+      <div style={{ width: "100%", maxWidth: 380, animation: "obfade .4s both" }}>
+        <div style={{ textAlign: "center", marginBottom: "26px" }}>
+          <div style={{ width: 60, height: 60, borderRadius: "50%", margin: "0 auto 16px", background: V.accent, color: V.emerald, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: 800 }}>₺</div>
+          <h1 className="serif" style={{ margin: 0, fontSize: "26px", fontWeight: 600, color: "#F4F1E9" }}>FinansApp</h1>
+          <p style={{ margin: "5px 0 0", fontSize: "13px", color: V.sage }}>Kişisel finans yönetimi</p>
         </div>
-        <Card>
-          <Field label="Kullanıcı Adı" value={u} onChange={setU} placeholder="admin" />
-          <Field label="Şifre" type="password" value={p} onChange={setP} placeholder="••••••" />
-          {hata && <p style={{ color: C.redL, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>{hata}</p>}
-          <Btn onClick={dene} style={{ width: "100%", padding: "0.75rem" }}>Giriş Yap</Btn>
-          <p style={{ color: C.faint, fontSize: "0.72rem", textAlign: "center", marginTop: "1rem", marginBottom: 0 }}>
-            İlk giriş: <b style={{ color: C.dim }}>admin</b> / <b style={{ color: C.dim }}>admin123</b>
+        <div style={{ background: V.card, borderRadius: "18px", padding: "26px" }}>
+          <label style={lbl}>Kullanıcı adı</label>
+          <input value={u} onChange={(e) => setU(e.target.value)} onKeyDown={onKey} placeholder="admin" style={inp} />
+          <label style={lbl}>Şifre</label>
+          <input value={p} onChange={(e) => setP(e.target.value)} onKeyDown={onKey} type="password" placeholder="••••••" style={{ ...inp, marginBottom: "6px" }} />
+          {hata && <p style={{ margin: "2px 0 0", fontSize: "12px", color: V.neg }}>{hata}</p>}
+          <button onClick={dene} style={{ width: "100%", marginTop: "16px", padding: "14px", borderRadius: "12px", border: "none", background: V.emerald2, color: V.cream, fontSize: "14.5px", fontWeight: 600, fontFamily: F, cursor: "pointer" }}>Giriş Yap</button>
+          <p style={{ margin: "14px 0 0", fontSize: "11.5px", color: V.ink3, textAlign: "center" }}>
+            İlk giriş: <b style={{ color: V.ink2 }}>admin</b> / <b style={{ color: V.ink2 }}>admin123</b>
           </p>
-        </Card>
+        </div>
       </div>
     </div>
   );
@@ -53,27 +70,31 @@ export function PinGate({ dogruPin, onAc, onCikis }) {
       }
     }
   }
+  const tus = {
+    width: 72, height: 72, borderRadius: "50%", background: "rgba(255,255,255,0.05)",
+    border: `1px solid #3A6B55`, color: "#F4F1E9", fontSize: "1.5rem",
+    fontFamily: MONO, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+  };
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: F, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "2rem", padding: "1rem" }}>
-      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}`}</style>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>🔒</div>
-        <p style={{ color: C.dim, margin: 0 }}>PIN kodunu gir</p>
+    <div style={ekran}>
+      <div style={{ textAlign: "center", animation: "obfade .4s both" }}>
+        <Icon d="lock" size={34} stroke={V.accent} width={1.6} style={{ marginBottom: "14px" }} />
+        <p style={{ margin: "0 0 22px", fontSize: "15px", color: "#F4F1E9" }}>PIN'ini gir</p>
+        <div style={{ display: "flex", gap: "14px", justifyContent: "center", marginBottom: "30px", animation: hata ? "shake .3s" : "none" }}>
+          {[0, 1, 2, 3].map((i) => (
+            <span key={i} style={{ width: 14, height: 14, borderRadius: "50%", boxSizing: "border-box", background: i < pin.length ? V.accent : "transparent", border: i < pin.length ? "none" : "2px solid #3A6B55", transition: "all .15s" }} />
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,72px)", gap: "14px" }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
+            <button key={d} onClick={() => bas(String(d))} style={tus}>{d}</button>
+          ))}
+          <div />
+          <button onClick={() => bas("0")} style={tus}>0</button>
+          <button onClick={() => setPin(pin.slice(0, -1))} style={{ ...tus, background: "transparent", border: "none", color: V.sage, fontSize: "1.3rem" }}>⌫</button>
+        </div>
+        <button onClick={onCikis} style={{ background: "none", border: "none", color: V.sage, fontFamily: F, cursor: "pointer", fontSize: "13px", marginTop: "28px" }}>Çıkış yap</button>
       </div>
-      <div style={{ display: "flex", gap: "0.75rem", animation: hata ? "shake .3s" : "none" }}>
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} style={{ width: 16, height: 16, borderRadius: "50%", background: i < pin.length ? (hata ? C.red : C.indigo) : C.line2, transition: "all .15s" }} />
-        ))}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,72px)", gap: "0.75rem" }}>
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
-          <button key={d} onClick={() => bas(String(d))} style={{ width: 72, height: 72, borderRadius: "50%", background: C.card, border: `1px solid ${C.line2}`, color: C.text, fontSize: "1.4rem", fontFamily: F, cursor: "pointer" }}>{d}</button>
-        ))}
-        <div />
-        <button onClick={() => bas("0")} style={{ width: 72, height: 72, borderRadius: "50%", background: C.card, border: `1px solid ${C.line2}`, color: C.text, fontSize: "1.4rem", fontFamily: F, cursor: "pointer" }}>0</button>
-        <button onClick={() => setPin(pin.slice(0, -1))} style={{ width: 72, height: 72, borderRadius: "50%", background: "transparent", border: "none", color: C.dim, fontSize: "1.2rem", cursor: "pointer" }}>⌫</button>
-      </div>
-      <button onClick={onCikis} style={{ background: "none", border: "none", color: C.faint, fontFamily: F, cursor: "pointer", fontSize: "0.85rem" }}>Çıkış yap</button>
     </div>
   );
 }
@@ -81,68 +102,74 @@ export function PinGate({ dogruPin, onAc, onCikis }) {
 export function Onboarding({ user, setFindata }) {
   const [adim, setAdim] = useState(0);
   const [gelir, setGelir] = useState("");
-  const [bakiye, setBakiye] = useState("");
-  const [enf, setEnf] = useState("50");
-  const [accent, setAccent] = useState("#10B981");
+  function parseGelir() {
+    // binlik ayraç noktalarını at, ondalık virgülü noktaya çevir
+    return parseFloat(String(gelir).replace(/\./g, "").replace(",", ".")) || 0;
+  }
   function atla() {
     setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), kuruldu: true } }));
   }
   function bitir() {
+    const miktar = parseGelir();
     setFindata((d) => {
       const yeni = { ...d, gelirler: [...d.gelirler], sablonlar: [...(d.sablonlar || [])], hesaplar: [...(d.hesaplar || [])] };
-      yeni.ayarlar = { ...(d.ayarlar || {}), enflasyon: parseFloat(enf) || 50, accent, kuruldu: true };
-      if (parseFloat(gelir) > 0) {
-        yeni.gelirler.push({ id: uid(), baslik: "Maaş", miktar: parseFloat(gelir), kategori: "Maaş", tarih: bugun() });
-        yeni.sablonlar.push({ id: uid(), tip: "gelir", baslik: "Maaş", miktar: parseFloat(gelir), kategori: "Maaş", frekans: "aylık", baslangic: bugun(), sonUretilen: bugun() });
+      yeni.ayarlar = { ...(d.ayarlar || {}), kuruldu: true };
+      if (miktar > 0) {
+        yeni.gelirler.push({ id: uid(), baslik: "Maaş", miktar, kategori: "Maaş", tarih: bugun() });
+        yeni.sablonlar.push({ id: uid(), tip: "gelir", baslik: "Maaş", miktar, kategori: "Maaş", frekans: "aylık", baslangic: bugun(), sonUretilen: bugun() });
+        yeni.hesaplar.push({ id: uid(), ad: "Banka Hesabım", tip: "banka", bakiye: miktar });
       }
-      if (parseFloat(bakiye) > 0) yeni.hesaplar.push({ id: uid(), ad: "Banka Hesabım", tip: "banka", bakiye: parseFloat(bakiye) });
       return yeni;
     });
   }
-  const adimlar = [
-    { icon: "👋", baslik: `Hoş geldin, ${user.ad || user.username}!`, alt: "Birkaç adımda kurulumunu yapalım. Dilersen atlayabilirsin.", icerik: null },
-    { icon: "💰", baslik: "Aylık gelirin?", alt: "Maaşını gir — otomatik aylık tekrara eklenir (boş bırakabilirsin).", icerik: <Field label="Aylık Gelir (₺)" type="number" value={gelir} onChange={setGelir} placeholder="50000" /> },
-    { icon: "🏦", baslik: "Banka bakiyen?", alt: "İlk hesabını oluşturalım (isteğe bağlı).", icerik: <Field label="Banka Bakiyesi (₺)" type="number" value={bakiye} onChange={setBakiye} placeholder="25000" /> },
-    {
-      icon: "🎨",
-      baslik: "Son rötuşlar",
-      alt: "Enflasyon oranı (reel getiri için) ve vurgu rengini seç.",
-      icerik: (
-        <div>
-          <Field label="Yıllık Enflasyon (%)" type="number" value={enf} onChange={setEnf} />
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0.5rem 0" }}>Vurgu rengi</p>
-          <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-            {ACCENT_SECENEK.map((a) => (
-              <button key={a.renk} onClick={() => setAccent(a.renk)} style={{ width: 34, height: 34, borderRadius: "50%", background: a.renk, border: accent === a.renk ? "3px solid #fff" : `2px solid ${C.line2}`, cursor: "pointer" }} />
-            ))}
-          </div>
-        </div>
-      ),
-    },
-  ];
-  const cur = adimlar[adim];
-  const son = adim === adimlar.length - 1;
+  const ileri = () => setAdim((a) => Math.min(a + 1, 2));
+
+  const buton = (etiket, onClick) => (
+    <button onClick={onClick} style={{ width: "100%", padding: "14px", borderRadius: "12px", border: "none", background: V.accent, color: V.emerald, fontSize: "15px", fontWeight: 700, fontFamily: F, cursor: "pointer" }}>{etiket}</button>
+  );
+
   return (
-    <div style={{ minHeight: "100vh", background: `radial-gradient(circle at 30% 20%, #1A1530, ${C.bg} 60%)`, fontFamily: F, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
-      <div style={{ width: "100%", maxWidth: 420 }}>
-        <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: "1.5rem" }}>
-          {adimlar.map((_, i) => (
-            <div key={i} style={{ width: 28, height: 4, borderRadius: 999, background: i <= adim ? accent : C.line2 }} />
+    <div style={ekran}>
+      <div style={{ width: "100%", maxWidth: 420, textAlign: "center" }}>
+        <div style={{ display: "flex", gap: "8px", justifyContent: "center", marginBottom: "34px" }}>
+          {[0, 1, 2].map((i) => (
+            <span key={i} style={{ width: i === adim ? 28 : 8, height: 8, borderRadius: 999, background: i <= adim ? V.accent : "#3A6B55", transition: "all .25s" }} />
           ))}
         </div>
-        <Card>
-          <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>{cur.icon}</div>
-            <h2 style={{ margin: "0 0 0.35rem", fontSize: "1.25rem", fontWeight: 700 }}>{cur.baslik}</h2>
-            <p style={{ margin: 0, color: C.dimmer, fontSize: "0.85rem" }}>{cur.alt}</p>
+
+        {adim === 0 && (
+          <div style={{ animation: "obfade .4s both" }}>
+            <div style={{ width: 72, height: 72, borderRadius: "20px", margin: "0 auto 22px", background: V.accent, color: V.emerald, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "34px", fontWeight: 800 }}>₺</div>
+            <h2 className="serif" style={{ margin: "0 0 12px", fontSize: "26px", fontWeight: 600, color: "#F4F1E9" }}>Hoş geldin{user && (user.ad || user.username) ? `, ${user.ad || user.username}` : ""}!</h2>
+            <p style={{ margin: "0 0 30px", fontSize: "14.5px", color: "#A9C4B6", lineHeight: 1.6 }}>FinansApp ile gelir-giderini takip et, bütçe kur, yatırımlarını izle ve net varlığını tek ekranda gör. Birkaç adımda hazırız.</p>
+            {buton("Başlayalım", ileri)}
           </div>
-          {cur.icerik && <div style={{ marginBottom: "0.5rem" }}>{cur.icerik}</div>}
-          <div style={{ display: "flex", gap: "0.6rem", marginTop: "1rem" }}>
-            {adim > 0 && <Btn variant="ghost" onClick={() => setAdim(adim - 1)}>Geri</Btn>}
-            {son ? <Btn onClick={bitir} style={{ flex: 1 }}>Başla 🚀</Btn> : <Btn onClick={() => setAdim(adim + 1)} style={{ flex: 1 }}>İleri</Btn>}
+        )}
+
+        {adim === 1 && (
+          <div style={{ animation: "obfade .4s both" }}>
+            <h2 className="serif" style={{ margin: "0 0 12px", fontSize: "24px", fontWeight: 600, color: "#F4F1E9" }}>Aylık gelirin ne kadar?</h2>
+            <p style={{ margin: "0 0 26px", fontSize: "14px", color: "#A9C4B6", lineHeight: 1.6 }}>İlk kaydını oluşturalım. Bunu sonra değiştirebilirsin.</p>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", padding: "6px 16px", marginBottom: "26px" }}>
+              <span style={{ fontSize: "24px", color: V.accent, fontFamily: MONO }}>₺</span>
+              <input value={gelir} onChange={(e) => setGelir(e.target.value)} inputMode="decimal" placeholder="58.000" style={{ flex: 1, padding: "14px 0", background: "transparent", border: "none", color: "#F4F1E9", fontSize: "24px", fontFamily: MONO, outline: "none", minWidth: 0 }} />
+            </div>
+            {buton("Devam", ileri)}
           </div>
-          <p onClick={atla} style={{ textAlign: "center", color: C.faint, fontSize: "0.78rem", marginTop: "1rem", marginBottom: 0, cursor: "pointer" }}>Şimdilik atla</p>
-        </Card>
+        )}
+
+        {adim === 2 && (
+          <div style={{ animation: "obfade .4s both" }}>
+            <div style={{ width: 72, height: 72, borderRadius: "50%", margin: "0 auto 22px", background: "rgba(199,154,75,0.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon d="check" size={34} stroke={V.accent} width={2} />
+            </div>
+            <h2 className="serif" style={{ margin: "0 0 12px", fontSize: "26px", fontWeight: 600, color: "#F4F1E9" }}>Hazırsın!</h2>
+            <p style={{ margin: "0 0 30px", fontSize: "14.5px", color: "#A9C4B6", lineHeight: 1.6 }}>Hesabın kuruldu. Artık işlem ekleyebilir, bütçe kurabilir ve finansal durumunu takip edebilirsin.</p>
+            {buton("FinansApp'e Gir", bitir)}
+          </div>
+        )}
+
+        <p onClick={atla} style={{ textAlign: "center", color: V.sage, fontSize: "12.5px", marginTop: "20px", marginBottom: 0, cursor: "pointer" }}>Şimdilik atla</p>
       </div>
     </div>
   );

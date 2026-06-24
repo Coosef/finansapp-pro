@@ -1,41 +1,90 @@
 // ============================================================
-// Hesaplar & Cüzdanlar
+// Hesaplar & Cüzdanlar — Zümrüt & Altın tasarımı
 // ============================================================
 import { useState } from "react";
-import { C, pageTitle, inputStyle, HESAP_TIP } from "../lib/constants.js";
+import { V, F, SERIF, MONO, HESAP_TIP } from "../lib/constants.js";
 import { uid, TL, bugun } from "../lib/format.js";
 import { transferUygula } from "../lib/finance.js";
-import { Card, Btn, DelBtn, Bos, Field, Modal } from "../components/ui.jsx";
+import { Card, Btn, Field, Modal, DelBtn, Bos } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
+
+// ---- Hesap ekle/düzenle modalı (yerel form durumu) ----
+function HesapModal({ baslangic, onKaydet, onClose }) {
+  const [ad, setAd] = useState(baslangic?.ad || "");
+  const [tip, setTip] = useState(baslangic?.tip || "banka");
+  const [bakiye, setBakiye] = useState(baslangic != null ? String(baslangic.bakiye ?? "") : "");
+  const duzenle = !!baslangic;
+
+  function kaydet() {
+    onKaydet({ ad, tip, bakiye });
+  }
+
+  return (
+    <Modal title={duzenle ? "Hesap Düzenle" : "Hesap Ekle"} onClose={onClose}>
+      <Field label="Hesap adı" value={ad} onChange={setAd} placeholder="Örn: Ziraat Vadesiz" />
+      <label style={{ display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>Tür</label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
+        {HESAP_TIP.map((t) => {
+          const on = t.id === tip;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTip(t.id)}
+              className="fa-btn"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 13px", borderRadius: "9px",
+                border: `1px solid ${on ? "transparent" : V.border2}`, cursor: "pointer", fontFamily: F, fontWeight: 600, fontSize: "13px",
+                background: on ? V.emerald : V.card, color: on ? V.cream : V.ink,
+              }}
+            >
+              <Icon d={t.ipath} size={15} />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      <Field label={tip === "kart" ? "Borç (₺)" : "Bakiye (₺)"} type="number" value={bakiye} onChange={setBakiye} mono />
+      <Btn onClick={kaydet} style={{ width: "100%", padding: "13px", marginTop: "0.2rem" }}>
+        {duzenle ? "Kaydet" : "Hesap Oluştur"}
+      </Btn>
+    </Modal>
+  );
+}
 
 export function Hesaplar({ findata, setFindata, bildir }) {
-  const [form, setForm] = useState({ ad: "", tip: "banka", bakiye: "" });
-  const [acik, setAcik] = useState(false);
+  // duzenle: null = kapalı, "yeni" = ekleme, {hesap} = düzenleme
+  const [duzenle, setDuzenle] = useState(null);
   const [transfer, setTransfer] = useState(null);
   const hesaplar = findata.hesaplar || [];
   const varlik = hesaplar.filter((h) => h.tip !== "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
   const borc = hesaplar.filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
-  function ekle() {
-    if (!form.ad) {
+  const net = varlik - borc;
+
+  function modalKaydet(form) {
+    if (!form.ad.trim()) {
       bildir("Hesap adı gerekli", "err");
       return;
     }
-    setFindata((d) => ({ ...d, hesaplar: [...(d.hesaplar || []), { id: uid(), ad: form.ad, tip: form.tip, bakiye: parseFloat(form.bakiye) || 0 }] }));
-    setForm({ ad: "", tip: "banka", bakiye: "" });
-    setAcik(false);
-    bildir("Hesap eklendi");
+    const bakiye = parseFloat(form.bakiye) || 0;
+    if (duzenle && duzenle !== "yeni") {
+      const id = duzenle.id;
+      setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, ad: form.ad.trim(), tip: form.tip, bakiye } : h)) }));
+      bildir("Hesap güncellendi");
+    } else {
+      setFindata((d) => ({ ...d, hesaplar: [...(d.hesaplar || []), { id: uid(), ad: form.ad.trim(), tip: form.tip, bakiye }] }));
+      bildir("Hesap eklendi");
+    }
+    setDuzenle(null);
   }
-  function sil(id) {
-    setFindata((d) => ({ ...d, hesaplar: d.hesaplar.filter((h) => h.id !== id) }));
+
+  function sil(h) {
+    setFindata((d) => ({ ...d, hesaplar: (d.hesaplar || []).filter((x) => x.id !== h.id) }));
+    bildir("Hesap silindi", "ok", {
+      label: "↩ Geri al",
+      onClick: () => setFindata((d) => ({ ...d, hesaplar: [...(d.hesaplar || []), h] })),
+    });
   }
-  function bakiye(id, val) {
-    setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, bakiye: parseFloat(val) || 0 } : h)) }));
-  }
-  function adGuncelle(id, val) {
-    setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, ad: val } : h)) }));
-  }
-  function tipGuncelle(id, val) {
-    setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, tip: val } : h)) }));
-  }
+
   function transferAc() {
     setTransfer({ kaynak: String(hesaplar[0]?.id || ""), hedef: String(hesaplar[1]?.id || ""), miktar: "" });
   }
@@ -61,63 +110,79 @@ export function Hesaplar({ findata, setFindata, bildir }) {
       onClick: () => setFindata((d) => ({ ...transferUygula(d, tr.kaynakId, tr.hedefId, tr.miktar), transferler: [...(d.transferler || []), tr] })),
     });
   }
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.6rem" }}>
+      {/* Başlık + toplamlar + butonlar */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "18px", flexWrap: "wrap", gap: "12px" }}>
         <div>
-          <h2 style={pageTitle}>Hesaplar & Cüzdanlar</h2>
-          <p style={{ margin: 0, color: C.dim, fontSize: "0.88rem" }}>
-            Varlık: <b style={{ color: C.greenL }}>{TL(varlik)}</b> · Kart borcu: <b style={{ color: C.redL }}>{TL(borc)}</b> · Net: <b style={{ color: varlik - borc >= 0 ? C.greenL : C.redL }}>{TL(varlik - borc)}</b>
+          <h2 className="serif" style={{ margin: "0 0 4px", fontSize: "20px", fontWeight: 600, color: V.ink, fontFamily: SERIF }}>Hesaplar & Cüzdanlar</h2>
+          <p style={{ margin: 0, fontSize: "12.5px", color: V.ink3 }}>
+            Varlık <b className="num" style={{ color: V.pos, fontFamily: MONO }}>{TL(varlik)}</b>
+            <span style={{ color: V.border2, margin: "0 7px" }}>·</span>
+            Kart borcu <b className="num" style={{ color: V.neg, fontFamily: MONO }}>{TL(borc)}</b>
+            <span style={{ color: V.border2, margin: "0 7px" }}>·</span>
+            Net <b className="num" style={{ color: net >= 0 ? V.pos : V.neg, fontFamily: MONO }}>{TL(net)}</b>
           </p>
         </div>
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           {hesaplar.length >= 2 && <Btn variant="ghost" onClick={transferAc}>⇄ Transfer</Btn>}
-          <Btn onClick={() => setAcik(!acik)}>+ Hesap</Btn>
+          <Btn onClick={() => setDuzenle("yeni")}>+ Hesap</Btn>
         </div>
       </div>
-      {acik && (
-        <Card style={{ marginBottom: "1rem" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: "0.6rem" }}>
-            <Field label="Ad" value={form.ad} onChange={(v) => setForm((f) => ({ ...f, ad: v }))} placeholder="Garanti / Cüzdan" />
-            <Field label="Tip" value={form.tip} onChange={(v) => setForm((f) => ({ ...f, tip: v }))} options={HESAP_TIP} />
-            <Field label={form.tip === "kart" ? "Borç (₺)" : "Bakiye (₺)"} type="number" value={form.bakiye} onChange={(v) => setForm((f) => ({ ...f, bakiye: v }))} />
-          </div>
-          <Btn onClick={ekle} style={{ marginTop: "0.3rem" }}>Kaydet</Btn>
-        </Card>
-      )}
-      {!hesaplar.length && <Bos mesaj="Henüz hesap yok. Nakit, banka, kredi kartı veya birikim hesabı ekleyin." />}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "1rem" }}>
-        {hesaplar.map((h) => {
-          const ht = HESAP_TIP.find((t) => t.id === h.tip);
-          return (
-            <Card key={h.id} accent={ht?.renk}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem" }}>
-                <span style={{ fontSize: "1.5rem" }}>{ht?.icon}</span>
-                <DelBtn onClick={() => sil(h.id)} />
-              </div>
-              <input value={h.ad} onChange={(e) => adGuncelle(h.id, e.target.value)} placeholder="Hesap adı" style={{ ...inputStyle, fontWeight: 600, marginBottom: "0.5rem" }} />
-              <select value={h.tip} onChange={(e) => tipGuncelle(h.id, e.target.value)} style={{ ...inputStyle, marginBottom: "0.5rem", fontSize: "0.82rem" }}>
-                {HESAP_TIP.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
-              </select>
-              <label style={{ display: "block", color: C.dimmer, fontSize: "0.7rem", marginBottom: "0.2rem" }}>{h.tip === "kart" ? "Borç (₺)" : "Bakiye (₺)"}</label>
-              <input type="number" value={h.bakiye} onChange={(e) => bakiye(h.id, e.target.value)} style={{ ...inputStyle, fontSize: "1.1rem", fontWeight: 700, color: h.tip === "kart" ? C.redL : C.text }} />
-            </Card>
-          );
-        })}
-      </div>
 
+      {/* Boş durum */}
+      {!hesaplar.length && (
+        <Bos icon="wallet" baslik="Hesap yok" mesaj="Nakit, banka, kredi kartı veya birikim hesabı ekle." />
+      )}
+
+      {/* Hesap kartları */}
+      {hesaplar.length > 0 && (
+        <div className="fa-grid-2" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "14px" }}>
+          {hesaplar.map((h) => {
+            const ht = HESAP_TIP.find((t) => t.id === h.tip) || HESAP_TIP[1];
+            const kart = h.tip === "kart";
+            return (
+              <Card
+                key={h.id}
+                style={{ display: "flex", alignItems: "center", gap: "15px", cursor: "pointer" }}
+              >
+                <div
+                  onClick={() => setDuzenle(h)}
+                  style={{ display: "flex", alignItems: "center", gap: "15px", flex: 1, minWidth: 0 }}
+                >
+                  <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `color-mix(in srgb, ${ht.renk} 14%, transparent)`, color: ht.renk }}>
+                    <Icon d={ht.ipath} size={20} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "14px", fontWeight: 600, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.ad}</div>
+                    <div style={{ fontSize: "11.5px", color: V.ink3 }}>{ht.label}</div>
+                  </div>
+                  <div className="num" style={{ fontSize: "18px", fontWeight: 600, color: kart ? V.neg : V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(h.bakiye)}</div>
+                </div>
+                <DelBtn onClick={() => sil(h)} />
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Son transferler */}
       {(findata.transferler || []).length > 0 && (
-        <Card style={{ marginTop: "1rem" }}>
-          <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.82rem", color: C.dim, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>Son Transferler</h3>
+        <Card style={{ marginTop: "14px" }}>
+          <h3 style={{ margin: "0 0 0.75rem", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Son Transferler</h3>
           {findata.transferler.slice().reverse().slice(0, 8).map((tr) => {
             const k = hesaplar.find((h) => String(h.id) === String(tr.kaynakId));
             const hd = hesaplar.find((h) => String(h.id) === String(tr.hedefId));
             return (
-              <div key={tr.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.5rem 0", borderBottom: `1px solid ${C.line}`, fontSize: "0.82rem" }}>
-                <span style={{ color: C.dim }}>{k?.ad || "?"} → {hd?.ad || "?"} <span style={{ color: C.faint }}>· {tr.tarih}</span></span>
+              <div key={tr.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${V.line}`, fontSize: "13px" }}>
+                <span style={{ color: V.ink2 }}>
+                  {k?.ad || "?"} <span style={{ color: V.ink3 }}>→</span> {hd?.ad || "?"}
+                  <span style={{ color: V.ink3 }}> · {tr.tarih}</span>
+                </span>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                  <span style={{ fontWeight: 700 }}>{TL(tr.miktar)}</span>
-                  <DelBtn onClick={() => transferSil(tr)} />
+                  <span className="num" style={{ fontWeight: 600, color: V.ink, fontFamily: MONO }}>{TL(tr.miktar)}</span>
+                  <DelBtn onClick={() => transferSil(tr)} title="Transferi geri al" />
                 </div>
               </div>
             );
@@ -125,13 +190,23 @@ export function Hesaplar({ findata, setFindata, bildir }) {
         </Card>
       )}
 
+      {/* Hesap ekle/düzenle modalı */}
+      {duzenle && (
+        <HesapModal
+          baslangic={duzenle === "yeni" ? null : duzenle}
+          onKaydet={modalKaydet}
+          onClose={() => setDuzenle(null)}
+        />
+      )}
+
+      {/* Transfer modalı */}
       {transfer && (
         <Modal title="Hesaplar Arası Transfer" onClose={() => setTransfer(null)}>
           <Field label="Kaynak hesap" value={transfer.kaynak} onChange={(v) => setTransfer((t) => ({ ...t, kaynak: v }))} options={hesaplar.map((h) => ({ id: String(h.id), label: `${h.ad} (${TL(h.bakiye)})` }))} />
           <Field label="Hedef hesap" value={transfer.hedef} onChange={(v) => setTransfer((t) => ({ ...t, hedef: v }))} options={hesaplar.map((h) => ({ id: String(h.id), label: `${h.ad} (${TL(h.bakiye)})` }))} />
-          <Field label="Tutar (₺)" type="number" value={transfer.miktar} onChange={(v) => setTransfer((t) => ({ ...t, miktar: v }))} />
-          <p style={{ color: C.faint, fontSize: "0.72rem", margin: "0 0 0.5rem" }}>Kredi kartına transfer borcu azaltır; karttan transfer borcu artırır.</p>
-          <Btn onClick={transferYap} style={{ width: "100%", padding: "0.7rem", marginTop: "0.2rem" }}>Transfer Et</Btn>
+          <Field label="Tutar (₺)" type="number" value={transfer.miktar} onChange={(v) => setTransfer((t) => ({ ...t, miktar: v }))} mono />
+          <p style={{ color: V.ink3, fontSize: "11.5px", margin: "0 0 14px" }}>Kredi kartına transfer borcu azaltır; karttan transfer borcu artırır.</p>
+          <Btn onClick={transferYap} style={{ width: "100%", padding: "13px" }}>Transfer Et</Btn>
         </Modal>
       )}
     </div>
