@@ -56,7 +56,7 @@ export function parseJSON(text) {
   const sub = start === Infinity || end === -1 || end < start ? clean : clean.slice(start, end + 1);
   try {
     return JSON.parse(sub);
-  } catch {
+  } catch (ilkHata) {
     // Yaygın LLM hataları: yorumlar, sondaki virgül, öğeler arası EKSİK virgül
     const onar = sub
       .replace(/^\s*\/\/.*$/gm, "")
@@ -65,8 +65,46 @@ export function parseJSON(text) {
       .replace(/}(\s*){/g, "},$1{") // iki nesne arası eksik virgül
       .replace(/](\s*)\[/g, "],$1[") // iki dizi arası eksik virgül
       .replace(/"(\s*\n\s*)"/g, '",$1"'); // iki string arası eksik virgül
-    return JSON.parse(onar);
+    try {
+      return JSON.parse(onar);
+    } catch (e) {
+      // Son çare: kesik/bozuk yanıttan tam nesneleri kurtar (yoğun sayfa truncation)
+      const kurtarilan = kurtarParse(clean);
+      if (kurtarilan) return kurtarilan;
+      throw ilkHata;
+    }
   }
+}
+
+// Dengeli { } nesnelerini metinden ayıklar (eksik/kesik olanı atlar)
+function dengeliNesneler(text) {
+  const out = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === "{") { if (depth === 0) start = i; depth++; }
+    else if (c === "}") { if (depth > 0) { depth--; if (depth === 0 && start >= 0) { try { out.push(JSON.parse(text.slice(start, i + 1))); } catch { /* yarım nesne */ } start = -1; } } }
+  }
+  return out;
+}
+
+// Kesik {ozet, islemler:[...]} yanıtından mümkün olduğunca çok işlem kurtar
+function kurtarParse(text) {
+  const ai = text.indexOf('"islemler"');
+  if (ai < 0) return null;
+  const ab = text.indexOf("[", ai);
+  if (ab < 0) return null;
+  const islemler = dengeliNesneler(text.slice(ab + 1));
+  if (!islemler.length) return null;
+  let ozet = null;
+  const oi = text.indexOf('"ozet"');
+  if (oi >= 0 && oi < ai) {
+    const ob = text.indexOf("{", oi);
+    if (ob >= 0) ozet = dengeliNesneler(text.slice(ob))[0] || null;
+  }
+  return { ozet, islemler };
 }
 
 export function fileToBase64(file) {

@@ -76,4 +76,11 @@ describe("parseJSON (AI yanıtı temizleme)", () => {
   it("iki nesne arası eksik virgülü tolere eder", () => {
     expect(parseJSON('[{"a":1}\n{"a":2}]')).toEqual([{ a: 1 }, { a: 2 }]);
   });
+  it("kesik (truncated) ekstre yanıtından tam işlemleri kurtarır", () => {
+    const kesik = '{"ozet":{"banka":"Axess","son4":"7189"},"islemler":[{"tarih":"2026-04-20","aciklama":"A","miktar":10,"tip":"gider"},{"tarih":"2026-04-21","aciklama":"B","miktar":20,"tip":"gider"},{"tarih":"2026-04-22","aciklama":"C","mik';
+    const r = parseJSON(kesik);
+    expect(r.ozet.son4).toBe("7189");
+    expect(r.islemler).toHaveLength(2); // 3. kayıt yarım, atlanır
+    expect(r.islemler[1].aciklama).toBe("B");
+  });
 });

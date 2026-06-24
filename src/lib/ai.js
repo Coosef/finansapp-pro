@@ -204,7 +204,7 @@ async function localCall(messages, modelOverride, json) {
   const model = modelOverride || _localModel;
   if (!model) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
   const url = _baseURL.replace(/\/+$/, "") + "/chat/completions";
-  const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 8192 };
+  const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 16384 };
   if (json) body.response_format = { type: "json_object" }; // geçerli JSON'a zorla
   let res;
   try {
@@ -258,7 +258,7 @@ async function geminiNativeCall(messages, model, json) {
   const m = model || _localModel || GEMINI_VARSAYILAN_MODEL;
   const url = `${GEMINI_NATIVE}/models/${m}:generateContent?key=${encodeURIComponent(_apiKey)}`;
   const reqBody = toGemini(messages);
-  if (json) reqBody.generationConfig = { responseMimeType: "application/json", maxOutputTokens: 8192 };
+  if (json) reqBody.generationConfig = { responseMimeType: "application/json", maxOutputTokens: 16384 };
   let res;
   try {
     res = await fetchYeniden(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(reqBody) });
