@@ -3,7 +3,7 @@
 // ============================================================
 import { useState } from "react";
 import { V, F, SERIF, MONO } from "../lib/constants.js";
-import { uid, bugun } from "../lib/format.js";
+import { uid, bugun, sayiCevir } from "../lib/format.js";
 import { Icon } from "../components/icons.jsx";
 
 // Tüm ekranların ortak zemini: tam ekran zümrüt
@@ -104,8 +104,7 @@ export function Onboarding({ user, setFindata }) {
   const [adim, setAdim] = useState(0);
   const [gelir, setGelir] = useState("");
   function parseGelir() {
-    // binlik ayraç noktalarını at, ondalık virgülü noktaya çevir
-    return parseFloat(String(gelir).replace(/\./g, "").replace(",", ".")) || 0;
+    return sayiCevir(gelir); // Türkçe biçim: nokta binlik, virgül ondalık
   }
   function atla() {
     setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), kuruldu: true } }));

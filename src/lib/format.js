@@ -42,6 +42,39 @@ export function sayiCikar(txt) {
   return parseFloat(s);
 }
 
+// Kullanıcı girişinden tutar/sayı çöz. Türkçe biçim varsayılan: nokta binlik,
+// virgül ondalık. Örnekler:
+//   "100.000"   → 100000      "1.234.567" → 1234567
+//   "1.234,56"  → 1234.56     "100,5"     → 100.5
+//   "100.50"    → 100.5  (tek nokta + 1-2 hane = ondalık; binlik grupları 3 hanedir)
+//   "1,234.56"  → 1234.56 (İngilizce biçim de tolere edilir)
+export function sayiCevir(v) {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  let s = String(v ?? "").trim();
+  if (!s) return 0;
+  const negatif = /^-/.test(s);
+  s = s.replace(/[^\d.,]/g, ""); // ₺, boşluk, harf vb. at
+  if (!s) return 0;
+  const sonNokta = s.lastIndexOf(".");
+  const sonVirgul = s.lastIndexOf(",");
+  if (sonNokta !== -1 && sonVirgul !== -1) {
+    // İkisi de var → en sağdaki ondalık ayraçtır
+    if (sonVirgul > sonNokta) s = s.replace(/\./g, "").replace(",", "."); // 1.234,56 (Türkçe)
+    else s = s.replace(/,/g, ""); // 1,234.56 (İngilizce binlik virgül)
+  } else if (sonVirgul !== -1) {
+    // Sadece virgül: tek virgül = ondalık; birden çok = İngilizce binlik
+    if ((s.match(/,/g) || []).length > 1) s = s.replace(/,/g, "");
+    else s = s.replace(",", ".");
+  } else if (sonNokta !== -1) {
+    // Sadece nokta: tek nokta + son grup 1-2 hane → ondalık; aksi halde binlik
+    const p = s.split(".");
+    if (!(p.length === 2 && p[1].length < 3)) s = s.replace(/\./g, "");
+  }
+  const n = parseFloat(s);
+  if (isNaN(n)) return 0;
+  return negatif ? -n : n;
+}
+
 // AI yanıtındaki JSON'u (```json bloklarını temizleyerek) ayrıştır
 export function parseJSON(text) {
   const clean = (text || "").replace(/```json/gi, "").replace(/```/g, "").trim();

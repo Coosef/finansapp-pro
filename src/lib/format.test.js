@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TL, TL2, bugun, buAy, sonrakiTarih, aylikEsdeger, kategoriAnahtar, sayiCikar, parseJSON } from "./format.js";
+import { TL, TL2, bugun, buAy, sonrakiTarih, aylikEsdeger, kategoriAnahtar, sayiCikar, sayiCevir, parseJSON } from "./format.js";
 
 describe("para biçimleme", () => {
   it("TL binlik ayracı ve ₺ içerir, ondalık yok", () => {
@@ -55,6 +55,22 @@ describe("sayiCikar (Türkçe sayı çözümleme)", () => {
   it("metin içinden sayı + birim", () => expect(sayiCikar("1.234,5 TL")).toBe(1234.5));
   it("yalnız virgül ondalık", () => expect(sayiCikar("3,14")).toBe(3.14));
   it("sayı yoksa NaN", () => expect(sayiCikar("abc")).toBeNaN());
+});
+
+describe("sayiCevir (kullanıcı girişi tutar çözümleme)", () => {
+  it("Türkçe binlik nokta: 100.000 → 100000", () => expect(sayiCevir("100.000")).toBe(100000));
+  it("çok gruplu binlik: 1.234.567 → 1234567", () => expect(sayiCevir("1.234.567")).toBe(1234567));
+  it("binlik nokta + ondalık virgül: 1.234,56 → 1234.56", () => expect(sayiCevir("1.234,56")).toBe(1234.56));
+  it("yalnız ondalık virgül: 100,5 → 100.5", () => expect(sayiCevir("100,5")).toBe(100.5));
+  it("tek nokta + 1-2 hane = ondalık: 100.50 → 100.5", () => expect(sayiCevir("100.50")).toBe(100.5));
+  it("tek nokta + 1 hane = ondalık: 12.5 → 12.5", () => expect(sayiCevir("12.5")).toBe(12.5));
+  it("tek nokta + 3 hane = binlik: 1.234 → 1234", () => expect(sayiCevir("1.234")).toBe(1234));
+  it("düz sayı: 58000 → 58000", () => expect(sayiCevir("58000")).toBe(58000));
+  it("İngilizce biçim: 1,234.56 → 1234.56", () => expect(sayiCevir("1,234.56")).toBe(1234.56));
+  it("para birimi/boşluk temizlenir: '₺ 100.000' → 100000", () => expect(sayiCevir("₺ 100.000")).toBe(100000));
+  it("sayı tipini aynen döndürür", () => expect(sayiCevir(2500)).toBe(2500));
+  it("boş/geçersiz → 0", () => { expect(sayiCevir("")).toBe(0); expect(sayiCevir("abc")).toBe(0); expect(sayiCevir(null)).toBe(0); });
+  it("negatif korunur: -1.500 → -1500", () => expect(sayiCevir("-1.500")).toBe(-1500));
 });
 
 describe("parseJSON (AI yanıtı temizleme)", () => {

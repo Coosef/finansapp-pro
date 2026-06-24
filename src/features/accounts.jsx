@@ -3,7 +3,7 @@
 // ============================================================
 import { useState } from "react";
 import { V, F, SERIF, MONO, HESAP_TIP } from "../lib/constants.js";
-import { uid, TL, bugun } from "../lib/format.js";
+import { uid, TL, bugun, sayiCevir } from "../lib/format.js";
 import { transferUygula } from "../lib/finance.js";
 import { Card, Btn, Field, Modal, DelBtn, Bos } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -65,7 +65,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
       bildir("Hesap adı gerekli", "err");
       return;
     }
-    const bakiye = parseFloat(form.bakiye) || 0;
+    const bakiye = sayiCevir(form.bakiye);
     if (duzenle && duzenle !== "yeni") {
       const id = duzenle.id;
       setFindata((d) => ({ ...d, hesaplar: d.hesaplar.map((h) => (h.id === id ? { ...h, ad: form.ad.trim(), tip: form.tip, bakiye } : h)) }));
@@ -89,7 +89,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
     setTransfer({ kaynak: String(hesaplar[0]?.id || ""), hedef: String(hesaplar[1]?.id || ""), miktar: "" });
   }
   function transferYap() {
-    const m = parseFloat(transfer.miktar);
+    const m = sayiCevir(transfer.miktar);
     if (!transfer.kaynak || !transfer.hedef || transfer.kaynak === transfer.hedef) {
       bildir("Farklı iki hesap seç", "err");
       return;

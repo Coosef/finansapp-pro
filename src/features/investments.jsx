@@ -3,15 +3,15 @@
 // ============================================================
 import { useState } from "react";
 import { V, F, VARLIK_TIPLERI, PALET } from "../lib/constants.js";
-import { TL, bugun } from "../lib/format.js";
+import { TL, bugun, sayiCevir } from "../lib/format.js";
 import { Card, Btn, Modal, Field, DelBtn, EditBtn, Bos } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
 // Tek yatırımın güncel fiyatını elle güncelle (AI/CoinGecko gerekmeden)
 // — manuel fiyat mantığı korunur: guncelFiyat + sonGuncelleme + bugünün gecmis noktası
 function manuelFiyatUygula(setFindata, y, fiyat) {
-  const f = parseFloat(String(fiyat).replace(",", "."));
-  if (isNaN(f) || f <= 0) return;
+  const f = sayiCevir(fiyat);
+  if (f <= 0) return;
   const t = bugun();
   setFindata((d) => ({
     ...d,

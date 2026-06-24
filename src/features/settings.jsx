@@ -6,7 +6,7 @@
 // ============================================================
 import { useState, useRef, useEffect } from "react";
 import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
-import { uid, bugun, buAy } from "../lib/format.js";
+import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
@@ -768,7 +768,7 @@ function KurallarKart({ findata, setFindata, bildir }) {
       ...d,
       kurallar: [
         ...(d.kurallar || []),
-        { id: uid(), tip: form.tip, kelime: form.kelime, tutarUstu: parseFloat(form.tutarUstu) || 0, kategori: form.kategori, mesaj: form.mesaj },
+        { id: uid(), tip: form.tip, kelime: form.kelime, tutarUstu: sayiCevir(form.tutarUstu), kategori: form.kategori, mesaj: form.mesaj },
       ],
     }));
     setForm({ tip: "kategori", kelime: "", tutarUstu: "", kategori: "Market", mesaj: "" });

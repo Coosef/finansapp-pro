@@ -4,7 +4,7 @@
 // ============================================================
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { V } from "./lib/constants.js";
-import { uid, bugun, TL } from "./lib/format.js";
+import { uid, bugun, TL, sayiCevir } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
 import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre } from "./lib/finance.js";
@@ -406,7 +406,7 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   }
   function kaydetIslem(tur) {
     if (!form.baslik || !form.miktar) { bildir("Başlık ve tutar gerekli", "err"); return; }
-    const miktar = parseFloat(String(form.miktar).replace(",", ".")) || 0;
+    const miktar = sayiCevir(form.miktar);
     if (miktar <= 0) { bildir("Geçerli tutar gir", "err"); return; }
     const hesapId = tur === "gelir" || tur === "gider" ? form.hesapId || "" : "";
     const veri = { baslik: form.baslik, miktar, kategori: form.kategori, tarih: form.tarih, hane: !!form.hane, hesapId };
@@ -445,7 +445,7 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   }
   function kaydetYatirim() {
     if (!form.ad || !form.adet || !form.alisFiyati) { bildir("Ad, adet ve alış fiyatı gerekli", "err"); return; }
-    const adet = parseFloat(String(form.adet).replace(",", ".")), af = parseFloat(String(form.alisFiyati).replace(",", "."));
+    const adet = sayiCevir(form.adet), af = sayiCevir(form.alisFiyati);
     if (form._editId) {
       guncelle("yatirim", form._editId, { tip: form.tip, ad: form.ad, sembol: form.sembol || form.ad, adet, alisFiyati: af, alisTarihi: form.alisTarihi });
       setModal(null); bildir("Yatırım güncellendi"); return;

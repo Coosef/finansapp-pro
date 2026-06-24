@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { V, F, SERIF, MONO, GIDER_KAT } from "../lib/constants.js";
 import { Icon } from "../components/icons.jsx";
-import { uid, TL, buAy } from "../lib/format.js";
+import { uid, TL, buAy, sayiCevir } from "../lib/format.js";
 import { etkinButce, butceDevri, rozetleriHesapla } from "../lib/finance.js";
 import { Card, Btn, Modal, Field, Toggle, Seg, ProgressBar, DelBtn, EditBtn, Bos } from "../components/ui.jsx";
 
@@ -60,7 +60,7 @@ function ButceHedef({ findata, setFindata, bildir }) {
   function butceKaydet() {
     const cat = butceModal.cat;
     if (!cat) { bildir("Kategori seç", "err"); return; }
-    const limit = parseFloat(butceModal.limit) || 0;
+    const limit = sayiCevir(butceModal.limit);
     setFindata((d) => {
       const yeni = { ...(d.butceler || {}) };
       if (limit > 0) yeni[cat] = limit; else delete yeni[cat];
@@ -73,9 +73,9 @@ function ButceHedef({ findata, setFindata, bildir }) {
   // ---- Hedef kaydet (yeni veya düzenle) ----
   function hedefKaydet() {
     const ad = (hedefModal.ad || "").trim();
-    const hedefTutar = parseFloat(hedefModal.hedefTutar) || 0;
+    const hedefTutar = sayiCevir(hedefModal.hedefTutar);
     if (!ad || !hedefTutar) { bildir("Ad ve hedef tutar gerekli", "err"); return; }
-    const aylikKatki = parseFloat(hedefModal.aylikKatki) || 0;
+    const aylikKatki = sayiCevir(hedefModal.aylikKatki);
     const tip = hedefModal.tip || "birikim";
     const oto = !!hedefModal.otomatikKatki;
     setFindata((d) => {
@@ -262,7 +262,7 @@ function Zarflar({ findata, setFindata }) {
   const ayGider = {};
   (findata.giderler || []).filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
   const zarflar = findata.zarflar || {};
-  const set = (k, v) => setFindata((d) => ({ ...d, zarflar: { ...(d.zarflar || {}), [k]: parseFloat(v) || 0 } }));
+  const set = (k, v) => setFindata((d) => ({ ...d, zarflar: { ...(d.zarflar || {}), [k]: sayiCevir(v) } }));
   const toplamTahsis = Object.values(zarflar).reduce((a, b) => a + (+b || 0), 0);
   const kategoriler = giderKat(findata);
   return (
