@@ -9,13 +9,14 @@ import { claudeCall, aiHazir } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
 
 // PDF'i sayfa sayfa görsele çevir (yerel model PDF okuyamaz; görseli okur).
 // Banka fontu sorunu yaşamaz çünkü pdf.js sayfayı piksel olarak render eder.
+// Worker, Vite'ın ?worker'ı ile oluşturulur → nginx MIME'ına/önbelleğine bağımlı değil.
 async function pdfSayfalariGorsel(file) {
   const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker();
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const out = [];
