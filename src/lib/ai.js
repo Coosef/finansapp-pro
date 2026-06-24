@@ -101,13 +101,37 @@ function yapilandirmaHatasi() {
   return e;
 }
 
+// ---- Geçici hatalarda otomatik tekrar (backoff) ----
+const GECICI_KODLAR = new Set([429, 500, 502, 503, 529]);
+const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
+// Ağ hatası veya geçici durum kodunda 3 denemeye kadar tekrar dener
+async function fetchYeniden(url, opts, deneme = 3) {
+  let sonHata;
+  for (let i = 0; i < deneme; i++) {
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (e) {
+      sonHata = e;
+      if (i < deneme - 1) { await bekle(800 * (i + 1)); continue; }
+      throw e;
+    }
+    if (GECICI_KODLAR.has(res.status) && i < deneme - 1) {
+      await bekle(1200 * (i + 1)); // 1.2s, 2.4s
+      continue;
+    }
+    return res;
+  }
+  throw sonHata;
+}
+
 // ---- Anthropic çağrısı ----
 async function anthropicCall(messages, useSearch) {
   const body = { model: _model, max_tokens: 2048, messages };
   if (useSearch) body.tools = [WEB_SEARCH_TOOL];
   let res;
   try {
-    res = await fetch(ANTHROPIC_URL, {
+    res = await fetchYeniden(ANTHROPIC_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -160,7 +184,7 @@ async function localCall(messages) {
   const body = { model: _localModel, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 2048 };
   let res;
   try {
-    res = await fetch(url, {
+    res = await fetchYeniden(url, {
       method: "POST",
       // Bulut (Gemini) gerçek anahtarı ister; yerel sunucular "local" değerini yok sayar
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + (_apiKey || "local") },
@@ -209,13 +233,14 @@ async function geminiNativeCall(messages) {
   const url = `${GEMINI_NATIVE}/models/${_localModel}:generateContent?key=${encodeURIComponent(_apiKey)}`;
   let res;
   try {
-    res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toGemini(messages)) });
+    res = await fetchYeniden(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toGemini(messages)) });
   } catch {
     throw new Error("Gemini'ye ulaşılamadı. İnternet bağlantını ve API anahtarını kontrol et.");
   }
   if (!res.ok) {
     let detay = "";
     try { detay = (await res.json())?.error?.message || ""; } catch { /* yoksay */ }
+    if (res.status === 503 || res.status === 429) throw new Error("Gemini şu an yoğun (yeniden denendi). Birazdan tekrar dene veya Ayarlar'dan modeli 'Gemini 2.0 Flash' yap.");
     throw new Error(`Gemini hatası ${res.status}${detay ? ": " + detay.slice(0, 160) : ""}`);
   }
   const data = await res.json();
