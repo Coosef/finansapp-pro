@@ -124,7 +124,10 @@ miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
       if (!kayitlar.length && !atlanan && !ozet) bildir("İşlem bulunamadı", "err");
       else setSonuc({ kayitlar, atlanan, ozet });
     } catch (err) {
-      bildir(aiHata(err) || "Ekstre işlenemedi", "err");
+      let m = aiHata(err) || "Ekstre işlenemedi";
+      // Yoğunluk hatasında, PDF yerine CSV/Excel öner (çok daha hafif, takılmaz)
+      if (/yoğun/i.test(m)) m = "Gemini şu an yoğun. İpucu: ekstreyi bankadan CSV/Excel indirip yükle (çok daha hafif ve OCR'sız, takılmaz) ya da birkaç dakika sonra tekrar dene.";
+      bildir(m, "err");
     } finally {
       setIsleniyor(false);
       if (ekstreRef.current) ekstreRef.current.value = "";
