@@ -23,7 +23,7 @@ async function pdfSayfalariGorsel(file) {
   const n = Math.min(pdf.numPages, 12);
   for (let i = 1; i <= n; i++) {
     const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1.6 });
+    const viewport = page.getViewport({ scale: 2.4 });
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
