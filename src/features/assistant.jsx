@@ -26,7 +26,11 @@ function MesajMetni({ metin }) {
 
 export function Asistan({ findata, guncelDeger, toplamGelir, toplamGider, toplamAbonelik, yatirimDeger, netDeger, bildir }) {
   const [mesajlar, setMesajlar] = useState([
-    { rol: "asistan", metin: 'Merhaba! Finansınla ilgili her şeyi sorabilirsin. Örn: "Bu ay en çok nereye harcadım?", "Tasarruf için ne önerirsin?", "Bu krediyi kapatmalı mıyım?"' },
+    {
+      rol: "asistan",
+      metin:
+        "Merhaba! Ben **FinansApp finans asistanınım**. Senin verilerine — gelir-gider, bütçe, hedef, yatırım ve hesaplarına — bakarak sorularını yanıtlar, harcamalarını analiz eder, tasarruf ve bütçe önerileri sunarım.\n\nÖrnek sorular:\n• Bu ay en çok nereye harcadım?\n• Tasarruf için ne önerirsin?\n• Şu krediyi kapatmalı mıyım?\n\nNot: Genel finansal rehberlik veririm; profesyonel yatırım/vergi danışmanlığı değil — son karar senin.",
+    },
   ]);
   const [girdi, setGirdi] = useState("");
   const [bekle, setBekle] = useState(false);
@@ -52,7 +56,21 @@ export function Asistan({ findata, guncelDeger, toplamGelir, toplamGider, toplam
     setBekle(true);
     try {
       const konusma = yeni.slice(-8).map((m) => `${m.rol === "user" ? "Kullanıcı" : "Asistan"}: ${m.metin}`).join("\n");
-      const prompt = `Sen bir kişisel finans asistanısın. Kullanıcının güncel verisi (tutarlar TL): ${JSON.stringify(ozet())}.\n\nKonuşma:\n${konusma}\n\nSon kullanıcı sorusuna Türkçe, kısa ve net cevap ver. Gerektiğinde veriden rakam hesapla. Veri yetersizse dürüstçe söyle. Yatırım tavsiyesi verirken bunun kesin tavsiye olmadığını ekle. Sadece cevap metnini yaz.`;
+      const prompt = `Sen FinansApp uygulamasının kişisel finans asistanısın. Rolün: kullanıcının KENDİ finansal verisine dayanarak Türkçe, kısa ve net yanıtlar vermek; harcamalarını analiz etmek; bütçe, tasarruf, borç ve hedef konularında pratik öneriler sunmak. Kullanıcı "sen kimsin / ne yapabilirsin" diye sorarsa rolünü kısaca açıkla.
+
+Kurallar:
+- Yalnızca aşağıdaki kullanıcı verisine ve konuşmaya dayan; veri yoksa rakam uydurma.
+- Gerektiğinde veriden hesap yap (toplam, oran, fark).
+- Veri yetersizse dürüstçe söyle ve hangi bilginin gerektiğini belirt.
+- Yatırım/borç önerirken bunun kesin finansal tavsiye olmadığını, son kararın kullanıcıya ait olduğunu ekle.
+- Para birimi TL. Yalnızca cevap metnini yaz (başlık veya sistem notu ekleme).
+
+Kullanıcının güncel verisi: ${JSON.stringify(ozet())}
+
+Konuşma:
+${konusma}
+
+Son kullanıcı sorusunu yukarıdaki role ve verilere göre yanıtla.`;
       const txt = await claudeCall([{ role: "user", content: prompt }]);
       setMesajlar((m) => [...m, { rol: "asistan", metin: txt }]);
     } catch (e) {
@@ -76,8 +94,8 @@ export function Asistan({ findata, guncelDeger, toplamGelir, toplamGider, toplam
       <style>{"@keyframes obfade{from{opacity:.25}to{opacity:1}}"}</style>
       <h2 style={{ margin: "0 0 0.2rem", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF, color: V.ink }}>Finans Asistanı</h2>
       <p style={{ color: V.ink3, fontSize: "0.85rem", margin: "0 0 1rem" }}>
-        Verilerine bakarak cevaplar; tüm sekmelerin yerine tek bir "sor" kutusu.
-        {!aiHazir() && <span style={{ color: V.accent }}> (Çalışması için Ayarlar'dan Anthropic API anahtarı gir.)</span>}
+        Senin gelir-gider, bütçe, hedef ve yatırım verine bakarak Türkçe yanıt verir; harcamanı analiz eder, tasarruf ve bütçe önerileri sunar.
+        {!aiHazir() && <span style={{ color: V.accent }}> (Çalışması için Ayarlar → Yapay Zekâ'dan bir sağlayıcı bağla: Claude, Gemini veya yerel model.)</span>}
       </p>
 
       <div className="fa-card" style={{ padding: 24, minHeight: 440, display: "flex", flexDirection: "column" }}>
