@@ -9,6 +9,28 @@ import { claudeCall, aiHazir } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+// PDF'i sayfa sayfa görsele çevir (yerel model PDF okuyamaz; görseli okur).
+// Banka fontu sorunu yaşamaz çünkü pdf.js sayfayı piksel olarak render eder.
+async function pdfSayfalariGorsel(file) {
+  const pdfjsLib = await import("pdfjs-dist");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const out = [];
+  const n = Math.min(pdf.numPages, 12);
+  for (let i = 1; i <= n; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    out.push({ data: canvas.toDataURL("image/jpeg", 0.85).split(",")[1], mime: "image/jpeg" });
+  }
+  return out;
+}
 
 export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   const [mod, setMod] = useState("fis");
@@ -105,22 +127,12 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       const ozetAl = (p) => (!Array.isArray(p) && p?.ozet ? p.ozet : null);
       let ham = [];
       let ozet = null;
-      if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
-        const m = await file.text();
-        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }] }]));
-        ham = islemAl(p); ozet = ozetAl(p);
-      } else if (ext === "pdf" || file.type === "application/pdf") {
-        const b64 = await fileToBase64(file);
-        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }] }]));
-        ham = islemAl(p); ozet = ozetAl(p);
-      } else {
-        // Görsel(ler): HER sayfa AYRI okunur (yerel modeller tek istekte çok resmi güvenilir işlemez), sonra birleştirilir
-        const resimler = files.filter((f) => !/\.(pdf|csv|txt)$/i.test(f.name));
+      // Görsel kaynaklarını ([{data,mime}]) sayfa sayfa oku, sonuçları birleştir
+      const sayfalariOku = async (kaynaklar) => {
         const gorulen = new Set();
-        for (let pi = 0; pi < resimler.length; pi++) {
-          if (resimler.length > 1) setDurum(`Sayfa ${pi + 1}/${resimler.length} okunuyor…`);
-          const b64 = await fileToBase64(resimler[pi]);
-          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: resimler[pi].type || "image/jpeg", data: b64 } }, { type: "text", text: talimat }] }]));
+        for (let pi = 0; pi < kaynaklar.length; pi++) {
+          if (kaynaklar.length > 1) setDurum(`Sayfa ${pi + 1}/${kaynaklar.length} okunuyor…`);
+          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: kaynaklar[pi].mime, data: kaynaklar[pi].data } }, { type: "text", text: talimat }] }]));
           if (!ozet) ozet = ozetAl(p);
           for (const x of islemAl(p)) {
             const k = `${x.tarih}|${Math.abs(parseFloat(x.miktar) || 0)}|${(x.aciklama || "").slice(0, 10).toLowerCase()}`;
@@ -130,6 +142,28 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           }
         }
         setDurum("");
+      };
+      if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
+        const m = await file.text();
+        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }] }]));
+        ham = islemAl(p); ozet = ozetAl(p);
+      } else if (ext === "pdf" || file.type === "application/pdf") {
+        // PDF'i sayfa görsellerine çevir (yerelde de çalışsın); olmazsa ham PDF'e düş
+        let sayfalar = null;
+        try { setDurum("PDF sayfalara çevriliyor…"); sayfalar = await pdfSayfalariGorsel(file); } catch { sayfalar = null; }
+        if (sayfalar && sayfalar.length) {
+          await sayfalariOku(sayfalar);
+        } else {
+          const b64 = await fileToBase64(file);
+          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }] }]));
+          ham = islemAl(p); ozet = ozetAl(p);
+        }
+      } else {
+        // Yüklenen görseller — her sayfa ayrı okunur
+        const resimler = files.filter((f) => !/\.(pdf|csv|txt)$/i.test(f.name));
+        const kaynaklar = [];
+        for (const f of resimler) kaynaklar.push({ data: await fileToBase64(f), mime: f.type || "image/jpeg" });
+        await sayfalariOku(kaynaklar);
       }
       // Kart borcu ödemeleri gelir/gider değildir → içe aktarılmaz, yalnız bilgilendirilir
       const atlanan = ham.filter((x) => x.tip === "odeme").length;
