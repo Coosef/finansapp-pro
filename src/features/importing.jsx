@@ -4,7 +4,7 @@
 // ============================================================
 import { useState, useRef } from "react";
 import { V, F, SERIF } from "../lib/constants.js";
-import { TL, bugun, uid, fileToBase64, parseJSON } from "../lib/format.js";
+import { TL, bugun, buAy, uid, fileToBase64, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
@@ -152,7 +152,10 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       ekle(tip, kayit);
       kategoriOgren(kayit.baslik, kayit.kategori);
     });
-    bildir(`${secili.length} kayıt eklendi`);
+    // Geçmiş tarihli kayıtlar "Bu ay" döneminde görünmez → kullanıcıyı uyar
+    const ay = buAy();
+    const gecmis = secili.filter((k) => !(k.tarih || "").startsWith(ay)).length;
+    bildir(`${secili.length} kayıt eklendi` + (gecmis ? ` · ${gecmis} tanesi geçmiş tarihli, görmek için üstten dönemi "Tümü" seç` : ""));
     setSonuc(null);
   }
 
