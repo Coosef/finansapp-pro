@@ -104,8 +104,9 @@ function yapilandirmaHatasi() {
 // ---- Geçici hatalarda otomatik tekrar (backoff) ----
 const GECICI_KODLAR = new Set([429, 500, 502, 503, 529]);
 const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
-// Ağ hatası veya geçici durum kodunda 3 denemeye kadar tekrar dener
-async function fetchYeniden(url, opts, deneme = 3) {
+const GEMINI_YOGUN = "Gemini sunucuları şu an yoğun (Google tarafında geçici, yeniden denendi). Birkaç dakika sonra tekrar dene — genelde kısa sürede düzelir. Acele edersen Ayarlar'dan Claude veya yerel modele geçebilirsin.";
+// Ağ hatası veya geçici durum kodunda 4 denemeye kadar tekrar dener
+async function fetchYeniden(url, opts, deneme = 4) {
   let sonHata;
   for (let i = 0; i < deneme; i++) {
     let res;
@@ -113,11 +114,11 @@ async function fetchYeniden(url, opts, deneme = 3) {
       res = await fetch(url, opts);
     } catch (e) {
       sonHata = e;
-      if (i < deneme - 1) { await bekle(800 * (i + 1)); continue; }
+      if (i < deneme - 1) { await bekle(1000 * (i + 1)); continue; }
       throw e;
     }
     if (GECICI_KODLAR.has(res.status) && i < deneme - 1) {
-      await bekle(1200 * (i + 1)); // 1.2s, 2.4s
+      await bekle(1500 * (i + 1)); // 1.5s, 3s, 4.5s
       continue;
     }
     return res;
@@ -196,6 +197,7 @@ async function localCall(messages) {
       : `Yerel modele ulaşılamadı (${_baseURL}). Ollama/LM Studio açık mı ve CORS izinli mi?`);
   }
   if (!res.ok) {
+    if (_provider === "gemini" && (res.status === 503 || res.status === 429)) throw new Error(GEMINI_YOGUN);
     let detay = "";
     try { detay = (await res.text())?.slice(0, 160) || ""; } catch {}
     throw new Error(`Yerel model hatası ${res.status}${detay ? ": " + detay : ""}`);
@@ -240,7 +242,7 @@ async function geminiNativeCall(messages) {
   if (!res.ok) {
     let detay = "";
     try { detay = (await res.json())?.error?.message || ""; } catch { /* yoksay */ }
-    if (res.status === 503 || res.status === 429) throw new Error("Gemini şu an yoğun (yeniden denendi). Birazdan tekrar dene veya Ayarlar'dan modeli 'Gemini 2.0 Flash' yap.");
+    if (res.status === 503 || res.status === 429) throw new Error(GEMINI_YOGUN);
     throw new Error(`Gemini hatası ${res.status}${detay ? ": " + detay.slice(0, 160) : ""}`);
   }
   const data = await res.json();
