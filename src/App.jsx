@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { V } from "./lib/constants.js";
 import { uid, bugun, TL } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
-import { syncYukle, syncBagliMi, pbFindataCek, pbFindataGonder } from "./lib/sync.js";
+import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbFindataCek, pbFindataGonder } from "./lib/sync.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre } from "./lib/finance.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { Icon, IK } from "./components/icons.jsx";
@@ -78,38 +78,47 @@ export default function FinansAppPro() {
     if (tm) { setTemaHint(tm); try { localStorage.setItem("finansapp:tema", tm); } catch { /* yoksay */ } }
   }, [findata?.ayarlar?.tema]);
 
-  async function girisYap(username, sifre) {
-    const u = kullanicilar.find((x) => x.username === username && x.sifre === sifre);
-    if (!u) return false;
-    let veri = bosVeri();
-    // Bulut bağlıysa önce buluttan çek; ulaşılamazsa yerele düş
-    let bulutVar = false;
-    if (syncBagliMi()) {
-      try {
-        const bulut = await pbFindataCek();
-        if (bulut?.data) { veri = { ...bosVeri(), ...bulut.data }; bulutVar = true; }
-      } catch { /* çevrimdışı → yerel */ }
-    }
-    if (!bulutVar) {
-      try {
-        const r = await storage.get(`findata:${username}`);
-        if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) };
-      } catch { /* yoksay */ }
-    }
+  // Veriyi hazırla (tekrarlar + hedef katkıları) ve oturumu aç
+  function girisTamamla(u, veri, ilkBulutGonder) {
     let { data, degisti } = tekrarlariUret(veri);
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
-    if (degisti) {
-      try { await storage.set(`findata:${username}`, JSON.stringify(data)); } catch { /* yoksay */ }
-    }
-    // Bulut bağlı ama boştuysa, mevcut veriyi buluta gönder (ilk senkron)
-    if (syncBagliMi() && !bulutVar) pbFindataGonder(data).catch(() => {});
+    if (degisti) storage.set(`findata:${u.username}`, JSON.stringify(data)).catch(() => {});
+    if (ilkBulutGonder) pbFindataGonder(data).catch(() => {}); // bulut boştuysa ilk senkron
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
     setTab("panel");
     return true;
+  }
+
+  async function girisYap(username, sifre) {
+    // 1) Yerel kullanıcı (admin gibi)
+    const u = kullanicilar.find((x) => x.username === username && x.sifre === sifre);
+    if (u) {
+      let veri = bosVeri();
+      let bulutVar = false;
+      if (syncBagliMi()) {
+        try { const b = await pbFindataCek(); if (b?.data) { veri = { ...bosVeri(), ...b.data }; bulutVar = true; } } catch { /* çevrimdışı */ }
+      }
+      if (!bulutVar) {
+        try { const r = await storage.get(`findata:${username}`); if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) }; } catch { /* yoksay */ }
+      }
+      return girisTamamla(u, veri, syncBagliMi() && !bulutVar);
+    }
+    // 2) Bulut hesabı (e-posta + şifre) — herhangi bir tarayıcı/cihazdan
+    if (username.includes("@")) {
+      try {
+        await pbGiris(syncDurum().url, username.trim(), sifre);
+        let veri = bosVeri();
+        const b = await pbFindataCek();
+        const bulutBos = !b?.data;
+        if (b?.data) veri = { ...bosVeri(), ...b.data };
+        return girisTamamla({ username: username.trim(), ad: username.split("@")[0], rol: "kullanici", bulut: true }, veri, bulutBos);
+      } catch { /* bulut da olmadı */ }
+    }
+    return false;
   }
 
   const bulutTimer = useRef(null);

@@ -37,14 +37,15 @@ export function Login({ onLogin }) {
           <p style={{ margin: "5px 0 0", fontSize: "13px", color: V.sage }}>Kişisel finans yönetimi</p>
         </div>
         <div style={{ background: V.card, borderRadius: "18px", padding: "26px" }}>
-          <label style={lbl}>Kullanıcı adı</label>
-          <input value={u} onChange={(e) => setU(e.target.value)} onKeyDown={onKey} placeholder="admin" style={inp} />
+          <label style={lbl}>Kullanıcı adı / e-posta</label>
+          <input value={u} onChange={(e) => setU(e.target.value)} onKeyDown={onKey} placeholder="admin veya bulut e-postan" style={inp} />
           <label style={lbl}>Şifre</label>
           <input value={p} onChange={(e) => setP(e.target.value)} onKeyDown={onKey} type="password" placeholder="••••••" style={{ ...inp, marginBottom: "6px" }} />
           {hata && <p style={{ margin: "2px 0 0", fontSize: "12px", color: V.neg }}>{hata}</p>}
           <button onClick={dene} style={{ width: "100%", marginTop: "16px", padding: "14px", borderRadius: "12px", border: "none", background: V.emerald2, color: V.cream, fontSize: "14.5px", fontWeight: 600, fontFamily: F, cursor: "pointer" }}>Giriş Yap</button>
-          <p style={{ margin: "14px 0 0", fontSize: "11.5px", color: V.ink3, textAlign: "center" }}>
+          <p style={{ margin: "14px 0 0", fontSize: "11.5px", color: V.ink3, textAlign: "center", lineHeight: 1.6 }}>
             İlk giriş: <b style={{ color: V.ink2 }}>admin</b> / <b style={{ color: V.ink2 }}>admin123</b>
+            <br />Bulut hesabın varsa <b style={{ color: V.ink2 }}>e-posta + şifre</b> ile de gir.
           </p>
         </div>
       </div>
