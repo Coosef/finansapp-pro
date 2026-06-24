@@ -297,6 +297,22 @@ export async function testAIBaglanti() {
   return txt;
 }
 
+// Yerel sunucudaki (Ollama/LM Studio/OpenAI-uyumlu) yüklü modelleri listele
+export async function yerelModelleriListele(adres, apiKey) {
+  const base = (adres || "").replace(/\/+$/, "");
+  if (!base) throw new Error("Önce sunucu adresini gir.");
+  let res;
+  try {
+    res = await fetch(base + "/models", { headers: { Authorization: "Bearer " + (apiKey || "local") } });
+  } catch {
+    throw new Error(`Sunucuya ulaşılamadı (${base}). Açık ve CORS izinli mi?`);
+  }
+  if (!res.ok) throw new Error(`Model listesi alınamadı (${res.status}).`);
+  const data = await res.json();
+  const liste = (data?.data || data?.models || []).map((m) => m.id || m.name).filter(Boolean);
+  return Array.from(new Set(liste)).sort();
+}
+
 // ---- Fiyat çekme ----
 export async function fiyatCek(y) {
   if (y.tip === "kripto") {

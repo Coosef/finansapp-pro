@@ -4,11 +4,11 @@
 // bildirimler, para birimi, kategoriler, kurallar, kullanıcılar,
 // veri & yedek. Tüm yazımlar setFindata üzerinden gider.
 // ============================================================
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
 import { uid, bugun, buAy } from "../lib/format.js";
 import { TL } from "../lib/format.js";
-import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
+import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
@@ -224,8 +224,29 @@ function AiKart({ findata, setFindata, bildir }) {
   const [adres, setAdres] = useState(ay.yerelAdres || "");
   const [yModel, setYModel] = useState(ay.yerelModel || "");
   const [test, setTest] = useState(null);
+  const [modeller, setModeller] = useState([]);
+  const [modelDurum, setModelDurum] = useState(""); // "yukleniyor" | hata metni | ""
 
   const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
+
+  // Yerel sunucudaki yüklü modelleri çek
+  async function modelleriGetir(ad = adres) {
+    setModelDurum("yukleniyor");
+    try {
+      const liste = await yerelModelleriListele(ad, anahtar.trim());
+      setModeller(liste);
+      setModelDurum(liste.length ? "" : "Sunucuda model bulunamadı");
+      if (liste.length && !liste.includes(yModel.trim())) { setYModel(liste[0]); setAyar({ yerelModel: liste[0] }); }
+    } catch (e) {
+      setModeller([]);
+      setModelDurum(e?.message || "Modeller alınamadı");
+    }
+  }
+  // Yerel sağlayıcı seçiliyse modelleri otomatik getir
+  useEffect(() => {
+    if (saglayici !== "anthropic" && saglayici !== "gemini") modelleriGetir(adres || varsayilanAdres(saglayici));
+    else { setModeller([]); setModelDurum(""); }
+  }, [saglayici]); // eslint-disable-line
 
   function saglayiciSec(v) {
     const guncel = { aiSaglayici: v };
@@ -288,13 +309,29 @@ function AiKart({ findata, setFindata, bildir }) {
               placeholder={varsayilanAdres(saglayici) || "http://localhost:11434/v1"}
               mono
             />
-            <Field
-              label="Model adı"
-              value={yModel}
-              onChange={setYModel}
-              placeholder={saglayici === "lmstudio" ? "yüklü model adı" : "llama3.1"}
-              mono
-            />
+            {modeller.length > 0 ? (
+              <Field
+                label="Model"
+                value={modeller.includes(yModel) ? yModel : modeller[0]}
+                onChange={(v) => { setYModel(v); setAyar({ yerelModel: v }); }}
+                options={modeller}
+              />
+            ) : (
+              <Field
+                label="Model adı"
+                value={yModel}
+                onChange={setYModel}
+                placeholder={saglayici === "lmstudio" ? "yüklü model adı" : "llama3.1"}
+                mono
+              />
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "-4px 0 12px", flexWrap: "wrap" }}>
+            <Btn variant="soft" onClick={() => modelleriGetir()} disabled={modelDurum === "yukleniyor"} style={{ padding: "8px 13px" }}>
+              {modelDurum === "yukleniyor" ? "Getiriliyor…" : "↻ Modelleri Getir"}
+            </Btn>
+            {modeller.length > 0 && <span style={{ fontSize: 12, color: V.pos }}>{modeller.length} model bulundu</span>}
+            {modelDurum && modelDurum !== "yukleniyor" && <span style={{ fontSize: 12, color: V.ink3 }}>{modelDurum}</span>}
           </div>
           <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 12px" }}>
             {saglayici === "ollama" && (
