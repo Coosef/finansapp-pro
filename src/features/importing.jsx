@@ -6,6 +6,7 @@ import { useState, useRef } from "react";
 import { V, F, SERIF } from "../lib/constants.js";
 import { TL, bugun, fileToBase64, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
+import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -73,7 +74,23 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
     setSonuc(null);
     try {
       const ext = (file.name.split(".").pop() || "").toLowerCase();
-      const talimat = `Banka ekstresi. TÜM işlemleri çıkar. SADECE JSON dizi: [{"tarih":"YYYY-MM-DD","aciklama":"...","miktar":pozitif,"tip":"gelir|gider","kategori":"uygun"}]. Çıkış gider, giriş gelir. En fazla 25 işlem.`;
+      const giderKat = giderKategorileri(findata);
+      const gelirKat = gelirKategorileri(findata);
+      const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. TÜM işlemleri çıkar ve her birini sınıflandır. SADECE bir JSON dizisi döndür, başka hiçbir metin yazma:
+[{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"..."}]
+
+Tip kuralları:
+- Alışveriş, harcama, çekim, fatura, faiz, ücret/komisyon → "gider".
+- Maaş, gelen havale/EFT, faiz geliri, iade/geri ödeme → "gelir".
+- Kredi kartı borç ödemesi (ör. "ödemeniz için teşekkürler", "tahsilat", "kart ödemesi", "virman ile ödeme", "hesaptan ödeme") → "odeme". Bu bir BORÇ ÖDEMESİDİR; gelir veya gider DEĞİLDİR.
+
+Kategori kuralları:
+- "gider" için EN UYGUN olanı şu listeden seç: ${giderKat.join(", ")}.
+- "gelir" için şu listeden seç: ${gelirKat.join(", ")}.
+- "odeme" için kategori = "Kart Ödemesi".
+- Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
+
+miktar her zaman pozitif. En fazla 80 işlem.`;
       let content;
       if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
         const m = await file.text();
@@ -87,13 +104,18 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
       }
       const txt = await claudeCall([{ role: "user", content }]);
       const arr = parseJSON(txt);
-      const kayitlar = (Array.isArray(arr) ? arr : []).map((x) => {
-        const kayit = { baslik: x.aciklama || "İşlem", miktar: Math.abs(parseFloat(x.miktar) || 0), kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip: x.tip === "gelir" ? "gelir" : "gider" };
-        const t = tekrarMi(kayit);
-        return { ...kayit, _tekrar: t, _sec: !t };
-      });
-      if (!kayitlar.length) bildir("İşlem bulunamadı", "err");
-      else setSonuc({ kayitlar });
+      const ham = Array.isArray(arr) ? arr : [];
+      // Kart borcu ödemeleri gelir/gider değildir → içe aktarılmaz, yalnız bilgilendirilir
+      const atlanan = ham.filter((x) => x.tip === "odeme").length;
+      const kayitlar = ham
+        .filter((x) => x.tip !== "odeme")
+        .map((x) => {
+          const kayit = { baslik: x.aciklama || "İşlem", miktar: Math.abs(parseFloat(x.miktar) || 0), kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip: x.tip === "gelir" ? "gelir" : "gider" };
+          const t = tekrarMi(kayit);
+          return { ...kayit, _tekrar: t, _sec: !t };
+        });
+      if (!kayitlar.length && !atlanan) bildir("İşlem bulunamadı", "err");
+      else setSonuc({ kayitlar, atlanan });
     } catch (err) {
       bildir(aiHata(err) || "Ekstre işlenemedi", "err");
     } finally {
@@ -162,6 +184,11 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
             <h3 style={sectionTitle}>Bulunan Kayıtlar ({sonuc.kayitlar.length})</h3>
             <Btn variant="primary" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec)}>Seçilenleri Ekle</Btn>
           </div>
+          {sonuc.atlanan > 0 && (
+            <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              💳 {sonuc.atlanan} kart borcu ödemesi atlandı (gelir/gider sayılmaz).
+            </p>
+          )}
           {sonuc.kayitlar.some((k) => k._tekrar) && (
             <p style={{ color: V.accent, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-gold)", border: `1px solid ${V.border2}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               ⚠️ Sarı işaretliler olası tekrar; varsayılan seçili değil.
