@@ -4,13 +4,13 @@
 // ============================================================
 import { useState, useRef } from "react";
 import { V, F, SERIF } from "../lib/constants.js";
-import { TL, bugun, fileToBase64, parseJSON } from "../lib/format.js";
+import { TL, bugun, uid, fileToBase64, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
-export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
+export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   const [mod, setMod] = useState("fis");
   const [isleniyor, setIsleniyor] = useState(false);
   const [sonuc, setSonuc] = useState(null);
@@ -76,8 +76,13 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
       const ext = (file.name.split(".").pop() || "").toLowerCase();
       const giderKat = giderKategorileri(findata);
       const gelirKat = gelirKategorileri(findata);
-      const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. TÜM işlemleri çıkar ve her birini sınıflandır. SADECE bir JSON dizisi döndür, başka hiçbir metin yazma:
-[{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"..."}]
+      const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. SADECE şu yapıda TEK bir JSON nesnesi döndür, başka hiçbir metin yazma:
+{
+  "ozet": {"ekstreTipi":"kart"|"hesap","donemBorcu":sayı|null,"asgariOdeme":sayı|null,"sonOdemeTarihi":"YYYY-MM-DD"|null,"krediLimiti":sayı|null,"kullanilabilirLimit":sayı|null},
+  "islemler": [{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"..."}]
+}
+
+Özet alanlarını ekstrenin ÜST kısmından al (dönem borcu/güncel borç, asgari/en az ödeme tutarı, son ödeme tarihi, kredi/kart limiti, kullanılabilir limit). Yoksa ilgili alanı null bırak. Sayılar gerçek sayı olsun (1.234,56 → 1234.56).
 
 Tip kuralları:
 - Alışveriş, harcama, çekim, fatura, faiz, ücret/komisyon → "gider".
@@ -88,9 +93,9 @@ Kategori kuralları:
 - "gider" için EN UYGUN olanı şu listeden seç: ${giderKat.join(", ")}.
 - "gelir" için şu listeden seç: ${gelirKat.join(", ")}.
 - "odeme" için kategori = "Kart Ödemesi".
-- Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
+- Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/petrol/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
 
-miktar her zaman pozitif. En fazla 80 işlem.`;
+miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
       let content;
       if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
         const m = await file.text();
@@ -103,8 +108,10 @@ miktar her zaman pozitif. En fazla 80 işlem.`;
         content = [{ type: "image", source: { type: "base64", media_type: file.type || "image/jpeg", data: b64 } }, { type: "text", text: talimat }];
       }
       const txt = await claudeCall([{ role: "user", content }]);
-      const arr = parseJSON(txt);
-      const ham = Array.isArray(arr) ? arr : [];
+      const parsed = parseJSON(txt);
+      // Yeni biçim: { ozet, islemler }; eski/yedek biçim: doğrudan dizi
+      const ham = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.islemler) ? parsed.islemler : [];
+      const ozet = !Array.isArray(parsed) && parsed?.ozet ? parsed.ozet : null;
       // Kart borcu ödemeleri gelir/gider değildir → içe aktarılmaz, yalnız bilgilendirilir
       const atlanan = ham.filter((x) => x.tip === "odeme").length;
       const kayitlar = ham
@@ -114,8 +121,8 @@ miktar her zaman pozitif. En fazla 80 işlem.`;
           const t = tekrarMi(kayit);
           return { ...kayit, _tekrar: t, _sec: !t };
         });
-      if (!kayitlar.length && !atlanan) bildir("İşlem bulunamadı", "err");
-      else setSonuc({ kayitlar, atlanan });
+      if (!kayitlar.length && !atlanan && !ozet) bildir("İşlem bulunamadı", "err");
+      else setSonuc({ kayitlar, atlanan, ozet });
     } catch (err) {
       bildir(aiHata(err) || "Ekstre işlenemedi", "err");
     } finally {
@@ -138,7 +145,24 @@ miktar her zaman pozitif. En fazla 80 işlem.`;
     setSonuc(null);
   }
 
+  // Ekstre özetindeki dönem borcunu kredi kartı hesabına işle (yoksa oluştur)
+  function kartBorcuAyarla(borc) {
+    if (!setFindata || !(borc > 0)) return;
+    setFindata((d) => {
+      const hesaplar = [...(d.hesaplar || [])];
+      const i = hesaplar.findIndex((h) => h.tip === "kart");
+      if (i >= 0) hesaplar[i] = { ...hesaplar[i], bakiye: borc };
+      else hesaplar.push({ id: uid(), ad: "Kredi Kartı", tip: "kart", bakiye: borc });
+      return { ...d, hesaplar };
+    });
+    bildir(`Kart borcu ${TL(borc)} olarak güncellendi`);
+  }
+
   const sectionTitle = { margin: 0, fontSize: "0.82rem", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 };
+  const ozetSatir = (sonuc?.ozet
+    ? [["Dönem Borcu", sonuc.ozet.donemBorcu], ["Asgari Ödeme", sonuc.ozet.asgariOdeme], ["Kredi Limiti", sonuc.ozet.krediLimiti], ["Kullanılabilir", sonuc.ozet.kullanilabilirLimit]]
+        .filter(([, v]) => v != null && !isNaN(parseFloat(v)))
+    : []);
 
   return (
     <div>
@@ -184,6 +208,30 @@ miktar her zaman pozitif. En fazla 80 işlem.`;
             <h3 style={sectionTitle}>Bulunan Kayıtlar ({sonuc.kayitlar.length})</h3>
             <Btn variant="primary" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec)}>Seçilenleri Ekle</Btn>
           </div>
+          {sonuc.ozet && (ozetSatir.length > 0 || sonuc.ozet.sonOdemeTarihi) && (
+            <div style={{ background: V.emerald, borderRadius: 12, padding: "14px 16px", marginBottom: "0.9rem" }}>
+              <div className="serif" style={{ fontSize: 14, fontWeight: 600, color: V.cream, marginBottom: 10 }}>Ekstre Özeti</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10 }}>
+                {ozetSatir.map(([ad, v]) => (
+                  <div key={ad}>
+                    <div style={{ fontSize: 10.5, color: V.sage, textTransform: "uppercase", letterSpacing: "0.05em" }}>{ad}</div>
+                    <div className="num" style={{ fontSize: 15, fontWeight: 600, color: V.cream, marginTop: 2 }}>{TL(parseFloat(v))}</div>
+                  </div>
+                ))}
+                {sonuc.ozet.sonOdemeTarihi && (
+                  <div>
+                    <div style={{ fontSize: 10.5, color: V.sage, textTransform: "uppercase", letterSpacing: "0.05em" }}>Son Ödeme</div>
+                    <div className="num" style={{ fontSize: 15, fontWeight: 600, color: V.cream, marginTop: 2 }}>{sonuc.ozet.sonOdemeTarihi}</div>
+                  </div>
+                )}
+              </div>
+              {sonuc.ozet.donemBorcu != null && !isNaN(parseFloat(sonuc.ozet.donemBorcu)) && setFindata && (
+                <button onClick={() => kartBorcuAyarla(parseFloat(sonuc.ozet.donemBorcu))} className="fa-btn" style={{ marginTop: 12, padding: "8px 14px", borderRadius: 9, border: "none", background: V.accent, color: V.emerald, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: F }}>
+                  Kart borcunu Hesaplar'a işle ({TL(parseFloat(sonuc.ozet.donemBorcu))})
+                </button>
+              )}
+            </div>
+          )}
           {sonuc.atlanan > 0 && (
             <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               💳 {sonuc.atlanan} kart borcu ödemesi atlandı (gelir/gider sayılmaz).

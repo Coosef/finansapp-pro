@@ -18,7 +18,7 @@ export function Veri(props) {
     <div>
       <h2 className="serif" style={{ margin: "0 0 0.85rem", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF, color: V.ink }}>Veri</h2>
       <SubNav value={alt} onChange={setAlt} items={[{ id: "ice", label: "İçe Aktar" }, { id: "rapor", label: "Rapor & Yedek" }]} />
-      {alt === "ice" && <IceAktar findata={props.findata} bildir={props.bildir} ekle={props.ekle} kategoriOgren={props.kategoriOgren} />}
+      {alt === "ice" && <IceAktar findata={props.findata} setFindata={props.setFindata} bildir={props.bildir} ekle={props.ekle} kategoriOgren={props.kategoriOgren} />}
       {alt === "rapor" && <Rapor {...props} />}
     </div>
   );
