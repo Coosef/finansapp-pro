@@ -57,11 +57,14 @@ export function parseJSON(text) {
   try {
     return JSON.parse(sub);
   } catch {
-    // Yaygın LLM hataları: satır-başı // yorumları, /* */ blokları, sondaki virgüller
+    // Yaygın LLM hataları: yorumlar, sondaki virgül, öğeler arası EKSİK virgül
     const onar = sub
       .replace(/^\s*\/\/.*$/gm, "")
       .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/,(\s*[}\]])/g, "$1");
+      .replace(/,(\s*[}\]])/g, "$1") // sondaki virgül
+      .replace(/}(\s*){/g, "},$1{") // iki nesne arası eksik virgül
+      .replace(/](\s*)\[/g, "],$1[") // iki dizi arası eksik virgül
+      .replace(/"(\s*\n\s*)"/g, '",$1"'); // iki string arası eksik virgül
     return JSON.parse(onar);
   }
 }

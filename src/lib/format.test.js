@@ -73,4 +73,7 @@ describe("parseJSON (AI yanıtı temizleme)", () => {
   it("sondaki virgülü tolere eder", () => {
     expect(parseJSON('{"a":1,"b":[2,3,],}')).toEqual({ a: 1, b: [2, 3] });
   });
+  it("iki nesne arası eksik virgülü tolere eder", () => {
+    expect(parseJSON('[{"a":1}\n{"a":2}]')).toEqual([{ a: 1 }, { a: 2 }]);
+  });
 });

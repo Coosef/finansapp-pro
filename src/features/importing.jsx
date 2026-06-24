@@ -208,6 +208,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       let m = aiHata(err) || "Ekstre işlenemedi";
       // Yoğunluk hatasında, PDF yerine CSV/Excel öner (çok daha hafif, takılmaz)
       if (/yoğun/i.test(m)) m = "Gemini şu an yoğun. İpucu: ekstreyi bankadan CSV/Excel indirip yükle (çok daha hafif ve OCR'sız, takılmaz) ya da birkaç dakika sonra tekrar dene.";
+      // Bozuk JSON gibi ayrıştırma hatalarında ham mesaj yerine anlaşılır metin
+      else if (/JSON|Expected|position|token|column|unexpected/i.test(m)) m = "AI yanıtı eksik/bozuk geldi. Tekrar dene — genelde 2. denemede düzelir. (Sürekli olursa daha küçük/CSV dosya dene.)";
       bildir(m, "err");
     } finally {
       setIsleniyor(false);
