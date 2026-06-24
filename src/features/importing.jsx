@@ -238,9 +238,44 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     return { tip, son4, banka, hedef, ad, yeni: !hedef && (son4 || banka) };
   }
 
+  // Kayıtlarda kullanıcının listesinde OLMAYAN kategoriler (öneri)
+  function yeniKategoriler(kayitlar) {
+    const gid = new Set(giderKategorileri(findata));
+    const gel = new Set(gelirKategorileri(findata));
+    const yeni = new Set();
+    (kayitlar || []).forEach((k) => {
+      const kat = (k.kategori || "").trim();
+      if (!kat) return;
+      if (k.tip === "gelir" ? !gel.has(kat) : !gid.has(kat)) yeni.add(kat);
+    });
+    return [...yeni];
+  }
+  // Yeni kategorileri kullanıcının listesine ekle (gider/gelir ayrı)
+  function kategorileriEkle(kayitlar) {
+    if (!setFindata) return;
+    const gid = new Set(giderKategorileri(findata));
+    const gel = new Set(gelirKategorileri(findata));
+    const giderY = [], gelirY = [];
+    (kayitlar || []).forEach((k) => {
+      const kat = (k.kategori || "").trim();
+      if (!kat) return;
+      if (k.tip === "gelir") { if (!gel.has(kat)) { gel.add(kat); gelirY.push(kat); } }
+      else if (!gid.has(kat)) { gid.add(kat); giderY.push(kat); }
+    });
+    if (!giderY.length && !gelirY.length) return;
+    setFindata((d) => {
+      const kategoriler = { gider: [...(d.kategoriler?.gider || [])], gelir: [...(d.kategoriler?.gelir || [])] };
+      giderY.forEach((c) => { if (!kategoriler.gider.includes(c)) kategoriler.gider.push(c); });
+      gelirY.forEach((c) => { if (!kategoriler.gelir.includes(c)) kategoriler.gelir.push(c); });
+      return { ...d, kategoriler };
+    });
+    bildir(`${giderY.length + gelirY.length} yeni kategori eklendi`);
+  }
+
   function onayla() {
     const secili = sonuc.kayitlar.filter((k) => k._sec);
     const oz = sonuc.ozet || {};
+    kategorileriEkle(secili); // seçili kayıtların yeni kategorilerini listeye ekle
     const hc = hesapCoz();
     // 1) Hesabı bağla/oluştur, kart bakiyesini dönem borcuna ayarla
     let hesapId = hc.hedef?.id || null;
@@ -286,6 +321,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     ? [["Dönem Borcu", sonuc.ozet.donemBorcu], ["Asgari Ödeme", sonuc.ozet.asgariOdeme], ["Kredi Limiti", sonuc.ozet.krediLimiti], ["Kullanılabilir", sonuc.ozet.kullanilabilirLimit]]
         .filter(([, v]) => v != null && !isNaN(parseFloat(v)))
     : []);
+  const yeniKat = sonuc ? yeniKategoriler(sonuc.kayitlar) : [];
 
   return (
     <div>
@@ -379,6 +415,12 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
             <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               📅 {sonuc.taksitSayisi} gelecek taksit, sonraki aylara borç olarak hazırlandı (mavi etiketli). İstemezsen işaretini kaldır.
             </p>
+          )}
+          {yeniKat.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 0.75rem", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              <span style={{ color: V.ink2, fontSize: "0.78rem" }}>🏷️ Listende olmayan kategoriler: <b style={{ color: V.ink }}>{yeniKat.join(", ")}</b> — onaylarken otomatik eklenir.</span>
+              <button onClick={() => kategorileriEkle(sonuc.kayitlar)} className="fa-btn" style={{ marginLeft: "auto", padding: "5px 11px", borderRadius: 8, border: "none", background: V.emerald, color: V.cream, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: F }}>Şimdi Ekle</button>
+            </div>
           )}
           {sonuc.kayitlar.some((k) => k._tekrar) && (
             <p style={{ color: V.accent, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-gold)", border: `1px solid ${V.border2}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
