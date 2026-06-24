@@ -163,6 +163,26 @@ export function EditBtn({ onClick, title = "Düzenle" }) {
   );
 }
 
+// Dönen yükleniyor göstergesi (index.css'teki `spin` keyframe'ini kullanır)
+export function Spinner({ size = 18, width = 2.5, color = "currentColor", style }) {
+  return (
+    <span style={{ display: "inline-block", width: size, height: size, border: `${width}px solid ${color}`, borderTopColor: "transparent", borderRadius: "50%", boxSizing: "border-box", animation: "spin .7s linear infinite", ...style }} />
+  );
+}
+
+// Ortalı yükleniyor bloğu — uzun süren işlemler için (AI okuma vb.)
+export function Yukleniyor({ baslik = "İşleniyor…", mesaj }) {
+  return (
+    <div style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+      <div style={{ width: 56, height: 56, borderRadius: "50%", margin: "0 auto 16px", background: V.track, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Spinner size={26} width={3} color={V.accent} />
+      </div>
+      <p style={{ color: V.ink, fontSize: "0.95rem", fontWeight: 600, margin: "0 0 0.3rem" }}>{baslik}</p>
+      {mesaj && <p style={{ color: V.ink3, fontSize: "0.8rem", margin: 0, lineHeight: 1.5 }}>{mesaj}</p>}
+    </div>
+  );
+}
+
 export function Bos({ mesaj, baslik, icon = "doc" }) {
   return (
     <div className="fa-card" style={{ padding: "44px 20px", textAlign: "center" }}>

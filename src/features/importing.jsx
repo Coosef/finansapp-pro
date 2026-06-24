@@ -7,7 +7,7 @@ import { V, F, SERIF } from "../lib/constants.js";
 import { TL, bugun, uid, fileToBase64, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
-import { Card, Btn, Seg } from "../components/ui.jsx";
+import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
 export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
@@ -180,7 +180,12 @@ miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
       </div>
 
       <Card style={{ marginBottom: "1.25rem" }}>
-        {mod === "fis" ? (
+        {isleniyor ? (
+          <Yukleniyor
+            baslik={mod === "fis" ? "Fiş okunuyor…" : "Ekstre okunuyor…"}
+            mesaj="Yapay zekâ işliyor; büyük PDF'lerde 30 saniyeye kadar sürebilir. Lütfen bekle — sayfadan ayrılma."
+          />
+        ) : mod === "fis" ? (
           <div style={{ textAlign: "center", padding: "1.5rem 1rem" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", margin: "0 auto 14px", background: V.track, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon d="camera" size={26} stroke={V.accent} />
