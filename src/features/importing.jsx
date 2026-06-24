@@ -13,6 +13,7 @@ import { Icon } from "../components/icons.jsx";
 export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   const [mod, setMod] = useState("fis");
   const [isleniyor, setIsleniyor] = useState(false);
+  const [durum, setDurum] = useState("");
   const [sonuc, setSonuc] = useState(null);
   const fisRef = useRef(),
     ekstreRef = useRef();
@@ -99,29 +100,37 @@ Kategori kuralları:
 - Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/petrol/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
 
 Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfalardaki işlemleri tek bir listede birleştir, tekrar etme. miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 200).`;
-      let content;
+      // Yardımcılar: yanıttan işlem listesi / özet çıkar
+      const islemAl = (p) => (Array.isArray(p) ? p : Array.isArray(p?.islemler) ? p.islemler : []);
+      const ozetAl = (p) => (!Array.isArray(p) && p?.ozet ? p.ozet : null);
+      let ham = [];
+      let ozet = null;
       if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
         const m = await file.text();
-        // Uzun ekstreler kesilmesin diye geniş sınır (CSV metni hafiftir)
-        content = [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }];
+        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }] }]));
+        ham = islemAl(p); ozet = ozetAl(p);
       } else if (ext === "pdf" || file.type === "application/pdf") {
         const b64 = await fileToBase64(file);
-        content = [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }];
+        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }] }]));
+        ham = islemAl(p); ozet = ozetAl(p);
       } else {
-        // Görsel(ler): çok sayfalı ekstre için birden çok resim tek istekte gönderilir
+        // Görsel(ler): HER sayfa AYRI okunur (yerel modeller tek istekte çok resmi güvenilir işlemez), sonra birleştirilir
         const resimler = files.filter((f) => !/\.(pdf|csv|txt)$/i.test(f.name));
-        const bloklar = [];
-        for (const f of resimler) {
-          const b64 = await fileToBase64(f);
-          bloklar.push({ type: "image", source: { type: "base64", media_type: f.type || "image/jpeg", data: b64 } });
+        const gorulen = new Set();
+        for (let pi = 0; pi < resimler.length; pi++) {
+          if (resimler.length > 1) setDurum(`Sayfa ${pi + 1}/${resimler.length} okunuyor…`);
+          const b64 = await fileToBase64(resimler[pi]);
+          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: resimler[pi].type || "image/jpeg", data: b64 } }, { type: "text", text: talimat }] }]));
+          if (!ozet) ozet = ozetAl(p);
+          for (const x of islemAl(p)) {
+            const k = `${x.tarih}|${Math.abs(parseFloat(x.miktar) || 0)}|${(x.aciklama || "").slice(0, 10).toLowerCase()}`;
+            if (gorulen.has(k)) continue; // sayfa sınırındaki tekrarları ele
+            gorulen.add(k);
+            ham.push(x);
+          }
         }
-        content = [...bloklar, { type: "text", text: talimat }];
+        setDurum("");
       }
-      const txt = await claudeCall([{ role: "user", content }]);
-      const parsed = parseJSON(txt);
-      // Yeni biçim: { ozet, islemler }; eski/yedek biçim: doğrudan dizi
-      const ham = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.islemler) ? parsed.islemler : [];
-      const ozet = !Array.isArray(parsed) && parsed?.ozet ? parsed.ozet : null;
       // Kart borcu ödemeleri gelir/gider değildir → içe aktarılmaz, yalnız bilgilendirilir
       const atlanan = ham.filter((x) => x.tip === "odeme").length;
       const kayitlar = [];
@@ -155,6 +164,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       bildir(m, "err");
     } finally {
       setIsleniyor(false);
+      setDurum("");
       if (ekstreRef.current) ekstreRef.current.value = "";
     }
   }
@@ -242,8 +252,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       <Card style={{ marginBottom: "1.25rem" }}>
         {isleniyor ? (
           <Yukleniyor
-            baslik={mod === "fis" ? "Fiş okunuyor…" : "Ekstre okunuyor…"}
-            mesaj="Yapay zekâ işliyor; büyük PDF'lerde 30 saniyeye kadar sürebilir. Lütfen bekle — sayfadan ayrılma."
+            baslik={durum || (mod === "fis" ? "Fiş okunuyor…" : "Ekstre okunuyor…")}
+            mesaj="Yapay zekâ işliyor; çok sayfalı ekstrede her sayfa ayrı okunur, biraz sürebilir. Lütfen bekle — sayfadan ayrılma."
           />
         ) : mod === "fis" ? (
           <div style={{ textAlign: "center", padding: "1.5rem 1rem" }}>
