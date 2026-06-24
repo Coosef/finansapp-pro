@@ -16,6 +16,8 @@ import { sayiCikar, bugun } from "./format.js";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const WEB_SEARCH_TOOL = { type: "web_search_20260209", name: "web_search" };
+// Google Gemini — OpenAI-uyumlu uç (görsel/fiş okuma destekler; web arama yok)
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 
 // ---- Çalışma zamanı yapılandırması ----
 let _provider = "anthropic"; // "anthropic" | "ollama" | "lmstudio" | "ozel"
@@ -26,6 +28,7 @@ let _localModel = "";
 
 export const SAGLAYICI_SECENEK = [
   { id: "anthropic", label: "Anthropic Claude (bulut · anahtar gerekir)" },
+  { id: "gemini", label: "Google Gemini (bulut · ücretsiz katman)" },
   { id: "ollama", label: "Ollama (yerel · ücretsiz)" },
   { id: "lmstudio", label: "LM Studio (yerel · ücretsiz)" },
   { id: "ozel", label: "Özel (OpenAI-uyumlu adres)" },
@@ -37,10 +40,28 @@ export const MODEL_SECENEK = [
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (en ucuz)" },
 ];
 
+// Gemini modelleri (OpenAI-uyumlu uç üzerinden)
+export const GEMINI_MODEL_SECENEK = [
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (hızlı · önerilen)" },
+  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (ücretsiz katman)" },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (en yetenekli)" },
+];
+const GEMINI_VARSAYILAN_MODEL = "gemini-2.5-flash";
+
 export function varsayilanAdres(saglayici) {
   if (saglayici === "lmstudio") return "http://localhost:1234/v1";
   if (saglayici === "ollama") return "http://localhost:11434/v1";
+  if (saglayici === "gemini") return GEMINI_URL;
   return "";
+}
+
+// Sağlayıcı, OpenAI-uyumlu /v1/chat/completions yolunu mu kullanıyor?
+function openAIUyumlu(p) {
+  return p !== "anthropic";
+}
+// Sağlayıcı bir API anahtarı gerektiriyor mu? (bulut)
+function anahtarGerekli(p) {
+  return p === "anthropic" || p === "gemini";
 }
 
 // Tüm AI ayarlarını tek noktadan uygula (App, ayarlar değişince çağırır)
@@ -48,22 +69,31 @@ export function configureAI(ayarlar = {}) {
   _provider = ayarlar.aiSaglayici || "anthropic";
   _apiKey = ayarlar.apiKey || "";
   _model = ayarlar.model || "claude-opus-4-8";
-  _baseURL = (ayarlar.yerelAdres || varsayilanAdres(_provider) || "").trim();
   _localModel = (ayarlar.yerelModel || "").trim();
+  if (_provider === "gemini") {
+    // Gemini ucu sabittir; bayat yerel adresi yok say
+    _baseURL = GEMINI_URL;
+    if (!_localModel) _localModel = GEMINI_VARSAYILAN_MODEL;
+  } else {
+    _baseURL = (ayarlar.yerelAdres || varsayilanAdres(_provider) || "").trim();
+  }
 }
 
 export function yerelMi() {
-  return _provider !== "anthropic";
+  return openAIUyumlu(_provider);
 }
 
 export function aiHazir() {
-  return _provider === "anthropic" ? !!_apiKey : !!_baseURL;
+  if (anahtarGerekli(_provider)) return !!_apiKey;
+  return !!_baseURL;
 }
 
 function yapilandirmaHatasi() {
   const msg = _provider === "anthropic"
     ? "AI anahtarı tanımlı değil. Ayarlar → Yapay Zekâ'dan Anthropic API anahtarını gir."
-    : "Yerel model adresi tanımlı değil. Ayarlar → Yapay Zekâ'dan Ollama/LM Studio adresini gir.";
+    : _provider === "gemini"
+      ? "Gemini API anahtarı tanımlı değil. Ayarlar → Yapay Zekâ'dan Google AI Studio anahtarını gir."
+      : "Yerel model adresi tanımlı değil. Ayarlar → Yapay Zekâ'dan Ollama/LM Studio adresini gir.";
   const e = new Error(msg);
   e.name = "AIAnahtarYok"; // özellikler bu adı kontrol ediyor
   return e;
@@ -121,6 +151,7 @@ function toOpenAI(messages) {
 }
 
 async function localCall(messages) {
+  if (anahtarGerekli(_provider) && !_apiKey) throw yapilandirmaHatasi();
   if (!_baseURL) throw yapilandirmaHatasi();
   if (!_localModel) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
   const url = _baseURL.replace(/\/+$/, "") + "/chat/completions";
@@ -129,11 +160,14 @@ async function localCall(messages) {
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer local" },
+      // Bulut (Gemini) gerçek anahtarı ister; yerel sunucular "local" değerini yok sayar
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (_apiKey || "local") },
       body: JSON.stringify(body),
     });
   } catch {
-    throw new Error(`Yerel modele ulaşılamadı (${_baseURL}). Ollama/LM Studio açık mı ve CORS izinli mi?`);
+    throw new Error(_provider === "gemini"
+      ? "Gemini'ye ulaşılamadı. İnternet bağlantını ve API anahtarını kontrol et."
+      : `Yerel modele ulaşılamadı (${_baseURL}). Ollama/LM Studio açık mı ve CORS izinli mi?`);
   }
   if (!res.ok) {
     let detay = "";

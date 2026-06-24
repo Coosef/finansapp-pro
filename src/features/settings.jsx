@@ -8,7 +8,7 @@ import { useState, useRef } from "react";
 import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
 import { uid, bugun, buAy } from "../lib/format.js";
 import { TL } from "../lib/format.js";
-import { MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
+import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
@@ -218,7 +218,8 @@ function GuvenlikKart({ ay, setAyar, bildir }) {
 function AiKart({ findata, setFindata, bildir }) {
   const ay = findata.ayarlar || {};
   const saglayici = ay.aiSaglayici || "anthropic";
-  const yerel = saglayici !== "anthropic";
+  const gemini = saglayici === "gemini";
+  const yerel = saglayici !== "anthropic" && saglayici !== "gemini";
   const [anahtar, setAnahtar] = useState(ay.apiKey || "");
   const [adres, setAdres] = useState(ay.yerelAdres || "");
   const [yModel, setYModel] = useState(ay.yerelModel || "");
@@ -228,7 +229,12 @@ function AiKart({ findata, setFindata, bildir }) {
 
   function saglayiciSec(v) {
     const guncel = { aiSaglayici: v };
-    if (v !== "anthropic") {
+    if (v === "gemini") {
+      // Gemini modeli seçili değilse varsayılana al
+      const gm = GEMINI_MODEL_SECENEK.some((m) => m.id === yModel) ? yModel : GEMINI_MODEL_SECENEK[0].id;
+      setYModel(gm);
+      guncel.yerelModel = gm;
+    } else if (v !== "anthropic") {
       const ad = adres || varsayilanAdres(v);
       setAdres(ad);
       guncel.yerelAdres = ad;
@@ -258,7 +264,7 @@ function AiKart({ findata, setFindata, bildir }) {
   // Seg sağlayıcı: anthropic + yerel seçenekler (anthropic / ollama / lmstudio / ozel)
   const segItems = SAGLAYICI_SECENEK.map((s) => ({
     id: s.id,
-    label: s.id === "anthropic" ? "Bulut" : s.id === "ollama" ? "Ollama" : s.id === "lmstudio" ? "LM Studio" : "Özel",
+    label: s.id === "anthropic" ? "Claude" : s.id === "gemini" ? "Gemini" : s.id === "ollama" ? "Ollama" : s.id === "lmstudio" ? "LM Studio" : "Özel",
   }));
 
   return (
@@ -299,6 +305,26 @@ function AiKart({ findata, setFindata, bildir }) {
             )}
             {saglayici === "ozel" && <span>OpenAI-uyumlu herhangi bir /v1 adresi (CORS açık olmalı).</span>}
             <br />PDF ve web arama (fiyat/kur) yerelde çalışmaz.
+          </div>
+        </>
+      ) : gemini ? (
+        <>
+          <Field
+            label="Gemini API Anahtarı"
+            type="password"
+            value={anahtar}
+            onChange={setAnahtar}
+            placeholder="AIza..."
+            mono
+          />
+          <Field
+            label="Model"
+            value={GEMINI_MODEL_SECENEK.some((m) => m.id === yModel) ? yModel : GEMINI_MODEL_SECENEK[0].id}
+            onChange={setYModel}
+            options={GEMINI_MODEL_SECENEK}
+          />
+          <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 12px" }}>
+            Ücretsiz anahtarı <span style={{ fontFamily: MONO }}>aistudio.google.com</span>'dan alırsın (Google hesabı yeter). Fiş okuma ve Türkçe desteklenir; yalnızca bu tarayıcıda saklanır. Canlı fiyat/kur (web arama) yalnızca Claude'da çalışır.
           </div>
         </>
       ) : (
