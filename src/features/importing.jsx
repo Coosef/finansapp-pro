@@ -128,7 +128,7 @@ ATLA (bunlar İŞLEM DEĞİL, listeye EKLEME): "<isim> Harcamaları" gibi kart s
 
 Tarih kuralı: tarihleri ekstreden AYNEN al (YIL dahil, ör. 2026). Tarih veya saat UYDURMA; açıklamaya saat ekleme.
 
-Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfalardaki işlemleri tek bir listede birleştir, tekrar etme. miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 200).`;
+Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfalardaki işlemleri tek bir listede birleştir, tekrar etme. Sayfa çok yoğun/kalabalık olsa bile HİÇBİR işlem satırını atlama — gördüğün HER satırı ekle. miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 200).`;
       // Yardımcılar: yanıttan işlem listesi / özet çıkar
       const islemAl = (p) => (Array.isArray(p) ? p : Array.isArray(p?.islemler) ? p.islemler : []);
       const ozetAl = (p) => (!Array.isArray(p) && p?.ozet ? p.ozet : null);
