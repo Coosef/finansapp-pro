@@ -29,6 +29,7 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
       <h2 style={{ margin: "0 0 18px", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF }}>Ayarlar</h2>
       <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 14 }}>
         <ProfilKart user={user} onLogout={onLogout} />
+        <SifreKart user={user} users={users} onUsersChange={onUsersChange} bildir={bildir} />
         <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <PwaKart bildir={bildir} />
         <GorunumKart ay={ay} setAyar={setAyar} />
@@ -212,6 +213,45 @@ function BulutKart({ findata, setFindata, bildir }) {
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+// ---------- Şifre Değiştir (yerel kullanıcı) ----------
+function SifreKart({ user, users, onUsersChange, bildir }) {
+  const [eski, setEski] = useState("");
+  const [yeni, setYeni] = useState("");
+  const [tekrar, setTekrar] = useState("");
+
+  // Bulut hesabıyla girildiyse yerel şifre yok
+  if (user?.bulut) {
+    return (
+      <Card style={{ padding: 20 }}>
+        <div style={{ ...baslik, marginBottom: 6 }}>Şifre</div>
+        <p style={{ ...altYazi, marginBottom: 0 }}>Bulut hesabıyla giriş yaptın; şifren bulut hesabının şifresidir, yerelde değiştirilmez.</p>
+      </Card>
+    );
+  }
+
+  const mevcut = (users || []).find((x) => x.username === user?.username);
+  function degistir() {
+    if (!mevcut) { bildir("Kullanıcı bulunamadı", "err"); return; }
+    if (eski !== mevcut.sifre) { bildir("Mevcut şifre yanlış", "err"); return; }
+    if (yeni.length < 4) { bildir("Yeni şifre en az 4 karakter olmalı", "err"); return; }
+    if (yeni !== tekrar) { bildir("Yeni şifreler eşleşmiyor", "err"); return; }
+    onUsersChange((users || []).map((x) => (x.username === user.username ? { ...x, sifre: yeni } : x)));
+    setEski(""); setYeni(""); setTekrar("");
+    bildir("Şifre güncellendi");
+  }
+
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={{ ...baslik, marginBottom: 6 }}>Şifre Değiştir</div>
+      <p style={altYazi}><b>{user?.ad || user?.username}</b> hesabının giriş şifresini değiştir.</p>
+      <Field label="Mevcut şifre" type="password" value={eski} onChange={setEski} placeholder="••••••" />
+      <Field label="Yeni şifre" type="password" value={yeni} onChange={setYeni} placeholder="en az 4 karakter" />
+      <Field label="Yeni şifre (tekrar)" type="password" value={tekrar} onChange={setTekrar} placeholder="••••••" />
+      <Btn onClick={degistir}>Şifreyi Güncelle</Btn>
     </Card>
   );
 }

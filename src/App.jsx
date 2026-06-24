@@ -62,6 +62,36 @@ export default function FinansAppPro() {
           try { await storage.set("users", JSON.stringify(users)); } catch { /* yoksay */ }
         }
         setKullanicilar(users);
+        // Açık oturumu geri yükle: sayfa yenilense de oturum kapanmasın.
+        // (Şifre saklanmaz; kullanıcı adıyla yeniden açılır. PIN varsa yine sorulur.)
+        try {
+          const ham = localStorage.getItem("finansapp:aktif");
+          if (ham) {
+            const su = JSON.parse(ham);
+            let u = null;
+            let veri = bosVeri();
+            if (su.bulut) {
+              u = { username: su.username, ad: su.ad, rol: "kullanici", bulut: true };
+              let cevrimici = false;
+              if (syncBagliMi()) {
+                try { await pbHaneBul(); } catch { /* kişisel devam */ }
+                try { const b = await pbFindataCek(); if (b?.data) veri = { ...bosVeri(), ...b.data }; cevrimici = true; } catch { cevrimici = false; }
+              }
+              if (!cevrimici) { try { const r = await storage.get(`findata:${su.username}`); if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) }; } catch { /* yoksay */ } }
+            } else {
+              u = users.find((x) => x.username === su.username) || null;
+              if (u) {
+                let bulutVar = false;
+                if (syncBagliMi()) {
+                  try { await pbHaneBul(); } catch { /* kişisel devam */ }
+                  try { const b = await pbFindataCek(); if (b?.data) { veri = { ...bosVeri(), ...b.data }; bulutVar = true; } } catch { /* çevrimdışı */ }
+                }
+                if (!bulutVar) { try { const r = await storage.get(`findata:${su.username}`); if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) }; } catch { /* yoksay */ } }
+              }
+            }
+            if (u) girisTamamla(u, veri, false);
+          }
+        } catch { /* oturum geri yüklenemezse normal giriş ekranı gösterilir */ }
       } finally {
         setYukleniyor(false);
       }
@@ -78,6 +108,14 @@ export default function FinansAppPro() {
     if (tm) { setTemaHint(tm); try { localStorage.setItem("finansapp:tema", tm); } catch { /* yoksay */ } }
   }, [findata?.ayarlar?.tema]);
 
+  // Açık oturumu kalıcı sakla (yenilemede kaybolmasın). Şifre saklanmaz.
+  function aktifKaydet(u) {
+    try {
+      if (u) localStorage.setItem("finansapp:aktif", JSON.stringify({ username: u.username, ad: u.ad, rol: u.rol, bulut: !!u.bulut }));
+      else localStorage.removeItem("finansapp:aktif");
+    } catch { /* yoksay */ }
+  }
+
   // Veriyi hazırla (tekrarlar + hedef katkıları) ve oturumu aç
   function girisTamamla(u, veri, ilkBulutGonder) {
     let { data, degisti } = tekrarlariUret(veri);
@@ -86,11 +124,19 @@ export default function FinansAppPro() {
     degisti = degisti || hk.degisti;
     if (degisti) storage.set(`findata:${u.username}`, JSON.stringify(data)).catch(() => {});
     if (ilkBulutGonder) pbFindataGonder(data).catch(() => {}); // bulut boştuysa ilk senkron
+    aktifKaydet(u);
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
     setTab("panel");
     return true;
+  }
+
+  // Çıkış: oturumu kapat ve kalıcı kaydı sil (yenilemede de kapalı kalır)
+  function cikisYap() {
+    aktifKaydet(null);
+    setAktif(null);
+    setFindataState(null);
   }
 
   async function girisYap(username, sifre) {
@@ -169,7 +215,7 @@ export default function FinansAppPro() {
   if (yukleniyor)
     return <ThemeWrap dark={temaHint === "koyu"}><div style={{ minHeight: "100vh", background: "var(--emerald)", color: V.sage, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>Yükleniyor…</div></ThemeWrap>;
   if (!aktif) return <ThemeWrap dark={temaHint === "koyu"}><Login onLogin={girisYap} /></ThemeWrap>;
-  if (kilitli) return <ThemeWrap dark={dark}><PinGate dogruPin={findata.ayarlar.pin} onAc={() => setKilitli(false)} onCikis={() => { setAktif(null); setFindataState(null); }} /></ThemeWrap>;
+  if (kilitli) return <ThemeWrap dark={dark}><PinGate dogruPin={findata.ayarlar.pin} onAc={() => setKilitli(false)} onCikis={cikisYap} /></ThemeWrap>;
   if (!findata.ayarlar?.kuruldu) return <ThemeWrap dark={dark}><Onboarding user={aktif} setFindata={setFindata} /></ThemeWrap>;
   return (
     <Uygulama
@@ -181,7 +227,7 @@ export default function FinansAppPro() {
       tab={tab}
       setTab={setTab}
       dark={dark}
-      onLogout={() => { setAktif(null); setFindataState(null); }}
+      onLogout={cikisYap}
     />
   );
 }
