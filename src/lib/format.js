@@ -54,7 +54,16 @@ export function parseJSON(text) {
   );
   const end = Math.max(clean.lastIndexOf("}"), clean.lastIndexOf("]"));
   const sub = start === Infinity || end === -1 || end < start ? clean : clean.slice(start, end + 1);
-  return JSON.parse(sub);
+  try {
+    return JSON.parse(sub);
+  } catch {
+    // Yaygın LLM hataları: satır-başı // yorumları, /* */ blokları, sondaki virgüller
+    const onar = sub
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/,(\s*[}\]])/g, "$1");
+    return JSON.parse(onar);
+  }
 }
 
 export function fileToBase64(file) {

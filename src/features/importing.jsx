@@ -121,24 +121,32 @@ Kategori kuralları:
 - "odeme" için kategori = "Kart Ödemesi".
 - Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/petrol/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
 
+Tarih kuralı: tarihleri ekstreden AYNEN al (YIL dahil, ör. 2026). Tarih veya saat UYDURMA; açıklamaya saat ekleme.
+
 Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfalardaki işlemleri tek bir listede birleştir, tekrar etme. miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 200).`;
       // Yardımcılar: yanıttan işlem listesi / özet çıkar
       const islemAl = (p) => (Array.isArray(p) ? p : Array.isArray(p?.islemler) ? p.islemler : []);
       const ozetAl = (p) => (!Array.isArray(p) && p?.ozet ? p.ozet : null);
       let ham = [];
       let ozet = null;
-      // Görsel kaynaklarını ([{data,mime}]) sayfa sayfa oku, sonuçları birleştir
+      // Görsel kaynaklarını ([{data,mime}]) sayfa sayfa oku, sonuçları birleştir.
+      // Bir sayfa hata verse (bozuk JSON vb.) diğerleri devam eder.
+      let okunamayan = 0;
       const sayfalariOku = async (kaynaklar) => {
         const gorulen = new Set();
         for (let pi = 0; pi < kaynaklar.length; pi++) {
           if (kaynaklar.length > 1) setDurum(`Sayfa ${pi + 1}/${kaynaklar.length} okunuyor…`);
-          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: kaynaklar[pi].mime, data: kaynaklar[pi].data } }, { type: "text", text: talimat }] }]));
-          if (!ozet) ozet = ozetAl(p);
-          for (const x of islemAl(p)) {
-            const k = `${x.tarih}|${Math.abs(parseFloat(x.miktar) || 0)}|${(x.aciklama || "").slice(0, 10).toLowerCase()}`;
-            if (gorulen.has(k)) continue; // sayfa sınırındaki tekrarları ele
-            gorulen.add(k);
-            ham.push(x);
+          try {
+            const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: kaynaklar[pi].mime, data: kaynaklar[pi].data } }, { type: "text", text: talimat }] }]));
+            if (!ozet) ozet = ozetAl(p);
+            for (const x of islemAl(p)) {
+              const k = `${x.tarih}|${Math.abs(parseFloat(x.miktar) || 0)}|${(x.aciklama || "").slice(0, 10).toLowerCase()}`;
+              if (gorulen.has(k)) continue; // sayfa sınırındaki tekrarları ele
+              gorulen.add(k);
+              ham.push(x);
+            }
+          } catch {
+            okunamayan++; // bu sayfa atlandı; diğer sayfalar devam
           }
         }
         setDurum("");
@@ -189,8 +197,12 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           }
         }
       });
-      if (!kayitlar.length && !atlanan && !ozet) bildir("İşlem bulunamadı", "err");
-      else setSonuc({ kayitlar, atlanan, ozet, taksitSayisi });
+      if (!kayitlar.length && !atlanan && !ozet) {
+        bildir(okunamayan ? "Sayfalar okunamadı (model geçersiz yanıt verdi). Tekrar dene ya da farklı model/bulut kullan." : "İşlem bulunamadı", "err");
+      } else {
+        if (okunamayan) bildir(`${okunamayan} sayfa okunamadı, atlandı — sonuçlar eksik olabilir`, "err");
+        setSonuc({ kayitlar, atlanan, ozet, taksitSayisi });
+      }
     } catch (err) {
       let m = aiHata(err) || "Ekstre işlenemedi";
       // Yoğunluk hatasında, PDF yerine CSV/Excel öner (çok daha hafif, takılmaz)

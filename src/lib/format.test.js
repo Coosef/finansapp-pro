@@ -67,4 +67,10 @@ describe("parseJSON (AI yanıtı temizleme)", () => {
   it("dizi ayrıştırır", () => {
     expect(parseJSON("[1,2,3]")).toEqual([1, 2, 3]);
   });
+  it("satır-başı // yorumlarını tolere eder", () => {
+    expect(parseJSON('{\n"a":1\n// buraya ekle\n}')).toEqual({ a: 1 });
+  });
+  it("sondaki virgülü tolere eder", () => {
+    expect(parseJSON('{"a":1,"b":[2,3,],}')).toEqual({ a: 1, b: [2, 3] });
+  });
 });
