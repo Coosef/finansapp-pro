@@ -323,20 +323,6 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     setSonuc(null);
   }
 
-  // Ekstre özetindeki dönem borcunu tanınan kart hesabına işle (yoksa oluştur)
-  function kartBorcuAyarla(borc) {
-    if (!setFindata || !(borc > 0)) return;
-    const hc = hesapCoz();
-    setFindata((d) => {
-      const hesaplar = [...(d.hesaplar || [])];
-      const i = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
-      if (i >= 0) hesaplar[i] = { ...hesaplar[i], bakiye: borc, son4: hesaplar[i].son4 || hc.son4 || undefined };
-      else hesaplar.push({ id: uid(), ad: hc.ad, tip: hc.tip, bakiye: borc, son4: hc.son4 || undefined, banka: hc.banka || undefined });
-      return { ...d, hesaplar };
-    });
-    bildir(`${hc.ad}: borç ${TL(borc)} olarak güncellendi`);
-  }
-
   const sectionTitle = { margin: 0, fontSize: "0.82rem", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 };
   const ozetSatir = (sonuc?.ozet
     ? [["Dönem Borcu", sonuc.ozet.donemBorcu], ["Asgari Ödeme", sonuc.ozet.asgariOdeme], ["Kredi Limiti", sonuc.ozet.krediLimiti], ["Kullanılabilir", sonuc.ozet.kullanilabilirLimit]]
@@ -412,19 +398,15 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               </div>
               {(sonuc.ozet.banka || sonuc.ozet.son4) && (() => {
                 const hc = hesapCoz();
+                const borc = parseFloat(sonuc.ozet.donemBorcu);
                 return (
-                  <div style={{ marginTop: 12, fontSize: 12, color: V.sage, display: "flex", alignItems: "center", gap: 7 }}>
+                  <div style={{ marginTop: 12, fontSize: 12, color: V.sage, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                     <Icon d={hc.tip === "kart" ? "card" : "bank"} size={15} stroke={V.cream} />
                     {hc.tip === "kart" ? "Kart" : "Hesap"}: <b style={{ color: V.cream }}>{hc.ad}</b>
-                    <span style={{ opacity: 0.85 }}>· {hc.yeni ? "otomatik oluşturulacak" : "mevcut hesaba yazılacak"}</span>
+                    <span style={{ opacity: 0.85 }}>· <b style={{ color: V.cream }}>"Seçilenleri Ekle"</b> ile {hc.yeni ? "oluşturulur" : "güncellenir"}{hc.tip === "kart" && !isNaN(borc) ? `, borç ${TL(borc)} işlenir` : ""}</span>
                   </div>
                 );
               })()}
-              {sonuc.ozet.donemBorcu != null && !isNaN(parseFloat(sonuc.ozet.donemBorcu)) && setFindata && (
-                <button onClick={() => kartBorcuAyarla(parseFloat(sonuc.ozet.donemBorcu))} className="fa-btn" style={{ marginTop: 12, padding: "8px 14px", borderRadius: 9, border: "none", background: V.accent, color: V.emerald, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: F }}>
-                  Kart borcunu Hesaplar'a işle ({TL(parseFloat(sonuc.ozet.donemBorcu))})
-                </button>
-              )}
             </div>
           )}
           {sonuc.atlanan > 0 && (
