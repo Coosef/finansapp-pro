@@ -99,7 +99,8 @@ miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
       let content;
       if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
         const m = await file.text();
-        content = [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 6000) }];
+        // Uzun ekstreler kesilmesin diye geniş sınır (CSV metni hafiftir)
+        content = [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }];
       } else if (ext === "pdf" || file.type === "application/pdf") {
         const b64 = await fileToBase64(file);
         content = [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }];
