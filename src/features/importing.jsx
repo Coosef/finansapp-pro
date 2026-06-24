@@ -4,7 +4,7 @@
 // ============================================================
 import { useState, useRef } from "react";
 import { V, F, SERIF } from "../lib/constants.js";
-import { TL, bugun, buAy, uid, fileToBase64, parseJSON } from "../lib/format.js";
+import { TL, bugun, buAy, uid, fileToBase64, parseJSON, sonrakiTarih } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
@@ -80,7 +80,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. SADECE şu yapıda TEK bir JSON nesnesi döndür, başka hiçbir metin yazma:
 {
   "ozet": {"ekstreTipi":"kart"|"hesap","donemBorcu":sayı|null,"asgariOdeme":sayı|null,"sonOdemeTarihi":"YYYY-MM-DD"|null,"krediLimiti":sayı|null,"kullanilabilirLimit":sayı|null},
-  "islemler": [{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"..."}]
+  "islemler": [{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"...","taksit":{"no":sayı,"toplam":sayı} veya null}]
 }
 
 Özet alanlarını ekstrenin ÜST kısmından al (dönem borcu/güncel borç, asgari/en az ödeme tutarı, son ödeme tarihi, kredi/kart limiti, kullanılabilir limit). Yoksa ilgili alanı null bırak. Sayılar gerçek sayı olsun (1.234,56 → 1234.56).
@@ -89,6 +89,8 @@ Tip kuralları:
 - Alışveriş, harcama, çekim, fatura, faiz, ücret/komisyon → "gider".
 - Maaş, gelen havale/EFT, faiz geliri, iade/geri ödeme → "gelir".
 - Kredi kartı borç ödemesi (ör. "ödemeniz için teşekkürler", "tahsilat", "kart ödemesi", "virman ile ödeme", "hesaptan ödeme") → "odeme". Bu bir BORÇ ÖDEMESİDİR; gelir veya gider DEĞİLDİR.
+
+Taksit kuralı: İşlem taksitliyse (ör. "TAKSIT 2/3", "3/2.taksit", "2/3 TAKSİT") taksit alanını doldur: no = bu ay ödenen kaçıncı taksit, toplam = toplam taksit sayısı. miktar = TEK bir taksitin (bu ayki) tutarı. Taksitsiz işlemde taksit = null.
 
 Kategori kuralları:
 - "gider" için EN UYGUN olanı şu listeden seç: ${giderKat.join(", ")}.
@@ -122,15 +124,28 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       const ozet = !Array.isArray(parsed) && parsed?.ozet ? parsed.ozet : null;
       // Kart borcu ödemeleri gelir/gider değildir → içe aktarılmaz, yalnız bilgilendirilir
       const atlanan = ham.filter((x) => x.tip === "odeme").length;
-      const kayitlar = ham
-        .filter((x) => x.tip !== "odeme")
-        .map((x) => {
-          const kayit = { baslik: x.aciklama || "İşlem", miktar: Math.abs(parseFloat(x.miktar) || 0), kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip: x.tip === "gelir" ? "gelir" : "gider" };
-          const t = tekrarMi(kayit);
-          return { ...kayit, _tekrar: t, _sec: !t };
-        });
+      const kayitlar = [];
+      let taksitSayisi = 0;
+      ham.filter((x) => x.tip !== "odeme").forEach((x) => {
+        const tip = x.tip === "gelir" ? "gelir" : "gider";
+        const miktar = Math.abs(parseFloat(x.miktar) || 0);
+        const temel = { baslik: x.aciklama || "İşlem", miktar, kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip };
+        const t = tekrarMi(temel);
+        kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
+        // Taksit: kalan taksitleri gelecek aylara borç (gider) olarak ekle
+        const no = parseInt(x?.taksit?.no, 10);
+        const toplam = parseInt(x?.taksit?.toplam, 10);
+        if (tip === "gider" && no > 0 && toplam > no && toplam <= 36) {
+          for (let i = no + 1; i <= toplam; i++) {
+            let tarih = temel.tarih;
+            for (let k = 0; k < i - no; k++) tarih = sonrakiTarih(tarih, "aylık");
+            kayitlar.push({ baslik: `${temel.baslik} (taksit ${i}/${toplam})`, miktar, kategori: temel.kategori, tarih, kaynak: "taksit", tip: "gider", _tekrar: false, _taksit: true, _sec: true });
+            taksitSayisi++;
+          }
+        }
+      });
       if (!kayitlar.length && !atlanan && !ozet) bildir("İşlem bulunamadı", "err");
-      else setSonuc({ kayitlar, atlanan, ozet });
+      else setSonuc({ kayitlar, atlanan, ozet, taksitSayisi });
     } catch (err) {
       let m = aiHata(err) || "Ekstre işlenemedi";
       // Yoğunluk hatasında, PDF yerine CSV/Excel öner (çok daha hafif, takılmaz)
@@ -256,6 +271,11 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               💳 {sonuc.atlanan} kart borcu ödemesi atlandı (gelir/gider sayılmaz).
             </p>
           )}
+          {sonuc.taksitSayisi > 0 && (
+            <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              📅 {sonuc.taksitSayisi} gelecek taksit, sonraki aylara borç olarak hazırlandı (mavi etiketli). İstemezsen işaretini kaldır.
+            </p>
+          )}
           {sonuc.kayitlar.some((k) => k._tekrar) && (
             <p style={{ color: V.accent, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-gold)", border: `1px solid ${V.border2}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               ⚠️ Sarı işaretliler olası tekrar; varsayılan seçili değil.
@@ -277,6 +297,9 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
                   {k.baslik}
                   {k._tekrar && (
                     <span style={{ background: "var(--chip-gold)", border: `1px solid ${V.accent}55`, color: V.accent, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>OLASI TEKRAR</span>
+                  )}
+                  {k._taksit && (
+                    <span style={{ background: "var(--chip-green)", border: `1px solid ${V.pos}55`, color: V.pos, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>GELECEK TAKSİT</span>
                   )}
                   {k.kalemler?.length ? <span style={{ color: V.accent, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
                 </p>
