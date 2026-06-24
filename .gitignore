@@ -9,3 +9,4 @@ dev-dist
 .vite
 .design/
 docs-design-reference.html
+pb/pb_data/

@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { V } from "./lib/constants.js";
 import { uid, bugun, TL } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
+import { syncYukle, syncBagliMi, pbFindataCek, pbFindataGonder } from "./lib/sync.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre } from "./lib/finance.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { Icon, IK } from "./components/icons.jsx";
@@ -44,6 +45,7 @@ export default function FinansAppPro() {
   const [temaHint, setTemaHint] = useState("acik"); // giriş ekranı için son bilinen tema
 
   useEffect(() => {
+    syncYukle(); // kayıtlı bulut oturumunu (varsa) yükle
     (async () => {
       try {
         try {
@@ -80,10 +82,20 @@ export default function FinansAppPro() {
     const u = kullanicilar.find((x) => x.username === username && x.sifre === sifre);
     if (!u) return false;
     let veri = bosVeri();
-    try {
-      const r = await storage.get(`findata:${username}`);
-      if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) };
-    } catch { /* yoksay */ }
+    // Bulut bağlıysa önce buluttan çek; ulaşılamazsa yerele düş
+    let bulutVar = false;
+    if (syncBagliMi()) {
+      try {
+        const bulut = await pbFindataCek();
+        if (bulut?.data) { veri = { ...bosVeri(), ...bulut.data }; bulutVar = true; }
+      } catch { /* çevrimdışı → yerel */ }
+    }
+    if (!bulutVar) {
+      try {
+        const r = await storage.get(`findata:${username}`);
+        if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) };
+      } catch { /* yoksay */ }
+    }
     let { data, degisti } = tekrarlariUret(veri);
     const hk = hedefKatkilariUret(data);
     data = hk.data;
@@ -91,6 +103,8 @@ export default function FinansAppPro() {
     if (degisti) {
       try { await storage.set(`findata:${username}`, JSON.stringify(data)); } catch { /* yoksay */ }
     }
+    // Bulut bağlı ama boştuysa, mevcut veriyi buluta gönder (ilk senkron)
+    if (syncBagliMi() && !bulutVar) pbFindataGonder(data).catch(() => {});
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
@@ -98,11 +112,17 @@ export default function FinansAppPro() {
     return true;
   }
 
+  const bulutTimer = useRef(null);
   const setFindata = useCallback(
     (updater) => {
       setFindataState((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
         if (aktif) storage.set(`findata:${aktif.username}`, JSON.stringify(next)).catch(() => {});
+        // Bulut bağlıysa değişikliği gönder (debounce: hızlı ardışık değişiklikleri birleştir)
+        if (syncBagliMi()) {
+          if (bulutTimer.current) clearTimeout(bulutTimer.current);
+          bulutTimer.current = setTimeout(() => { pbFindataGonder(next).catch(() => {}); }, 1500);
+        }
         return next;
       });
     },

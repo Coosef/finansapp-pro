@@ -10,6 +10,7 @@ import { uid, bugun, buAy } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
+import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
 
@@ -27,6 +28,7 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
       <h2 style={{ margin: "0 0 18px", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF }}>Ayarlar</h2>
       <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 14 }}>
         <ProfilKart user={user} onLogout={onLogout} />
+        <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <PwaKart bildir={bildir} />
         <GorunumKart ay={ay} setAyar={setAyar} />
         <GuvenlikKart ay={ay} setAyar={setAyar} bildir={bildir} />
@@ -50,6 +52,73 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
 }
 
 // ---------- Profil ----------
+// ---------- Bulut Senkron (PocketBase) ----------
+function BulutKart({ findata, setFindata, bildir }) {
+  const [durum, setDurum] = useState(() => syncYukle());
+  const [adres, setAdres] = useState(durum.url);
+  const [email, setEmail] = useState(durum.email || "");
+  const [sifre, setSifre] = useState("");
+  const [mesgul, setMesgul] = useState(false);
+
+  async function baglan(yeni) {
+    if (!email.trim() || !sifre) { bildir("E-posta ve şifre gerekli", "err"); return; }
+    setMesgul(true);
+    try {
+      const d = yeni ? await pbKayit(adres, email.trim(), sifre) : await pbGiris(adres, email.trim(), sifre);
+      setDurum(d);
+      setSifre("");
+      // Bağlandık → buluttan çek; veri varsa uygula, yoksa mevcudu yükle
+      const bulut = await pbFindataCek();
+      if (bulut?.data) { setFindata({ ...bosVeri(), ...bulut.data }); bildir("Bağlandı · bulut verisi yüklendi"); }
+      else { await pbFindataGonder(findata); bildir("Bağlandı · mevcut veri buluta yüklendi"); }
+    } catch (e) {
+      bildir(e?.message || "Bağlanılamadı", "err");
+    } finally {
+      setMesgul(false);
+    }
+  }
+  function cikis() { pbCikis(); setDurum(syncDurum()); bildir("Bulut bağlantısı kapatıldı (veri cihazda kalır)"); }
+  async function simdiSenkronla() {
+    setMesgul(true);
+    try { await pbFindataGonder(findata); bildir("Buluta yüklendi"); }
+    catch (e) { bildir(e?.message || "Gönderilemedi", "err"); }
+    finally { setMesgul(false); }
+  }
+
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={{ ...baslik, marginBottom: 6 }}>Bulut Senkron</div>
+      <p style={altYazi}>Verini kendi sunucunda (PocketBase) sakla; başka tarayıcı/cihazdan aynı hesapla gir, veriler gelsin. Veri sende kalır.</p>
+      {durum.bagli ? (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, borderRadius: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <Icon d="check" size={16} stroke={V.pos} />
+            <span style={{ fontSize: 13, color: V.ink }}>Bağlı: <b>{durum.email}</b></span>
+            <span style={{ marginLeft: "auto", fontSize: 11.5, color: V.ink3, fontFamily: MONO }}>{durum.url}</span>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Btn onClick={simdiSenkronla} disabled={mesgul}>{mesgul ? "…" : "↻ Şimdi Senkronla"}</Btn>
+            <Btn variant="soft" onClick={cikis}>Bağlantıyı Kes</Btn>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Field label="Sunucu adresi" value={adres} onChange={setAdres} placeholder="http://localhost:8090" mono />
+          <Field label="E-posta" type="email" value={email} onChange={setEmail} placeholder="sen@ornek.com" />
+          <Field label="Şifre" type="password" value={sifre} onChange={setSifre} placeholder="en az 8 karakter" />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Btn onClick={() => baglan(false)} disabled={mesgul}>{mesgul ? "…" : "Giriş Yap"}</Btn>
+            <Btn variant="soft" onClick={() => baglan(true)} disabled={mesgul}>Kayıt Ol</Btn>
+          </div>
+          <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, marginTop: 10 }}>
+            İlk kez mi? <b>"Kayıt Ol"</b> ile hesap oluştur. Sunucu, Docker'daki PocketBase'dir (varsayılan <span style={{ fontFamily: MONO }}>localhost:8090</span>). Başka cihazdan erişmek için adresi o cihazın görebileceği bir adres yap.
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ProfilKart({ user, onLogout }) {
   const ad = user?.ad || user?.username || "Kullanıcı";
   const harf = (ad[0] || "K").toUpperCase();
