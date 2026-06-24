@@ -72,7 +72,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
             { type: "text", text: `Alışveriş fişi. SADECE JSON: {"magaza":"...","tarih":"YYYY-MM-DD","toplam":sayı,"kategori":"Market|Restoran|Konut|Ulaşım|Sağlık|Giyim|Teknoloji|Faturalar|Diğer","kalemler":[{"ad":"ürün","miktar":sayı,"fiyat":sayı}]}. Tarih yoksa bugünü kullan.` },
           ],
         },
-      ]);
+      ], false, true);
       const j = parseJSON(txt);
       const kayit = {
         baslik: j.magaza || "Fiş",
@@ -140,25 +140,30 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       const sayfalariOku = async (kaynaklar) => {
         const gorulen = new Set();
         for (let pi = 0; pi < kaynaklar.length; pi++) {
-          if (kaynaklar.length > 1) setDurum(`Sayfa ${pi + 1}/${kaynaklar.length} okunuyor…`);
-          try {
-            const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: kaynaklar[pi].mime, data: kaynaklar[pi].data } }, { type: "text", text: talimat }] }]));
-            if (!ozet) ozet = ozetAl(p);
-            for (const x of islemAl(p)) {
-              const k = `${x.tarih}|${Math.abs(parseFloat(x.miktar) || 0)}|${(x.aciklama || "").slice(0, 10).toLowerCase()}`;
-              if (gorulen.has(k)) continue; // sayfa sınırındaki tekrarları ele
-              gorulen.add(k);
-              ham.push(x);
+          let basarili = false;
+          for (let deneme = 0; deneme < 2 && !basarili; deneme++) {
+            if (kaynaklar.length > 1) setDurum(`Sayfa ${pi + 1}/${kaynaklar.length} okunuyor…${deneme ? " (tekrar)" : ""}`);
+            try {
+              const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: kaynaklar[pi].mime, data: kaynaklar[pi].data } }, { type: "text", text: talimat }] }], false, true));
+              if (!ozet) ozet = ozetAl(p);
+              for (const x of islemAl(p)) {
+                const k = `${x.tarih}|${Math.abs(parseFloat(x.miktar) || 0)}|${(x.aciklama || "").slice(0, 10).toLowerCase()}`;
+                if (gorulen.has(k)) continue; // sayfa sınırındaki tekrarları ele
+                gorulen.add(k);
+                ham.push(x);
+              }
+              basarili = true;
+            } catch {
+              /* bozuk yanıt → bir kez daha dene */
             }
-          } catch {
-            okunamayan++; // bu sayfa atlandı; diğer sayfalar devam
           }
+          if (!basarili) okunamayan++; // 2 denemede de olmadı, atla
         }
         setDurum("");
       };
       if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
         const m = await file.text();
-        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }] }]));
+        const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "text", text: talimat + "\n\nİçerik:\n" + m.slice(0, 40000) }] }], false, true));
         ham = islemAl(p); ozet = ozetAl(p);
       } else if (ext === "pdf" || file.type === "application/pdf") {
         // PDF'i sayfa görsellerine çevir (yerelde de çalışsın); olmazsa ham PDF'e düş
@@ -168,7 +173,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           await sayfalariOku(sayfalar);
         } else {
           const b64 = await fileToBase64(file);
-          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }] }]));
+          const p = parseJSON(await claudeCall([{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }] }], false, true));
           ham = islemAl(p); ozet = ozetAl(p);
         }
       } else {

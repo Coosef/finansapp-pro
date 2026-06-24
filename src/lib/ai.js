@@ -198,13 +198,14 @@ function toOpenAI(messages) {
   });
 }
 
-async function localCall(messages, modelOverride) {
+async function localCall(messages, modelOverride, json) {
   if (anahtarGerekli(_provider) && !_apiKey) throw yapilandirmaHatasi();
   if (!_baseURL) throw yapilandirmaHatasi();
   const model = modelOverride || _localModel;
   if (!model) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
   const url = _baseURL.replace(/\/+$/, "") + "/chat/completions";
   const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 8192 };
+  if (json) body.response_format = { type: "json_object" }; // geçerli JSON'a zorla
   let res;
   try {
     res = await fetchYeniden(url, {
@@ -252,13 +253,15 @@ export function toGemini(messages) {
   });
   return { contents };
 }
-async function geminiNativeCall(messages, model) {
+async function geminiNativeCall(messages, model, json) {
   if (!_apiKey) throw yapilandirmaHatasi();
   const m = model || _localModel || GEMINI_VARSAYILAN_MODEL;
   const url = `${GEMINI_NATIVE}/models/${m}:generateContent?key=${encodeURIComponent(_apiKey)}`;
+  const reqBody = toGemini(messages);
+  if (json) reqBody.generationConfig = { responseMimeType: "application/json", maxOutputTokens: 8192 };
   let res;
   try {
-    res = await fetchYeniden(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toGemini(messages)) });
+    res = await fetchYeniden(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(reqBody) });
   } catch {
     throw new Error("Gemini'ye ulaşılamadı. İnternet bağlantını ve API anahtarını kontrol et.");
   }
@@ -278,13 +281,13 @@ async function geminiNativeCall(messages, model) {
 // her geçişte kullanıcıyı bilgilendirir.
 const GEMINI_YEDEK = ["gemini-2.5-flash", "gemini-2.0-flash"];
 const gEtiket = (m) => m.replace(/^gemini-/, "Gemini ").replace(/-/g, " ");
-async function geminiCall(messages, native) {
+async function geminiCall(messages, native, json) {
   const tercih = _localModel || GEMINI_VARSAYILAN_MODEL;
   const sira = [tercih, ...GEMINI_YEDEK.filter((m) => m !== tercih)];
   let sonHata;
   for (let i = 0; i < sira.length; i++) {
     try {
-      return native ? await geminiNativeCall(messages, sira[i]) : await localCall(messages, sira[i]);
+      return native ? await geminiNativeCall(messages, sira[i], json) : await localCall(messages, sira[i], json);
     } catch (e) {
       sonHata = e;
       if (e?.yogun && i < sira.length - 1) {
@@ -302,11 +305,11 @@ async function geminiCall(messages, native) {
  * useSearch yalnızca Anthropic'te etkilidir (yerelde web arama yok).
  * Gemini'de PDF/belge varsa native uç kullanılır (OpenAI-uyumlu uç PDF okumaz).
  */
-export async function claudeCall(messages, useSearch = false) {
+export async function claudeCall(messages, useSearch = false, json = false) {
   if (!aiHazir()) throw yapilandirmaHatasi();
   if (_provider === "anthropic") return anthropicCall(messages, useSearch);
-  if (_provider === "gemini") return geminiCall(messages, belgeVarMi(messages));
-  return localCall(messages);
+  if (_provider === "gemini") return geminiCall(messages, belgeVarMi(messages), json);
+  return localCall(messages, undefined, json);
 }
 
 // Ayarlar'daki "Bağlantıyı test et" için
