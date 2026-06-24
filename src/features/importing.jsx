@@ -79,11 +79,11 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       const gelirKat = gelirKategorileri(findata);
       const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. SADECE şu yapıda TEK bir JSON nesnesi döndür, başka hiçbir metin yazma:
 {
-  "ozet": {"ekstreTipi":"kart"|"hesap","donemBorcu":sayı|null,"asgariOdeme":sayı|null,"sonOdemeTarihi":"YYYY-MM-DD"|null,"krediLimiti":sayı|null,"kullanilabilirLimit":sayı|null},
+  "ozet": {"ekstreTipi":"kart"|"hesap","banka":"kart/banka adı veya null","son4":"kart/hesap numarasının son 4 hanesi veya null","donemBorcu":sayı|null,"asgariOdeme":sayı|null,"sonOdemeTarihi":"YYYY-MM-DD"|null,"krediLimiti":sayı|null,"kullanilabilirLimit":sayı|null},
   "islemler": [{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"...","taksit":{"no":sayı,"toplam":sayı} veya null}]
 }
 
-Özet alanlarını ekstrenin ÜST kısmından al (dönem borcu/güncel borç, asgari/en az ödeme tutarı, son ödeme tarihi, kredi/kart limiti, kullanılabilir limit). Yoksa ilgili alanı null bırak. Sayılar gerçek sayı olsun (1.234,56 → 1234.56).
+Özet alanlarını ekstrenin ÜST kısmından al (kart/banka adı ör. "Axess"/"Bonus"/"Maximum", kart/hesap numarasının son 4 hanesi, dönem borcu/güncel borç, asgari/en az ödeme tutarı, son ödeme tarihi, kredi/kart limiti, kullanılabilir limit). Yoksa ilgili alanı null bırak. Sayılar gerçek sayı olsun (1.234,56 → 1234.56).
 
 Tip kuralları:
 - Alışveriş, harcama, çekim, fatura, faiz, ücret/komisyon → "gider".
@@ -160,31 +160,60 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
   function secimDegis(i) {
     setSonuc((s) => ({ ...s, kayitlar: s.kayitlar.map((k, j) => (j === i ? { ...k, _sec: !k._sec } : k)) }));
   }
+  // Ekstre özetinden kart/hesabı tanı: son4 ile eşle, yoksa null → onayla'da oluşturulur
+  function hesapCoz() {
+    const oz = sonuc?.ozet || {};
+    const tip = oz.ekstreTipi === "hesap" ? "banka" : "kart";
+    const son4 = String(oz.son4 || "").replace(/\D/g, "").slice(-4);
+    const banka = (oz.banka || "").trim();
+    const mevcut = findata.hesaplar || [];
+    let hedef = son4 ? mevcut.find((h) => h.son4 === son4 || (h.ad || "").includes(son4)) : null;
+    if (!hedef && banka) hedef = mevcut.find((h) => h.tip === tip && (h.ad || "").toLowerCase().includes(banka.toLowerCase()));
+    const ad = hedef?.ad || ((banka || (tip === "kart" ? "Kredi Kartı" : "Hesap")) + (son4 ? ` ••${son4}` : ""));
+    return { tip, son4, banka, hedef, ad, yeni: !hedef && (son4 || banka) };
+  }
+
   function onayla() {
     const secili = sonuc.kayitlar.filter((k) => k._sec);
+    const oz = sonuc.ozet || {};
+    const hc = hesapCoz();
+    // 1) Hesabı bağla/oluştur, kart bakiyesini dönem borcuna ayarla
+    let hesapId = hc.hedef?.id || null;
+    if (setFindata && (hc.son4 || hc.banka)) {
+      const borc = parseFloat(oz.donemBorcu);
+      if (!hc.hedef) {
+        hesapId = uid();
+        const yeni = { id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: hc.tip === "kart" && !isNaN(borc) ? borc : 0, son4: hc.son4 || undefined, banka: hc.banka || undefined };
+        setFindata((d) => ({ ...d, hesaplar: [...(d.hesaplar || []), yeni] }));
+      } else if (hc.tip === "kart" && !isNaN(borc)) {
+        setFindata((d) => ({ ...d, hesaplar: (d.hesaplar || []).map((h) => (h.id === hesapId ? { ...h, bakiye: borc, son4: h.son4 || hc.son4 || undefined } : h)) }));
+      }
+    }
+    // 2) İşlemleri hesaba yazarak ekle
     secili.forEach((k) => {
-      const { _tekrar, _sec, tip, ...kayit } = k;
-      ekle(tip, kayit);
+      const { _tekrar, _sec, _taksit, tip: t, ...kayit } = k;
+      ekle(t, { ...kayit, hesapId: (t === "gelir" || t === "gider") ? hesapId || "" : "" });
       kategoriOgren(kayit.baslik, kayit.kategori);
     });
-    // Geçmiş tarihli kayıtlar "Bu ay" döneminde görünmez → kullanıcıyı uyar
     const ay = buAy();
     const gecmis = secili.filter((k) => !(k.tarih || "").startsWith(ay)).length;
-    bildir(`${secili.length} kayıt eklendi` + (gecmis ? ` · ${gecmis} tanesi geçmiş tarihli, görmek için üstten dönemi "Tümü" seç` : ""));
+    const ekHesap = hesapId ? ` → ${hc.ad}${hc.yeni ? " (yeni hesap)" : ""}` : "";
+    bildir(`${secili.length} kayıt eklendi${ekHesap}` + (gecmis ? ` · görmek için dönemi "Tümü" yap` : ""));
     setSonuc(null);
   }
 
-  // Ekstre özetindeki dönem borcunu kredi kartı hesabına işle (yoksa oluştur)
+  // Ekstre özetindeki dönem borcunu tanınan kart hesabına işle (yoksa oluştur)
   function kartBorcuAyarla(borc) {
     if (!setFindata || !(borc > 0)) return;
+    const hc = hesapCoz();
     setFindata((d) => {
       const hesaplar = [...(d.hesaplar || [])];
-      const i = hesaplar.findIndex((h) => h.tip === "kart");
-      if (i >= 0) hesaplar[i] = { ...hesaplar[i], bakiye: borc };
-      else hesaplar.push({ id: uid(), ad: "Kredi Kartı", tip: "kart", bakiye: borc });
+      const i = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
+      if (i >= 0) hesaplar[i] = { ...hesaplar[i], bakiye: borc, son4: hesaplar[i].son4 || hc.son4 || undefined };
+      else hesaplar.push({ id: uid(), ad: hc.ad, tip: hc.tip, bakiye: borc, son4: hc.son4 || undefined, banka: hc.banka || undefined });
       return { ...d, hesaplar };
     });
-    bildir(`Kart borcu ${TL(borc)} olarak güncellendi`);
+    bildir(`${hc.ad}: borç ${TL(borc)} olarak güncellendi`);
   }
 
   const sectionTitle = { margin: 0, fontSize: "0.82rem", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 };
@@ -259,6 +288,16 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
                   </div>
                 )}
               </div>
+              {(sonuc.ozet.banka || sonuc.ozet.son4) && (() => {
+                const hc = hesapCoz();
+                return (
+                  <div style={{ marginTop: 12, fontSize: 12, color: V.sage, display: "flex", alignItems: "center", gap: 7 }}>
+                    <Icon d={hc.tip === "kart" ? "card" : "bank"} size={15} stroke={V.cream} />
+                    {hc.tip === "kart" ? "Kart" : "Hesap"}: <b style={{ color: V.cream }}>{hc.ad}</b>
+                    <span style={{ opacity: 0.85 }}>· {hc.yeni ? "otomatik oluşturulacak" : "mevcut hesaba yazılacak"}</span>
+                  </div>
+                );
+              })()}
               {sonuc.ozet.donemBorcu != null && !isNaN(parseFloat(sonuc.ozet.donemBorcu)) && setFindata && (
                 <button onClick={() => kartBorcuAyarla(parseFloat(sonuc.ozet.donemBorcu))} className="fa-btn" style={{ marginTop: 12, padding: "8px 14px", borderRadius: 9, border: "none", background: V.accent, color: V.emerald, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: F }}>
                   Kart borcunu Hesaplar'a işle ({TL(parseFloat(sonuc.ozet.donemBorcu))})
