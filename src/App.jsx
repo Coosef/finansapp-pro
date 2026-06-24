@@ -7,7 +7,7 @@ import { V } from "./lib/constants.js";
 import { uid, bugun, TL } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre } from "./lib/finance.js";
-import { fiyatCek, configureAI } from "./lib/ai.js";
+import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { Icon, IK } from "./components/icons.jsx";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -206,6 +206,13 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
     if (bildirimTimer.current) clearTimeout(bildirimTimer.current);
     bildirimTimer.current = setTimeout(() => setBildirim(null), action ? 6000 : 3200);
   }
+  // AI olaylarını (ör. otomatik model yedeği) toast olarak göster
+  const bildirRef = useRef(null);
+  bildirRef.current = bildir;
+  useEffect(() => {
+    aiBildirimAyarla((msg) => bildirRef.current?.(msg));
+    return () => aiBildirimAyarla(null);
+  }, []);
 
   // ---- İşlem ekle/sil/güncelle ----
   function ekle(tur, kayit) {

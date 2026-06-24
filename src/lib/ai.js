@@ -27,6 +27,9 @@ let _apiKey = "";
 let _model = "claude-opus-4-8";
 let _baseURL = ""; // yerel için OpenAI-uyumlu temel adres (…/v1)
 let _localModel = "";
+let _bildirim = null; // UI bildirimi (örn. otomatik model yedeği)
+// App, bildir fonksiyonunu buraya kaydeder; ai.js olay bildirebilir
+export function aiBildirimAyarla(fn) { _bildirim = fn; }
 
 export const SAGLAYICI_SECENEK = [
   { id: "anthropic", label: "Anthropic Claude (bulut · anahtar gerekir)" },
@@ -105,8 +108,8 @@ function yapilandirmaHatasi() {
 const GECICI_KODLAR = new Set([429, 500, 502, 503, 529]);
 const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
 const GEMINI_YOGUN = "Gemini sunucuları şu an yoğun (Google tarafında geçici, yeniden denendi). Birkaç dakika sonra tekrar dene — genelde kısa sürede düzelir. Acele edersen Ayarlar'dan Claude veya yerel modele geçebilirsin.";
-// Ağ hatası veya geçici durum kodunda 4 denemeye kadar tekrar dener
-async function fetchYeniden(url, opts, deneme = 4) {
+// Ağ hatası veya geçici durum kodunda tekrar dener (model yedeği ayrıca devrede)
+async function fetchYeniden(url, opts, deneme = 3) {
   let sonHata;
   for (let i = 0; i < deneme; i++) {
     let res;
@@ -177,12 +180,13 @@ function toOpenAI(messages) {
   });
 }
 
-async function localCall(messages) {
+async function localCall(messages, modelOverride) {
   if (anahtarGerekli(_provider) && !_apiKey) throw yapilandirmaHatasi();
   if (!_baseURL) throw yapilandirmaHatasi();
-  if (!_localModel) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
+  const model = modelOverride || _localModel;
+  if (!model) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
   const url = _baseURL.replace(/\/+$/, "") + "/chat/completions";
-  const body = { model: _localModel, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 2048 };
+  const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 2048 };
   let res;
   try {
     res = await fetchYeniden(url, {
@@ -197,7 +201,7 @@ async function localCall(messages) {
       : `Yerel modele ulaşılamadı (${_baseURL}). Ollama/LM Studio açık mı ve CORS izinli mi?`);
   }
   if (!res.ok) {
-    if (_provider === "gemini" && (res.status === 503 || res.status === 429)) throw new Error(GEMINI_YOGUN);
+    if (_provider === "gemini" && (res.status === 503 || res.status === 429)) { const e = new Error(GEMINI_YOGUN); e.yogun = true; throw e; }
     let detay = "";
     try { detay = (await res.text())?.slice(0, 160) || ""; } catch {}
     throw new Error(`Yerel model hatası ${res.status}${detay ? ": " + detay : ""}`);
@@ -230,9 +234,10 @@ export function toGemini(messages) {
   });
   return { contents };
 }
-async function geminiNativeCall(messages) {
+async function geminiNativeCall(messages, model) {
   if (!_apiKey) throw yapilandirmaHatasi();
-  const url = `${GEMINI_NATIVE}/models/${_localModel}:generateContent?key=${encodeURIComponent(_apiKey)}`;
+  const m = model || _localModel || GEMINI_VARSAYILAN_MODEL;
+  const url = `${GEMINI_NATIVE}/models/${m}:generateContent?key=${encodeURIComponent(_apiKey)}`;
   let res;
   try {
     res = await fetchYeniden(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toGemini(messages)) });
@@ -242,13 +247,36 @@ async function geminiNativeCall(messages) {
   if (!res.ok) {
     let detay = "";
     try { detay = (await res.json())?.error?.message || ""; } catch { /* yoksay */ }
-    if (res.status === 503 || res.status === 429) throw new Error(GEMINI_YOGUN);
+    if (res.status === 503 || res.status === 429) { const e = new Error(GEMINI_YOGUN); e.yogun = true; throw e; }
     throw new Error(`Gemini hatası ${res.status}${detay ? ": " + detay.slice(0, 160) : ""}`);
   }
   const data = await res.json();
   const txt = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
   if (!txt) throw new Error("Gemini yanıtı boş (belge çok büyük olabilir).");
   return txt;
+}
+
+// Gemini otomatik model yedeği: seçili model yoğunsa (503/429) sıradakini dener,
+// her geçişte kullanıcıyı bilgilendirir.
+const GEMINI_YEDEK = ["gemini-2.5-flash", "gemini-2.0-flash"];
+const gEtiket = (m) => m.replace(/^gemini-/, "Gemini ").replace(/-/g, " ");
+async function geminiCall(messages, native) {
+  const tercih = _localModel || GEMINI_VARSAYILAN_MODEL;
+  const sira = [tercih, ...GEMINI_YEDEK.filter((m) => m !== tercih)];
+  let sonHata;
+  for (let i = 0; i < sira.length; i++) {
+    try {
+      return native ? await geminiNativeCall(messages, sira[i]) : await localCall(messages, sira[i]);
+    } catch (e) {
+      sonHata = e;
+      if (e?.yogun && i < sira.length - 1) {
+        if (_bildirim) _bildirim(`${gEtiket(sira[i])} yoğun; ${gEtiket(sira[i + 1])} deneniyor…`);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw sonHata;
 }
 
 /**
@@ -259,7 +287,7 @@ async function geminiNativeCall(messages) {
 export async function claudeCall(messages, useSearch = false) {
   if (!aiHazir()) throw yapilandirmaHatasi();
   if (_provider === "anthropic") return anthropicCall(messages, useSearch);
-  if (_provider === "gemini" && belgeVarMi(messages)) return geminiNativeCall(messages);
+  if (_provider === "gemini") return geminiCall(messages, belgeVarMi(messages));
   return localCall(messages);
 }
 
