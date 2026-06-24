@@ -1,11 +1,13 @@
 // ============================================================
 // İçe Aktar: fiş tarama (görsel OCR) + banka ekstresi (PDF/CSV/görsel)
+// Zümrüt & Altın — açık/koyu tema
 // ============================================================
 import { useState, useRef } from "react";
-import { C, tagStyle, sectionTitle } from "../lib/constants.js";
+import { V, F, SERIF } from "../lib/constants.js";
 import { TL, bugun, fileToBase64, parseJSON } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
-import { Card, Btn } from "../components/ui.jsx";
+import { Card, Btn, Seg } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
 
 export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
   const [mod, setMod] = useState("fis");
@@ -113,57 +115,79 @@ export function IceAktar({ findata, bildir, ekle, kategoriOgren }) {
     setSonuc(null);
   }
 
+  const sectionTitle = { margin: 0, fontSize: "0.82rem", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 };
+
   return (
     <div>
-      <p style={{ color: C.dimmer, fontSize: "0.85rem", margin: "0 0 1.25rem" }}>
+      <p style={{ color: V.ink3, fontSize: "12.5px", margin: "0 0 1.25rem" }}>
         Fiş veya ekstre yükleyin; AI okur, kategoriler, tekrarları işaretler.
-        {!aiHazir() && <span style={{ color: C.amber }}> (AI okuma için Ayarlar'dan anahtar gir.)</span>}
+        {!aiHazir() && <span style={{ color: V.accent }}> (AI okuma için Ayarlar'dan anahtar gir.)</span>}
       </p>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
-        <Btn variant={mod === "fis" ? "primary" : "ghost"} onClick={() => { setMod("fis"); setSonuc(null); }}>🧾 Fiş Tara</Btn>
-        <Btn variant={mod === "ekstre" ? "primary" : "ghost"} onClick={() => { setMod("ekstre"); setSonuc(null); }}>🏦 Banka Ekstresi</Btn>
+
+      <div style={{ marginBottom: "1.25rem" }}>
+        <Seg
+          value={mod}
+          onChange={(v) => { setMod(v); setSonuc(null); }}
+          items={[{ id: "fis", label: "Fiş Tara" }, { id: "ekstre", label: "Banka Ekstresi" }]}
+        />
       </div>
+
       <Card style={{ marginBottom: "1.25rem" }}>
         {mod === "fis" ? (
           <div style={{ textAlign: "center", padding: "1.5rem 1rem" }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>🧾</div>
-            <p style={{ color: C.dim, fontSize: "0.9rem", margin: "0 0 1rem" }}>Fişin fotoğrafını çek veya seç</p>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", margin: "0 auto 14px", background: V.track, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon d="camera" size={26} stroke={V.accent} />
+            </div>
+            <p style={{ color: V.ink2, fontSize: "0.9rem", margin: "0 0 1rem" }}>Fişin fotoğrafını çek veya seç</p>
             <input ref={fisRef} type="file" accept="image/*" capture="environment" onChange={fisYukle} style={{ display: "none" }} />
-            <Btn onClick={() => fisRef.current?.click()} disabled={isleniyor}>{isleniyor ? "Okunuyor…" : "Fiş Yükle"}</Btn>
+            <Btn variant="gold" onClick={() => fisRef.current?.click()} disabled={isleniyor}>{isleniyor ? "Okunuyor…" : "Fiş Yükle"}</Btn>
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "1.5rem 1rem" }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>🏦</div>
-            <p style={{ color: C.dim, fontSize: "0.9rem", margin: "0 0 0.3rem" }}>Banka ekstresini yükle</p>
-            <p style={{ color: C.faint, fontSize: "0.75rem", margin: "0 0 1rem" }}>PDF · CSV · Görsel</p>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", margin: "0 auto 14px", background: V.track, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon d="archive" size={24} stroke={V.accent} />
+            </div>
+            <p style={{ color: V.ink2, fontSize: "0.9rem", margin: "0 0 0.3rem" }}>Banka ekstresini yükle</p>
+            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>PDF · CSV · Görsel</p>
             <input ref={ekstreRef} type="file" accept=".pdf,.csv,.txt,image/*" onChange={ekstreYukle} style={{ display: "none" }} />
-            <Btn onClick={() => ekstreRef.current?.click()} disabled={isleniyor}>{isleniyor ? "İşleniyor…" : "Ekstre Yükle"}</Btn>
+            <Btn variant="gold" onClick={() => ekstreRef.current?.click()} disabled={isleniyor}>{isleniyor ? "İşleniyor…" : "Ekstre Yükle"}</Btn>
           </div>
         )}
       </Card>
+
       {sonuc && (
         <Card>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <h3 style={{ ...sectionTitle, margin: 0 }}>Bulunan Kayıtlar ({sonuc.kayitlar.length})</h3>
-            <Btn variant="green" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec)}>Seçilenleri Ekle</Btn>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.5rem", flexWrap: "wrap" }}>
+            <h3 style={sectionTitle}>Bulunan Kayıtlar ({sonuc.kayitlar.length})</h3>
+            <Btn variant="primary" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec)}>Seçilenleri Ekle</Btn>
           </div>
           {sonuc.kayitlar.some((k) => k._tekrar) && (
-            <p style={{ color: C.amber, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "#251A08", border: "1px solid #422D08", padding: "0.5rem 0.75rem", borderRadius: "0.5rem" }}>
+            <p style={{ color: V.accent, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-gold)", border: `1px solid ${V.border2}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               ⚠️ Sarı işaretliler olası tekrar; varsayılan seçili değil.
             </p>
           )}
           {sonuc.kayitlar.map((k, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.7rem 0.85rem", background: k._tekrar ? "#1A1408" : C.card2, border: `1px solid ${k._tekrar ? "#422D08" : C.line}`, borderRadius: "0.6rem", marginBottom: "0.5rem" }}>
-              <input type="checkbox" checked={k._sec} onChange={() => secimDegis(i)} style={{ width: 18, height: 18, accentColor: C.indigo }} />
-              <div style={{ flex: 1 }}>
-                <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.85rem" }}>
+            <div
+              key={i}
+              style={{
+                display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.7rem 0.85rem",
+                background: k._tekrar ? "var(--chip-gold)" : V.card2,
+                border: `1px solid ${k._tekrar ? V.accent + "55" : V.border}`,
+                borderRadius: "0.6rem", marginBottom: "0.5rem",
+              }}
+            >
+              <input type="checkbox" checked={k._sec} onChange={() => secimDegis(i)} style={{ width: 18, height: 18, accentColor: V.emerald2 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.85rem", color: V.ink, fontFamily: F }}>
                   {k.baslik}
-                  {k._tekrar && <span style={tagStyle(C.amber)}>OLASI TEKRAR</span>}
-                  {k.kalemler?.length ? <span style={{ color: C.indigoL, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
+                  {k._tekrar && (
+                    <span style={{ background: "var(--chip-gold)", border: `1px solid ${V.accent}55`, color: V.accent, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>OLASI TEKRAR</span>
+                  )}
+                  {k.kalemler?.length ? <span style={{ color: V.accent, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
                 </p>
-                <p style={{ margin: 0, color: C.dimmer, fontSize: "0.72rem" }}>{k.kategori} · {k.tarih} · {k.tip === "gelir" ? "Gelir" : "Gider"}</p>
+                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.kategori} · {k.tarih} · {k.tip === "gelir" ? "Gelir" : "Gider"}</p>
               </div>
-              <p style={{ margin: 0, fontWeight: 700, color: k.tip === "gelir" ? C.greenL : C.redL }}>{k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
+              <p className="num" style={{ margin: 0, fontWeight: 700, color: k.tip === "gelir" ? V.pos : V.neg }}>{k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
             </div>
           ))}
         </Card>

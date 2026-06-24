@@ -87,6 +87,36 @@ export function yillikOzet(findata, yil) {
   return { aylar, toplamGelir, toplamGider, net, tasarrufOrani };
 }
 
+// ---- Dönem (periyot) filtresi ----
+// donem: "buAy" | "gecenAy" | "buYil" | "tum"
+// Verilen bugün tarihine göre [start, end] ISO aralığı döner; "tum" için null.
+export function donemAraligi(donem, bugunStr) {
+  const [y, m] = bugunStr.split("-").map(Number); // m: 1-12
+  const iso = (yy, mm, dd) => new Date(Date.UTC(yy, mm, dd)).toISOString().slice(0, 10);
+  if (donem === "buAy") return { start: iso(y, m - 1, 1), end: iso(y, m, 0) };
+  if (donem === "gecenAy") return { start: iso(y, m - 2, 1), end: iso(y, m - 1, 0) };
+  if (donem === "buYil") return { start: `${y}-01-01`, end: `${y}-12-31` };
+  return null; // "tum"
+}
+
+// Bir tarih (YYYY-MM-DD) verilen aralıkta mı? aralik null ise her zaman true.
+export function donemde(tarih, aralik) {
+  if (!aralik) return true;
+  const t = (tarih || "").slice(0, 10);
+  return t >= aralik.start && t <= aralik.end;
+}
+
+// gelir/gider listelerini döneme göre filtreler (abonelikler aylık olduğundan dokunulmaz)
+export function donemFiltre(findata, donem, bugunStr) {
+  const aralik = donemAraligi(donem, bugunStr);
+  if (!aralik) return findata;
+  return {
+    ...findata,
+    gelirler: (findata.gelirler || []).filter((g) => donemde(g.tarih, aralik)),
+    giderler: (findata.giderler || []).filter((g) => donemde(g.tarih, aralik)),
+  };
+}
+
 // Etkin kategori listeleri (özel kategoriler varsa onları, yoksa varsayılanı)
 export const giderKategorileri = (findata) => (findata?.kategoriler?.gider?.length ? findata.kategoriler.gider : GIDER_KAT);
 export const gelirKategorileri = (findata) => (findata?.kategoriler?.gelir?.length ? findata.kategoriler.gelir : GELIR_KAT);
@@ -131,7 +161,7 @@ export const bosVeri = () => ({
   hedefler: [],
   sablonlar: [],
   hedefDagilim: {},
-  ayarlar: { enflasyon: 50, pin: null, tema: "koyu", accent: "#10B981", kuruldu: false, apiKey: "", aiSaglayici: "anthropic", yerelAdres: "", yerelModel: "", butceDevri: false, bildirimler: false, sonBildirim: "" },
+  ayarlar: { enflasyon: 50, pin: null, tema: "acik", accent: "#C79A4B", kuruldu: false, apiKey: "", aiSaglayici: "anthropic", yerelAdres: "", yerelModel: "", butceDevri: false, bildirimler: false, bildirimGun: 3, paraBirimi: "TRY", sonBildirim: "" },
   kategoriHafiza: {},
   kurlar: null,
   hesaplar: [],

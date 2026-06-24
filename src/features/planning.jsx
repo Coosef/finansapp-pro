@@ -1,97 +1,295 @@
 // ============================================================
-// Bütçe & Hedef: kategori bütçesi, zarf bütçe, hedefler,
-// tekrarlayanlar, başarımlar + meydan okumalar
+// Planlama — Bütçe & Hedef, Zarflar, Tekrarlayanlar, Başarımlar
+// Zümrüt & Altın tasarımı (açık/koyu tema)
 // ============================================================
 import { useState } from "react";
-import { C, pageTitle, sectionTitle, inputStyle, rowStyle, tagStyle, GIDER_KAT } from "../lib/constants.js";
-import { uid, TL, buAy, bugun } from "../lib/format.js";
-import { rozetleriHesapla, giderKategorileri, etkinButce, butceDevri } from "../lib/finance.js";
-import { Card, Btn, ProgressBar, DelBtn, Bos, Field, SubNav, Toggle } from "../components/ui.jsx";
+import { V, F, SERIF, MONO, GIDER_KAT } from "../lib/constants.js";
+import { Icon } from "../components/icons.jsx";
+import { uid, TL, buAy } from "../lib/format.js";
+import { etkinButce, butceDevri, rozetleriHesapla } from "../lib/finance.js";
+import { Card, Btn, Modal, Field, Toggle, Seg, ProgressBar, DelBtn, EditBtn, Bos } from "../components/ui.jsx";
+
+const lbl = { display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" };
+const serifBaslik = { fontSize: "16px", fontWeight: 600, color: V.ink, marginBottom: "16px", fontFamily: SERIF };
+
+// Etkin gider kategorileri (özel varsa onlar, yoksa varsayılan)
+const giderKat = (findata) => (findata?.kategoriler?.gider?.length ? findata.kategoriler.gider : GIDER_KAT);
 
 export function Planlama({ findata, setFindata, bildir }) {
-  const [alt, setAlt] = useState("butce");
+  const [alt, setAlt] = useState("bh");
+  const sekmeler = [
+    { id: "bh", label: "Bütçe & Hedef" },
+    { id: "zarf", label: "Zarflar" },
+    { id: "tekrar", label: "Tekrarlayanlar" },
+    { id: "basarim", label: "Başarımlar" },
+  ];
   return (
     <div>
-      <h2 style={pageTitle}>Bütçe & Hedef</h2>
-      <SubNav value={alt} onChange={setAlt} items={[{ id: "butce", label: "📊 Kategori Bütçeleri" }, { id: "zarf", label: "✉️ Zarf Bütçe" }, { id: "hedef", label: "🎯 Hedefler" }, { id: "tekrar", label: "🔁 Tekrarlayanlar" }, { id: "basarim", label: "🏆 Başarımlar" }]} />
-      {alt === "butce" && <Butceler findata={findata} setFindata={setFindata} />}
+      <h2 className="serif" style={{ margin: "0 0 1rem", fontSize: "1.25rem", fontWeight: 600, color: V.ink, fontFamily: SERIF }}>Planlama</h2>
+      <div style={{ marginBottom: "1.1rem" }}>
+        <Seg items={sekmeler} value={alt} onChange={setAlt} />
+      </div>
+      {alt === "bh" && <ButceHedef findata={findata} setFindata={setFindata} bildir={bildir} />}
       {alt === "zarf" && <Zarflar findata={findata} setFindata={setFindata} />}
-      {alt === "hedef" && <Hedefler findata={findata} setFindata={setFindata} bildir={bildir} />}
       {alt === "tekrar" && <Tekrarlayanlar findata={findata} setFindata={setFindata} bildir={bildir} />}
-      {alt === "basarim" && <Basarimlar findata={findata} setFindata={setFindata} bildir={bildir} />}
+      {alt === "basarim" && <Basarimlar findata={findata} />}
     </div>
   );
 }
 
-function Butceler({ findata, setFindata }) {
+// ============================================================
+// Bütçe & Hedef — iki sütun (mobilde tek)
+// ============================================================
+function ButceHedef({ findata, setFindata, bildir }) {
   const ay = buAy();
-  const ayGider = {};
-  findata.giderler.filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
   const devir = !!findata.ayarlar?.butceDevri;
-  const set = (kat, val) => setFindata((d) => ({ ...d, butceler: { ...(d.butceler || {}), [kat]: parseFloat(val) || 0 } }));
-  const devirAyar = (v) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), butceDevri: v } }));
+
+  // Bu ayki kategori harcamaları
+  const ayGider = {};
+  (findata.giderler || []).filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
+
+  const butceler = findata.butceler || {};
+  const hedefler = findata.hedefler || [];
+  const kategoriler = giderKat(findata);
+  const butceliKats = kategoriler.filter((k) => (butceler[k] || 0) > 0);
+
+  const [butceModal, setButceModal] = useState(null); // {cat, limit}
+  const [hedefModal, setHedefModal] = useState(null); // {id?, ad, tip, hedefTutar, aylikKatki, otomatikKatki}
+
+  // ---- Bütçe kaydet (limit 0 → kaldır) ----
+  function butceKaydet() {
+    const cat = butceModal.cat;
+    if (!cat) { bildir("Kategori seç", "err"); return; }
+    const limit = parseFloat(butceModal.limit) || 0;
+    setFindata((d) => {
+      const yeni = { ...(d.butceler || {}) };
+      if (limit > 0) yeni[cat] = limit; else delete yeni[cat];
+      return { ...d, butceler: yeni };
+    });
+    bildir(limit > 0 ? "Bütçe kaydedildi" : "Bütçe kaldırıldı");
+    setButceModal(null);
+  }
+
+  // ---- Hedef kaydet (yeni veya düzenle) ----
+  function hedefKaydet() {
+    const ad = (hedefModal.ad || "").trim();
+    const hedefTutar = parseFloat(hedefModal.hedefTutar) || 0;
+    if (!ad || !hedefTutar) { bildir("Ad ve hedef tutar gerekli", "err"); return; }
+    const aylikKatki = parseFloat(hedefModal.aylikKatki) || 0;
+    const tip = hedefModal.tip || "birikim";
+    const oto = !!hedefModal.otomatikKatki;
+    setFindata((d) => {
+      const list = d.hedefler || [];
+      if (hedefModal.id) {
+        return { ...d, hedefler: list.map((h) => (h.id === hedefModal.id ? { ...h, ad, tip, hedefTutar, aylikKatki, otomatikKatki: oto } : h)) };
+      }
+      return { ...d, hedefler: [...list, { id: uid(), ad, tip, hedefTutar, mevcutTutar: 0, aylikKatki, otomatikKatki: oto, sonKatki: buAy() }] };
+    });
+    bildir(hedefModal.id ? "Hedef güncellendi" : "Hedef eklendi");
+    setHedefModal(null);
+  }
+
+  function hedefSil(id) {
+    setFindata((d) => ({ ...d, hedefler: (d.hedefler || []).filter((h) => h.id !== id) }));
+    bildir("Hedef silindi");
+    setHedefModal(null);
+  }
+
+  // ---- Tek hedefe katkı uygula (birikim +, borç −, clamp) ----
+  function katkiUygula(h, miktar) {
+    setFindata((d) => ({
+      ...d,
+      hedefler: (d.hedefler || []).map((x) => {
+        if (x.id !== h.id) return x;
+        const yeni = x.tip === "borc" ? Math.max(0, (x.mevcutTutar || 0) - miktar) : Math.min(x.hedefTutar, (x.mevcutTutar || 0) + miktar);
+        return { ...x, mevcutTutar: yeni };
+      }),
+    }));
+  }
+
+  // ---- Tüm hedeflere aylık katkıyı uygula ----
+  const aylikToplam = hedefler.reduce((s, h) => s + (h.aylikKatki || 0), 0);
+  function tumKatkiUygula() {
+    setFindata((d) => ({
+      ...d,
+      hedefler: (d.hedefler || []).map((h) => {
+        const m = h.aylikKatki || 0;
+        if (!m) return h;
+        const yeni = h.tip === "borc" ? Math.max(0, (h.mevcutTutar || 0) - m) : Math.min(h.hedefTutar, (h.mevcutTutar || 0) + m);
+        return { ...h, mevcutTutar: yeni };
+      }),
+    }));
+    bildir("Aylık katkılar uygulandı");
+  }
+
   return (
-    <Card>
-      <h3 style={sectionTitle}>Aylık Kategori Limitleri ({ay})</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Limit gir; %80'de sarı, aşımda kırmızı uyarı verir, panelde takip edilir.</p>
-      <Toggle label="Bütçe devri — önceki ayın kalanı/aşımı bu aya taşınsın" checked={devir} onChange={devirAyar} />
-      {giderKategorileri(findata).map((k) => {
-        const h = ayGider[k] || 0;
-        const l = (findata.butceler || {})[k] || 0;
-        const dv = devir ? butceDevri(findata, k, ay) : 0;
-        const etk = etkinButce(findata, k, ay);
-        return (
-          <div key={k} style={{ marginBottom: "1rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem", gap: "0.75rem" }}>
-              <span style={{ color: C.dim, fontSize: "0.85rem", minWidth: 90 }}>
-                {k}
-                {devir && l > 0 && dv !== 0 && <span style={{ color: dv > 0 ? C.greenL : C.redL, fontSize: "0.72rem", marginLeft: 6 }}>{dv > 0 ? "+" : ""}{TL(dv)} devir</span>}
-              </span>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ color: C.dimmer, fontSize: "0.78rem" }}>{TL(h)} /</span>
-                <input type="number" value={l || ""} onChange={(e) => set(k, e.target.value)} placeholder="limit" style={{ ...inputStyle, width: 110, padding: "0.35rem 0.5rem", fontSize: "0.82rem" }} />
-              </div>
-            </div>
-            {l > 0 && <ProgressBar value={h} max={devir ? Math.max(1, etk) : l} />}
+    <>
+      <div className="fa-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+        {/* ---------- SOL: Aylık Bütçeler ---------- */}
+        <Card style={{ padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <div className="serif" style={{ fontSize: "16px", fontWeight: 600, color: V.ink, fontFamily: SERIF }}>Aylık Bütçeler</div>
+            <Btn variant="primary" onClick={() => setButceModal({ cat: "", limit: "" })} style={{ padding: "8px 13px", fontSize: "12.5px" }}>
+              <Icon d="plus" size={14} /> Bütçe
+            </Btn>
           </div>
-        );
-      })}
-    </Card>
+          {!butceliKats.length && <Bos mesaj="Henüz bütçe yok. Bir kategoriye limit ekle." icon="bars" />}
+          {butceliKats.map((cat) => {
+            const harcanan = ayGider[cat] || 0;
+            const etkin = etkinButce(findata, cat, ay);
+            const dv = devir ? butceDevri(findata, cat, ay) : 0;
+            return (
+              <div key={cat} onClick={() => setButceModal({ cat, limit: String(butceler[cat] || "") })} style={{ marginBottom: "16px", cursor: "pointer" }} title="Bütçe limitini düzenle">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px", marginBottom: "6px", gap: "0.5rem" }}>
+                  <span style={{ color: V.ink2, display: "flex", alignItems: "center", gap: "6px" }}>
+                    {cat}
+                    <Icon d="edit" size={12} stroke={V.ink3} />
+                    {devir && dv !== 0 && <span style={{ color: dv > 0 ? V.pos : V.neg, fontSize: "11px" }}>{dv > 0 ? "+" : ""}{TL(dv)} devir</span>}
+                  </span>
+                  <span className="num" style={{ color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(harcanan)} / {TL(etkin)}</span>
+                </div>
+                <ProgressBar value={harcanan} max={Math.max(1, etkin)} />
+              </div>
+            );
+          })}
+        </Card>
+
+        {/* ---------- SAĞ: Birikim Hedefleri ---------- */}
+        <Card style={{ padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px", gap: "0.5rem" }}>
+            <div className="serif" style={{ fontSize: "16px", fontWeight: 600, color: V.ink, fontFamily: SERIF }}>Birikim Hedefleri</div>
+            <div style={{ display: "flex", gap: "6px" }}>
+              {hedefler.length > 0 && (
+                <Btn variant="primary" onClick={tumKatkiUygula} title="Tüm hedeflere aylık katkıyı uygula" style={{ padding: "8px 13px", fontSize: "12.5px" }}>
+                  <Icon d="plus" size={14} /> Aylık Katkı ({TL(aylikToplam)})
+                </Btn>
+              )}
+              <Btn variant="gold" onClick={() => setHedefModal({ ad: "", tip: "birikim", hedefTutar: "", aylikKatki: "", otomatikKatki: false })} title="Yeni hedef" style={{ padding: "8px 11px", fontSize: "12.5px" }}>
+                <Icon d="plus" size={14} />
+              </Btn>
+            </div>
+          </div>
+          {!hedefler.length && <Bos mesaj="Henüz hedef yok. Bir birikim hedefi ekle." icon="target" />}
+          {hedefler.map((h) => {
+            const borc = h.tip === "borc";
+            const pct = Math.min(100, Math.max(0, ((h.mevcutTutar || 0) / (h.hedefTutar || 1)) * 100));
+            const kalan = Math.max(0, (h.hedefTutar || 0) - (h.mevcutTutar || 0));
+            const renk = borc ? V.accent : V.pos;
+            const katkiTutar = h.aylikKatki > 0 ? h.aylikKatki : 1000;
+            return (
+              <div key={h.id} style={{ display: "flex", alignItems: "center", gap: "15px", marginBottom: "18px" }}>
+                <Ring pct={pct} color={renk} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div onClick={() => setHedefModal({ id: h.id, ad: h.ad, tip: h.tip, hedefTutar: String(h.hedefTutar || ""), aylikKatki: String(h.aylikKatki || ""), otomatikKatki: !!h.otomatikKatki })} style={{ fontSize: "13.5px", fontWeight: 600, color: V.ink, cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }} title="Hedefi düzenle">
+                    {h.ad}
+                    <Icon d="edit" size={12} stroke={V.ink3} />
+                    {h.otomatikKatki && <span style={{ background: "var(--chip-gold)", color: V.accent, fontSize: "9.5px", fontWeight: 700, padding: "1px 5px", borderRadius: "5px", letterSpacing: "0.03em" }}>OTO</span>}
+                  </div>
+                  <div className="num" style={{ fontSize: "12px", color: V.ink3, fontFamily: MONO }}>{TL(h.mevcutTutar || 0)} / {TL(h.hedefTutar || 0)}</div>
+                  <div style={{ fontSize: "11px", color: V.ink3, marginTop: "2px" }}>kalan: {TL(kalan)} · aylık: {TL(h.aylikKatki || 0)}</div>
+                </div>
+                <Btn variant="soft" onClick={() => katkiUygula(h, katkiTutar)} style={{ padding: "8px 12px", fontSize: "12px", flexShrink: 0 }}>+ Katkı</Btn>
+              </div>
+            );
+          })}
+        </Card>
+      </div>
+
+      {/* ---------- Bütçe Modal ---------- */}
+      {butceModal && (
+        <Modal title={`Bütçe — ${butceModal.cat || "Yeni"}`} maxWidth={380} onClose={() => setButceModal(null)}>
+          {!butceModal.cat && (
+            <Field label="Kategori" value={butceModal.cat} onChange={(v) => setButceModal((m) => ({ ...m, cat: v }))}
+              options={[{ id: "", label: "Kategori seç…" }, ...kategoriler.filter((k) => !(butceler[k] > 0)).map((k) => ({ id: k, label: k }))]} />
+          )}
+          <label style={lbl}>Aylık limit (₺)</label>
+          <input value={butceModal.limit} onChange={(e) => setButceModal((m) => ({ ...m, limit: e.target.value }))} inputMode="decimal" placeholder="0"
+            style={{ width: "100%", padding: "12px 14px", marginBottom: "18px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "11px", color: V.ink, fontSize: "15px", fontFamily: MONO, outline: "none", boxSizing: "border-box" }} />
+          <Btn variant="primary" onClick={butceKaydet} style={{ width: "100%", padding: "13px", fontSize: "14px" }}>Kaydet</Btn>
+        </Modal>
+      )}
+
+      {/* ---------- Hedef Modal ---------- */}
+      {hedefModal && (
+        <Modal title={hedefModal.id ? "Hedefi Düzenle" : "Hedef Ekle"} maxWidth={400} onClose={() => setHedefModal(null)}>
+          <label style={lbl}>Hedef adı</label>
+          <input value={hedefModal.ad} onChange={(e) => setHedefModal((m) => ({ ...m, ad: e.target.value }))} placeholder="Acil fon / Araba kredisi"
+            style={{ width: "100%", padding: "11px 13px", marginBottom: "14px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "10px", color: V.ink, fontSize: "13.5px", fontFamily: F, outline: "none", boxSizing: "border-box" }} />
+          <div style={{ display: "flex", gap: "12px" }}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl}>Hedef tutar (₺)</label>
+              <input value={hedefModal.hedefTutar} onChange={(e) => setHedefModal((m) => ({ ...m, hedefTutar: e.target.value }))} inputMode="decimal" placeholder="0"
+                style={{ width: "100%", padding: "11px 13px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "10px", color: V.ink, fontSize: "13.5px", fontFamily: MONO, outline: "none", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl}>Aylık katkı (₺)</label>
+              <input value={hedefModal.aylikKatki} onChange={(e) => setHedefModal((m) => ({ ...m, aylikKatki: e.target.value }))} inputMode="decimal" placeholder="0"
+                style={{ width: "100%", padding: "11px 13px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "10px", color: V.ink, fontSize: "13.5px", fontFamily: MONO, outline: "none", boxSizing: "border-box" }} />
+            </div>
+          </div>
+          <div style={{ margin: "16px 0" }}>
+            <Field label="Tür" value={hedefModal.tip} onChange={(v) => setHedefModal((m) => ({ ...m, tip: v }))}
+              options={[{ id: "birikim", label: "Birikim" }, { id: "borc", label: "Borç Ödeme" }]} />
+            <Toggle label="Otomatik aylık katkı" sub="Her ay kendiliğinden uygulansın" checked={!!hedefModal.otomatikKatki} onChange={(v) => setHedefModal((m) => ({ ...m, otomatikKatki: v }))} />
+          </div>
+          <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
+            <Btn variant="primary" onClick={hedefKaydet} style={{ flex: 1, padding: "13px", fontSize: "14px" }}>Kaydet</Btn>
+            {hedefModal.id && <Btn variant="danger" onClick={() => hedefSil(hedefModal.id)} style={{ padding: "13px 16px", fontSize: "14px" }}>Sil</Btn>}
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 
+// Dairesel ilerleme halkası (SVG conic gradient)
+function Ring({ pct, color }) {
+  const p = Math.min(100, Math.max(0, pct));
+  return (
+    <div style={{ width: 54, height: 54, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: `conic-gradient(${color} ${p}%, ${V.track} ${p}%)` }}>
+      <div style={{ width: 42, height: 42, borderRadius: "50%", background: V.card, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span className="num" style={{ fontSize: "11px", fontWeight: 700, color, fontFamily: MONO }}>%{p.toFixed(0)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Zarflar — kategori başına "zarfla", harcadıkça boşalır
+// ============================================================
 function Zarflar({ findata, setFindata }) {
   const ay = buAy();
   const ayGider = {};
-  findata.giderler.filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
+  (findata.giderler || []).filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
   const zarflar = findata.zarflar || {};
   const set = (k, v) => setFindata((d) => ({ ...d, zarflar: { ...(d.zarflar || {}), [k]: parseFloat(v) || 0 } }));
   const toplamTahsis = Object.values(zarflar).reduce((a, b) => a + (+b || 0), 0);
+  const kategoriler = giderKat(findata);
   return (
     <div>
-      <Card style={{ marginBottom: "1rem" }}>
-        <h3 style={sectionTitle}>✉️ Zarf Bütçe ({ay})</h3>
-        <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.5rem" }}>
-          Ayın başında her kategoriye para "zarfla"; harcadıkça zarf boşalır. Toplam tahsis: <b style={{ color: C.text }}>{TL(toplamTahsis)}</b>
+      <Card style={{ marginBottom: "1rem", padding: "20px" }}>
+        <div style={serifBaslik}>Zarf Bütçe ({ay})</div>
+        <p style={{ color: V.ink3, fontSize: "13px", margin: 0, lineHeight: 1.5 }}>
+          Ayın başında her kategoriye para "zarfla"; harcadıkça zarf boşalır. Toplam tahsis: <b className="num" style={{ color: V.accent, fontFamily: MONO }}>{TL(toplamTahsis)}</b>
         </p>
       </Card>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "1rem" }}>
-        {giderKategorileri(findata).map((k) => {
-          const tah = zarflar[k] || 0,
-            harc = ayGider[k] || 0,
-            kalanZ = tah - harc;
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "14px" }}>
+        {kategoriler.map((k) => {
+          const tah = zarflar[k] || 0, harc = ayGider[k] || 0, kalanZ = tah - harc;
           const bitti = tah > 0 && kalanZ < 0;
+          const renk = bitti ? V.neg : V.accent;
           return (
-            <Card key={k} accent={tah > 0 ? (bitti ? C.red : C.amber) : C.line2}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-                <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{k}</span>
-                <input type="number" value={tah || ""} onChange={(e) => set(k, e.target.value)} placeholder="tahsis" style={{ ...inputStyle, width: 90, padding: "0.3rem 0.45rem", fontSize: "0.8rem" }} />
+            <Card key={k} style={{ padding: "16px 17px", borderTop: tah > 0 ? `2px solid ${renk}` : `2px solid ${V.border2}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "0.5rem" }}>
+                <span style={{ fontWeight: 600, fontSize: "13.5px", color: V.ink }}>{k}</span>
+                <input type="text" inputMode="decimal" value={tah || ""} onChange={(e) => set(k, e.target.value)} placeholder="tahsis"
+                  style={{ width: 90, padding: "7px 9px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "8px", color: V.ink, fontSize: "12.5px", fontFamily: MONO, outline: "none", boxSizing: "border-box" }} />
               </div>
               {tah > 0 && (
                 <>
-                  <ProgressBar value={harc} max={tah} color={bitti ? C.red : C.amber} />
-                  <p style={{ margin: "0.5rem 0 0", fontSize: "0.78rem", color: bitti ? C.redL : C.dim }}>
-                    {bitti ? `${TL(-kalanZ)} aşıldı` : `${TL(kalanZ)} kaldı`} <span style={{ color: C.faint }}>· {TL(harc)} harcandı</span>
+                  <ProgressBar value={harc} max={tah} color={renk} />
+                  <p style={{ margin: "8px 0 0", fontSize: "12px", color: bitti ? V.neg : V.ink2 }}>
+                    {bitti ? `${TL(-kalanZ)} aşıldı` : `${TL(kalanZ)} kaldı`} <span style={{ color: V.ink3 }}>· {TL(harc)} harcandı</span>
                   </p>
                 </>
               )}
@@ -103,90 +301,35 @@ function Zarflar({ findata, setFindata }) {
   );
 }
 
-function Hedefler({ findata, setFindata, bildir }) {
-  const [form, setForm] = useState({ ad: "", tip: "birikim", hedefTutar: "", mevcutTutar: "", aylikKatki: "", otomatikKatki: false });
-  const hedefler = findata.hedefler || [];
-  function ekle() {
-    if (!form.ad || !form.hedefTutar) {
-      bildir("Ad ve hedef tutar gerekli", "err");
-      return;
-    }
-    setFindata((d) => ({ ...d, hedefler: [...(d.hedefler || []), { id: uid(), ad: form.ad, tip: form.tip, hedefTutar: parseFloat(form.hedefTutar), mevcutTutar: parseFloat(form.mevcutTutar) || 0, aylikKatki: parseFloat(form.aylikKatki) || 0, otomatikKatki: !!form.otomatikKatki, sonKatki: buAy() }] }));
-    setForm({ ad: "", tip: "birikim", hedefTutar: "", mevcutTutar: "", aylikKatki: "", otomatikKatki: false });
-    bildir("Hedef eklendi");
-  }
-  function guncelle(id, delta) {
-    setFindata((d) => ({ ...d, hedefler: d.hedefler.map((h) => (h.id === id ? { ...h, mevcutTutar: Math.max(0, h.mevcutTutar + delta) } : h)) }));
-  }
-  function sil(id) {
-    setFindata((d) => ({ ...d, hedefler: d.hedefler.filter((h) => h.id !== id) }));
-  }
-  return (
-    <div>
-      <Card style={{ marginBottom: "1.25rem" }}>
-        <h3 style={sectionTitle}>Yeni Hedef</h3>
-        <div className="fa-grid-2">
-          <Field label="Ad" value={form.ad} onChange={(v) => setForm((f) => ({ ...f, ad: v }))} placeholder="Acil fon / Araba kredisi" />
-          <Field label="Tür" value={form.tip} onChange={(v) => setForm((f) => ({ ...f, tip: v }))} options={[{ id: "birikim", label: "Birikim" }, { id: "borc", label: "Borç Ödeme" }]} />
-          <Field label="Hedef Tutar (₺)" type="number" value={form.hedefTutar} onChange={(v) => setForm((f) => ({ ...f, hedefTutar: v }))} />
-          <Field label={form.tip === "borc" ? "Kalan Borç (₺)" : "Mevcut (₺)"} type="number" value={form.mevcutTutar} onChange={(v) => setForm((f) => ({ ...f, mevcutTutar: v }))} />
-          <Field label="Aylık Katkı/Ödeme (₺)" type="number" value={form.aylikKatki} onChange={(v) => setForm((f) => ({ ...f, aylikKatki: v }))} />
-        </div>
-        <Toggle label="Otomatik aylık katkı — her ay kendiliğinden uygulansın" checked={!!form.otomatikKatki} onChange={(v) => setForm((f) => ({ ...f, otomatikKatki: v }))} />
-        <Btn onClick={ekle}>+ Hedef Ekle</Btn>
-      </Card>
-      {!hedefler.length && <Bos mesaj="Henüz hedef yok." />}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: "1rem" }}>
-        {hedefler.map((h) => {
-          const borc = h.tip === "borc";
-          const kalan = borc ? h.mevcutTutar : h.hedefTutar - h.mevcutTutar;
-          const pct = borc ? ((h.hedefTutar - h.mevcutTutar) / h.hedefTutar) * 100 : (h.mevcutTutar / h.hedefTutar) * 100;
-          const ayT = h.aylikKatki > 0 ? Math.ceil(kalan / h.aylikKatki) : null;
-          return (
-            <Card key={h.id} accent={borc ? C.red : C.green}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                <div>
-                  <p style={{ margin: "0 0 0.15rem", fontWeight: 700, fontSize: "1rem" }}>{h.ad}{h.otomatikKatki && <span style={tagStyle(C.cyan)}>OTO</span>}</p>
-                  <p style={{ margin: 0, color: C.dimmer, fontSize: "0.73rem" }}>{borc ? "Borç ödeme" : "Birikim"}</p>
-                </div>
-                <DelBtn onClick={() => sil(h.id)} />
-              </div>
-              <p style={{ margin: "0.5rem 0 0.3rem", fontSize: "0.85rem", color: C.dim }}>{borc ? `Kalan: ${TL(h.mevcutTutar)}` : `${TL(h.mevcutTutar)} / ${TL(h.hedefTutar)}`}</p>
-              <ProgressBar value={borc ? h.hedefTutar - h.mevcutTutar : h.mevcutTutar} max={h.hedefTutar} color={borc ? C.green : C.indigo} />
-              <p style={{ margin: "0.5rem 0 0", fontSize: "0.78rem", color: C.dimmer }}>%{Math.min(100, Math.max(0, pct)).toFixed(0)} {borc ? "ödendi" : "tamam"}{ayT ? ` · ~${ayT} ay kaldı` : ""}</p>
-              <Btn variant="ghost" onClick={() => guncelle(h.id, h.aylikKatki || 100)} style={{ width: "100%", fontSize: "0.78rem", padding: "0.4rem", marginTop: "0.75rem" }}>
-                {borc ? "− Ödeme" : "+ Katkı"} {h.aylikKatki ? TL(h.aylikKatki) : ""}
-              </Btn>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
+// ============================================================
+// Tekrarlayanlar — aktif şablon listesi
+// ============================================================
 function Tekrarlayanlar({ findata, setFindata, bildir }) {
   const sablonlar = findata.sablonlar || [];
   function sil(id) {
-    setFindata((d) => ({ ...d, sablonlar: d.sablonlar.filter((s) => s.id !== id) }));
+    setFindata((d) => ({ ...d, sablonlar: (d.sablonlar || []).filter((s) => s.id !== id) }));
     bildir("Tekrar şablonu silindi");
   }
+  const chip = (col, txt) => (
+    <span style={{ background: "var(--chip-gold)", color: col, fontSize: "9.5px", fontWeight: 700, padding: "2px 6px", borderRadius: "5px", marginLeft: "6px", letterSpacing: "0.03em" }}>{txt}</span>
+  );
   return (
-    <Card>
-      <h3 style={sectionTitle}>Aktif Tekrarlayan İşlemler</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1.25rem" }}>"Otomatik tekrarla" seçtiğin işlemler burada; her dönem otomatik oluşturulur.</p>
-      {!sablonlar.length && <Bos mesaj="Tekrarlayan işlem yok." />}
+    <Card style={{ padding: "20px" }}>
+      <div style={serifBaslik}>Aktif Tekrarlayan İşlemler</div>
+      <p style={{ color: V.ink3, fontSize: "13px", margin: "0 0 1.25rem", lineHeight: 1.5 }}>"Otomatik tekrarla" seçtiğin işlemler burada; her dönem otomatik oluşturulur.</p>
+      {!sablonlar.length && <Bos mesaj="Tekrarlayan işlem yok." icon="repeat" />}
       {sablonlar.map((s) => (
-        <div key={s.id} style={rowStyle}>
-          <div>
-            <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem" }}>
-              {s.baslik} <span style={tagStyle(s.tip === "gelir" ? C.green : s.tip === "abonelik" ? C.amber : C.red)}>{s.tip.toUpperCase()}</span>
-              <span style={tagStyle(C.cyan)}>{s.frekans.toUpperCase()}</span>
+        <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: V.card2, borderRadius: "11px", marginBottom: "8px", border: `1px solid ${V.border}` }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: "0 0 3px", fontWeight: 600, fontSize: "13.5px", color: V.ink }}>
+              {s.baslik}
+              {chip(s.tip === "gelir" ? V.pos : s.tip === "abonelik" ? V.accent : V.neg, (s.tip || "").toUpperCase())}
+              {chip(V.accent, (s.frekans || "").toUpperCase())}
             </p>
-            <p style={{ margin: 0, color: C.dimmer, fontSize: "0.73rem" }}>{s.kategori} · son: {s.sonUretilen || "—"}</p>
+            <p style={{ margin: 0, color: V.ink3, fontSize: "11.5px" }}>{s.kategori} · son: {s.sonUretilen || "—"}</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <p style={{ margin: 0, fontWeight: 700 }}>{TL(s.miktar)}</p>
+            <p className="num" style={{ margin: 0, fontWeight: 700, color: V.ink, fontFamily: MONO }}>{TL(s.miktar)}</p>
             <DelBtn onClick={() => sil(s.id)} />
           </div>
         </div>
@@ -195,71 +338,40 @@ function Tekrarlayanlar({ findata, setFindata, bildir }) {
   );
 }
 
-function Basarimlar({ findata, setFindata, bildir }) {
+// ============================================================
+// Başarımlar — kazanılan rozetler (altın) vs kilitli (soluk)
+// ============================================================
+function Basarimlar({ findata }) {
   const gd = (y) => y.adet * (y.guncelFiyat || y.alisFiyati);
   const yd = (findata.yatirimlar || []).reduce((s, y) => s + gd(y), 0);
-  const nakit = (findata.gelirler || []).reduce((s, x) => s + x.miktar, 0) - (findata.giderler || []).reduce((s, x) => s + x.miktar, 0) - (findata.abonelikler || []).reduce((s, x) => s + x.miktar, 0);
-  const netDeger = nakit + yd;
+  const netDeger =
+    (findata.gelirler || []).reduce((s, x) => s + x.miktar, 0) -
+    (findata.giderler || []).reduce((s, x) => s + x.miktar, 0) -
+    (findata.abonelikler || []).reduce((s, x) => s + x.miktar, 0) +
+    yd;
   const toplamGider = (findata.giderler || []).reduce((s, x) => s + x.miktar, 0);
   const rozetler = rozetleriHesapla(findata, netDeger, toplamGider);
   const kazanilan = rozetler.filter((r) => r.kazanildi).length;
-  const mo = findata.meydanOkumalar || [];
-  const [form, setForm] = useState({ ad: "", gun: "30" });
-  function baslat() {
-    if (!form.ad) {
-      bildir("Meydan okuma adı gerekli", "err");
-      return;
-    }
-    setFindata((d) => ({ ...d, meydanOkumalar: [...(d.meydanOkumalar || []), { id: uid(), ad: form.ad, hedefGun: parseInt(form.gun) || 30, baslangic: bugun() }] }));
-    setForm({ ad: "", gun: "30" });
-    bildir("Meydan okuma başladı! 💪");
-  }
-  function vazgec(id) {
-    setFindata((d) => ({ ...d, meydanOkumalar: d.meydanOkumalar.filter((m) => m.id !== id) }));
-  }
   return (
-    <div>
-      <Card style={{ marginBottom: "1rem" }}>
-        <h3 style={sectionTitle}>🏆 Rozetler ({kazanilan}/{rozetler.length})</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: "0.75rem" }}>
-          {rozetler.map((r) => (
-            <div key={r.id} style={{ textAlign: "center", padding: "1rem 0.5rem", background: r.kazanildi ? "#0D2718" : C.card2, border: `1px solid ${r.kazanildi ? "#166534" : C.line}`, borderRadius: "0.75rem", opacity: r.kazanildi ? 1 : 0.5 }}>
-              <div style={{ fontSize: "1.8rem", marginBottom: "0.35rem", filter: r.kazanildi ? "none" : "grayscale(1)" }}>{r.icon}</div>
-              <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.82rem", color: r.kazanildi ? C.greenL : C.dim }}>{r.ad}</p>
-              <p style={{ margin: 0, fontSize: "0.68rem", color: C.faint }}>{r.aciklama}</p>
-            </div>
-          ))}
-        </div>
-      </Card>
-      <Card>
-        <h3 style={sectionTitle}>💪 Tasarruf Meydan Okumaları</h3>
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div style={{ flex: 1, minWidth: 160 }}>
-            <Field label="Meydan okuma" value={form.ad} onChange={(v) => setForm((f) => ({ ...f, ad: v }))} placeholder="Dışarıda yemek yok" />
+    <Card style={{ padding: "20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div className="serif" style={{ fontSize: "16px", fontWeight: 600, color: V.ink, fontFamily: SERIF }}>Rozetler</div>
+        <span className="num" style={{ fontSize: "12.5px", color: V.accent, fontFamily: MONO }}>{kazanilan} / {rozetler.length}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: "12px" }}>
+        {rozetler.map((r) => (
+          <div key={r.id} style={{
+            textAlign: "center", padding: "16px 10px", borderRadius: "12px",
+            background: r.kazanildi ? "var(--chip-gold)" : V.card2,
+            border: `1px solid ${r.kazanildi ? V.accent : V.border}`,
+            opacity: r.kazanildi ? 1 : 0.55,
+          }}>
+            <div style={{ fontSize: "1.8rem", marginBottom: "6px", filter: r.kazanildi ? "none" : "grayscale(1)" }}>{r.icon}</div>
+            <p style={{ margin: "0 0 3px", fontWeight: 700, fontSize: "12.5px", color: r.kazanildi ? V.accent : V.ink2 }}>{r.ad}</p>
+            <p style={{ margin: 0, fontSize: "10.5px", color: V.ink3, lineHeight: 1.4 }}>{r.aciklama}</p>
           </div>
-          <div style={{ width: 90 }}>
-            <Field label="Gün" type="number" value={form.gun} onChange={(v) => setForm((f) => ({ ...f, gun: v }))} />
-          </div>
-          <Btn onClick={baslat} style={{ marginBottom: "0.9rem" }}>Başlat</Btn>
-        </div>
-        {!mo.length && <Bos mesaj="Aktif meydan okuma yok. Bir hedef belirle ve seriyi sürdür!" />}
-        {mo.map((m) => {
-          const gecen = Math.floor((new Date(bugun()) - new Date(m.baslangic)) / 86400000);
-          const bitti = gecen >= m.hedefGun;
-          return (
-            <div key={m.id} style={{ marginBottom: "0.85rem", padding: "0.85rem 1rem", background: C.card2, border: `1px solid ${bitti ? "#166534" : C.line}`, borderRadius: "0.7rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
-                <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>{m.ad} {bitti && "🎉"}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                  <span style={{ fontSize: "0.8rem", color: bitti ? C.greenL : C.dim }}>{Math.min(gecen, m.hedefGun)}/{m.hedefGun} gün</span>
-                  <DelBtn onClick={() => vazgec(m.id)} />
-                </div>
-              </div>
-              <ProgressBar value={gecen} max={m.hedefGun} color={bitti ? C.green : C.amber} />
-            </div>
-          );
-        })}
-      </Card>
-    </div>
+        ))}
+      </div>
+    </Card>
   );
 }

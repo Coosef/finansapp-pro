@@ -1,44 +1,35 @@
 // ============================================================
-// Panel (dashboard) + Hızlı Ekle + alt kartlar
+// Panel (dashboard) — Zümrüt & Altın tasarımı
+// Hızlı Ekle (doğal dil + fiş fotoğrafı) + özet kartları,
+// net varlık grafiği, harcama dağılımı, yaklaşan ödemeler, bütçe
 // ============================================================
-import { useState } from "react";
-import { C, sectionTitle, tagStyle, inputStyle, GIDER_KAT } from "../lib/constants.js";
-import { TL, bugun, buAy, aylikEsdeger, sonrakiTarih, kategoriAnahtar, parseJSON } from "../lib/format.js";
+import { useRef, useState } from "react";
+import { V, PALET, GIDER_KAT } from "../lib/constants.js";
+import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64 } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { yaklasanOdemeler, etkinButce } from "../lib/finance.js";
-import { Card, Btn, Stat, ProgressBar } from "../components/ui.jsx";
-import { Sparkline, BarChart } from "../components/charts.jsx";
+import { Card, Btn, Stat, ProgressBar, Bos } from "../components/ui.jsx";
+import { Icon } from "../components/icons.jsx";
 
 function aiHata(e) {
   return e?.name === "AIAnahtarYok" ? e.message : null;
 }
 
-export function HizliEkle({ findata, ekle, kategoriOgren, bildir }) {
+const baslik = { fontSize: 16, fontWeight: 600, color: V.ink };
+
+export function Panel({
+  findata, fd, donem, donemAdi, setFindata, bildir,
+  toplamGelir, toplamGider, toplamAbonelik, nakit, netDeger,
+  yatirimDeger, yatirimKar, guncelDeger, onHizliEkle, kategoriOgren, onGit,
+}) {
   const [metin, setMetin] = useState("");
   const [bekle, setBekle] = useState(false);
-  const [dinliyor, setDinliyor] = useState(false);
-  const sesVar = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
-  function dinle() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    const r = new SR();
-    r.lang = "tr-TR";
-    r.interimResults = false;
-    r.onresult = (e) => {
-      setMetin(e.results[0][0].transcript);
-      setDinliyor(false);
-    };
-    r.onerror = () => setDinliyor(false);
-    r.onend = () => setDinliyor(false);
-    setDinliyor(true);
-    try {
-      r.start();
-    } catch {
-      setDinliyor(false);
-    }
-  }
+  const [fisOku, setFisOku] = useState(false);
+  const fisRef = useRef(null);
+
+  // ---- Hızlı Ekle: doğal dil ----
   async function isle() {
-    if (!metin.trim()) return;
+    if (!metin.trim() || bekle) return;
     setBekle(true);
     try {
       const txt = await claudeCall([
@@ -48,8 +39,9 @@ export function HizliEkle({ findata, ekle, kategoriOgren, bildir }) {
       const tip = j.tip === "gelir" ? "gelir" : "gider";
       const k = kategoriAnahtar(j.baslik);
       const hatirla = (findata.kategoriHafiza || {})[k];
-      ekle(tip, { baslik: j.baslik, miktar: Math.abs(parseFloat(j.miktar) || 0), kategori: hatirla || j.kategori || (tip === "gelir" ? "Ek Gelir" : "Diğer"), tarih: j.tarih || bugun() });
-      kategoriOgren(j.baslik, hatirla || j.kategori);
+      const kategori = hatirla || j.kategori || (tip === "gelir" ? "Ek Gelir" : "Diğer");
+      onHizliEkle(tip, { baslik: j.baslik, miktar: Math.abs(parseFloat(j.miktar) || 0), kategori, tarih: j.tarih || bugun(), hesapId: "" });
+      kategoriOgren(j.baslik, kategori);
       bildir(`${tip === "gelir" ? "Gelir" : "Gider"} eklendi: ${j.baslik} ${TL(j.miktar)}`);
       setMetin("");
     } catch (e) {
@@ -58,247 +50,244 @@ export function HizliEkle({ findata, ekle, kategoriOgren, bildir }) {
       setBekle(false);
     }
   }
-  return (
-    <Card style={{ marginBottom: "1rem" }} accent={C.cyan}>
-      <h3 style={{ ...sectionTitle, margin: "0 0 0.75rem" }}>⚡ Hızlı Ekle</h3>
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-        <input value={metin} onChange={(e) => setMetin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && isle()} placeholder='Örn: "Bugün markete 350 lira verdim"' style={{ ...inputStyle, flex: 1, minWidth: 180 }} />
-        {sesVar && <Btn variant="ghost" onClick={dinle} disabled={dinliyor} style={{ padding: "0.6rem 0.8rem" }}>{dinliyor ? "🎙️…" : "🎤"}</Btn>}
-        <Btn onClick={isle} disabled={bekle}>{bekle ? "…" : "Ekle"}</Btn>
-      </div>
-      <p style={{ color: C.faint, fontSize: "0.72rem", margin: "0.6rem 0 0" }}>
-        Doğal dille yaz, AI tutar/kategori/tarihi çıkarıp kaydeder. {sesVar ? "Mikrofonla sesli de girebilirsin." : ""}
-        {!aiHazir() && <span style={{ color: C.amber }}> (AI için Ayarlar'dan anahtar gir)</span>}
-      </p>
-    </Card>
-  );
-}
 
-export function Panel({ findata, ekle, kategoriOgren, guncelDeger, toplamGelir, toplamGider, toplamAbonelik, yatirimDeger, yatirimKar, yatirimMaliyet, nakit, netDeger, bildir }) {
-  const [icgoru, setIcgoru] = useState(null);
-  const [icYukleniyor, setIcYukleniyor] = useState(false);
-  const aylik = {};
-  findata.gelirler.forEach((g) => {
-    const a = (g.tarih || "").slice(0, 7);
-    if (a) {
-      aylik[a] = aylik[a] || { gelir: 0, gider: 0 };
-      aylik[a].gelir += g.miktar;
+  // ---- Hızlı Ekle: fiş fotoğrafı ----
+  async function fisYukle(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFisOku(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const txt = await claudeCall([
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: file.type || "image/jpeg", data: b64 } },
+            { type: "text", text: `Alışveriş fişi. SADECE JSON: {"magaza":"...","tarih":"YYYY-MM-DD","toplam":sayı,"kategori":"${GIDER_KAT.join("|")}"}. Tarih yoksa bugünü kullan.` },
+          ],
+        },
+      ]);
+      const j = parseJSON(txt);
+      const adi = j.magaza || "Fiş";
+      const kategori = j.kategori || "Market";
+      const miktar = Math.abs(parseFloat(j.toplam) || 0);
+      onHizliEkle("gider", { baslik: adi, miktar, kategori, tarih: j.tarih || bugun(), hesapId: "" });
+      kategoriOgren(adi, kategori);
+      bildir(`Fişten gider eklendi: ${adi} ${TL(miktar)}`);
+    } catch (err) {
+      bildir(aiHata(err) || "Fiş okunamadı", "err");
+    } finally {
+      setFisOku(false);
+      if (fisRef.current) fisRef.current.value = "";
     }
+  }
+
+  // ---- Özet figürleri ----
+  const giderToplam = toplamGider + toplamAbonelik;
+  const tasarrufOrani = toplamGelir > 0 ? Math.round(((toplamGelir - giderToplam) / toplamGelir) * 100) : 0;
+  const nakitRenk = nakit >= 0 ? V.pos : V.neg;
+
+  const stats = [
+    { label: "Toplam Gelir", value: TL(toplamGelir), delta: donemAdi, deltaColor: V.ink3 },
+    { label: "Toplam Gider", value: TL(giderToplam), delta: `Abonelik dahil`, deltaColor: V.ink3 },
+    { label: "Net Nakit", value: TL(nakit), delta: `Tasarruf %${tasarrufOrani}`, deltaColor: nakitRenk },
+    { label: "Net Varlık", value: TL(netDeger), delta: `Yatırım ${TL(yatirimDeger)}`, deltaColor: V.ink3 },
+  ];
+
+  // ---- Net varlık gelişimi (SVG alan grafiği) ----
+  const netGecmis = (findata.netGecmis || []).filter((p) => p && p.tarih).slice(-12);
+  const W = 580, H = 180;
+  let alanFill = "", alanLine = "", sonNokta = null;
+  if (netGecmis.length >= 2) {
+    const degerler = netGecmis.map((p) => p.deger || 0);
+    const min = Math.min(...degerler), max = Math.max(...degerler);
+    const span = max - min || 1;
+    const pts = netGecmis.map((p, i) => {
+      const x = netGecmis.length === 1 ? W : (i / (netGecmis.length - 1)) * W;
+      const y = H - 18 - ((p.deger - min) / span) * (H - 40);
+      return [x, y];
+    });
+    alanLine = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+    alanFill = `${alanLine} L${W},${H} L0,${H} Z`;
+    sonNokta = pts[pts.length - 1];
+  }
+
+  // ---- Harcama dağılımı (donut) ----
+  const katToplam = {};
+  (fd.giderler || []).forEach((g) => { katToplam[g.kategori] = (katToplam[g.kategori] || 0) + g.miktar; });
+  const katSirali = Object.entries(katToplam).sort((a, b) => b[1] - a[1]);
+  const top5 = katSirali.slice(0, 5);
+  const digerTutar = katSirali.slice(5).reduce((s, [, v]) => s + v, 0);
+  const donutData = [...top5.map(([cat, amt], i) => ({ cat, amt, color: PALET[i % PALET.length] }))];
+  if (digerTutar > 0) donutData.push({ cat: "Diğer", amt: digerTutar, color: PALET[5 % PALET.length] });
+  const donutToplam = donutData.reduce((s, d) => s + d.amt, 0);
+  let donutOffset = 0;
+  const donutSegments = donutData.map((d) => {
+    const pay = donutToplam > 0 ? (d.amt / donutToplam) * 100 : 0;
+    const seg = { ...d, dash: `${pay} ${100 - pay}`, offset: -donutOffset };
+    donutOffset += pay;
+    return seg;
   });
-  findata.giderler.forEach((g) => {
-    const a = (g.tarih || "").slice(0, 7);
-    if (a) {
-      aylik[a] = aylik[a] || { gelir: 0, gider: 0 };
-      aylik[a].gider += g.miktar;
-    }
-  });
-  const barData = Object.keys(aylik).sort().slice(-6).map((a) => ({ ay: a.slice(5) + "/" + a.slice(2, 4), ...aylik[a] }));
-  const tarihSet = {};
-  findata.yatirimlar.forEach((y) => (y.gecmis || []).forEach((p) => { tarihSet[p.tarih] = true; }));
-  const portfoyGecmis = Object.keys(tarihSet).sort().map((t) => ({ tarih: t, deger: findata.yatirimlar.reduce((s, y) => { const g = (y.gecmis || []).filter((p) => p.tarih <= t).pop(); return s + (g ? g.deger : 0); }, 0) }));
-  const karYuzde = yatirimMaliyet ? (yatirimKar / yatirimMaliyet) * 100 : 0;
+
+  // ---- Yaklaşan ödemeler ----
+  const yaklasan = yaklasanOdemeler(findata, bugun(), 7).slice(0, 5);
+
+  // ---- Bütçe durumu ----
   const ay = buAy();
   const ayGider = {};
-  findata.giderler.filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
-  const butceliler = Object.keys(findata.butceler || {}).filter((k) => findata.butceler[k] > 0);
-
-  const aylikGelirTekrar = (findata.sablonlar || []).filter((s) => s.tip === "gelir").reduce((s, x) => s + aylikEsdeger(x.miktar, x.frekans), 0);
-  const aylikGiderTekrar = (findata.sablonlar || []).filter((s) => s.tip === "gider").reduce((s, x) => s + aylikEsdeger(x.miktar, x.frekans), 0);
-  const aylikNet = aylikGelirTekrar - aylikGiderTekrar - toplamAbonelik;
-  const tahmin = [];
-  let bak = nakit;
-  for (let i = 1; i <= 6; i++) {
-    bak += aylikNet;
-    tahmin.push({ deger: bak, ay: i });
-  }
-  const negatifAy = tahmin.find((t) => t.deger < 0);
-
-  const oncekiAylar = {};
-  findata.giderler.forEach((g) => {
-    const a = (g.tarih || "").slice(0, 7);
-    if (a && a < ay) {
-      oncekiAylar[a] = oncekiAylar[a] || {};
-      oncekiAylar[a][g.kategori] = (oncekiAylar[a][g.kategori] || 0) + g.miktar;
-    }
-  });
-  const aySayisi = Object.keys(oncekiAylar).length || 1;
-  const ortKategori = {};
-  Object.values(oncekiAylar).forEach((m) => Object.entries(m).forEach(([k, v]) => { ortKategori[k] = (ortKategori[k] || 0) + v; }));
-  Object.keys(ortKategori).forEach((k) => { ortKategori[k] /= aySayisi; });
-  const anomaliler = Object.entries(ayGider).filter(([k, v]) => ortKategori[k] && v > ortKategori[k] * 1.5).map(([k, v]) => ({ kategori: k, simdi: v, ort: ortKategori[k], kat: (v / ortKategori[k]).toFixed(1) }));
-
-  const yaklasan = yaklasanOdemeler(findata, bugun(), 7);
-
-  async function icgoruOlustur() {
-    setIcYukleniyor(true);
-    try {
-      const ozet = { toplamGelir, toplamGider, toplamAbonelik, yatirimDeger, yatirimKar: Math.round(yatirimKar), netDeger: Math.round(netDeger), buAyGider: ayGider, aylikTrend: barData, butceler: findata.butceler, tahminiAylikNet: Math.round(aylikNet) };
-      const txt = await claudeCall([{ role: "user", content: `Kişisel finans asistanısın. Türk kullanıcının verisine göre kısa, eyleme dönük 4-5 içgörü üret. Para TL. SADECE JSON: {"ozet":"tek cümle","maddeler":["...","..."]}\n\nVeri: ${JSON.stringify(ozet)}` }]);
-      setIcgoru(parseJSON(txt));
-    } catch (e) {
-      bildir(aiHata(e) || "İçgörü oluşturulamadı", "err");
-    } finally {
-      setIcYukleniyor(false);
-    }
-  }
+  (findata.giderler || []).filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
+  const butceler = Object.entries(findata.butceler || {})
+    .filter(([, limit]) => limit > 0)
+    .map(([cat]) => {
+      const harcanan = ayGider[cat] || 0;
+      const limit = etkinButce(findata, cat, ay);
+      return { cat, harcanan, limit, pct: limit > 0 ? (harcanan / limit) * 100 : 0 };
+    })
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, 4);
 
   return (
     <div>
-      <HizliEkle findata={findata} ekle={ekle} kategoriOgren={kategoriOgren} bildir={bildir} />
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: "1rem", marginBottom: "1.25rem" }}>
-        <Stat title="Net Varlık" value={TL(netDeger)} sub="nakit + yatırım" color={C.purple} icon="💎" />
-        <Stat title="Yatırım Değeri" value={TL(yatirimDeger)} sub={`${karYuzde >= 0 ? "+" : ""}${karYuzde.toFixed(1)}% (${TL(yatirimKar)})`} subColor={yatirimKar >= 0 ? C.greenL : C.redL} color={C.indigo} icon="📈" />
-        <Stat title="Toplam Gelir" value={TL(toplamGelir)} sub={`${findata.gelirler.length} kayıt`} color={C.green} icon="💰" />
-        <Stat title="Gider + Abonelik" value={TL(toplamGider + toplamAbonelik)} sub={`${findata.giderler.length} gider · ${findata.abonelikler.length} abonelik`} color={C.red} icon="💸" />
+      {/* 1) Hızlı Ekle (zümrüt kart) */}
+      <div style={{ background: V.emerald, borderRadius: 14, padding: "18px 20px", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+          <Icon d="spark" size={18} stroke={V.accent} />
+          <div className="serif" style={{ fontSize: 15, fontWeight: 600, color: V.cream }}>Hızlı Ekle</div>
+          <span style={{ fontSize: 11, color: V.sage }}>
+            {aiHazir() ? "Doğal dille yaz ya da fiş fotoğrafı yükle" : "AI için Ayarlar'dan anahtar gir"}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+          <input
+            value={metin}
+            onChange={(e) => setMetin(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && isle()}
+            placeholder="Örn: bugün markete 350 lira verdim"
+            style={{ flex: 1, minWidth: 180, padding: "12px 15px", background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 11, color: "#F4F1E9", fontSize: 13.5, fontFamily: "inherit", outline: "none" }}
+          />
+          <label
+            title="Fiş/fatura fotoğrafı yükle"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "12px 15px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.05)", color: V.cream, cursor: fisOku ? "wait" : "pointer", whiteSpace: "nowrap" }}
+          >
+            {fisOku ? <span style={{ fontSize: 13 }}>Okunuyor…</span> : <Icon d="camera" size={18} stroke={V.cream} />}
+            <input ref={fisRef} type="file" accept="image/*" capture="environment" onChange={fisYukle} disabled={fisOku} style={{ display: "none" }} />
+          </label>
+          <Btn variant="gold" onClick={isle} disabled={bekle} style={{ padding: "12px 22px" }}>
+            {bekle ? "Ekleniyor…" : "Ekle"}
+          </Btn>
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "1rem", marginBottom: "1rem" }}>
-        <AcilFon nakit={nakit} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} aylik={aylik} />
-        <NetVarlikGecmisKart findata={findata} portfoyGecmis={portfoyGecmis} />
+      {/* 2) Özet kartları */}
+      <div className="fa-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
+        {stats.map((s) => (
+          <Stat key={s.label} label={s.label} value={s.value} delta={s.delta} deltaColor={s.deltaColor} />
+        ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "1rem", marginBottom: "1rem" }}>
-        <Card accent={negatifAy ? C.red : C.green}>
-          <h3 style={sectionTitle}>🔮 Nakit Akış Tahmini</h3>
-          {aylikNet === 0 && !findata.sablonlar?.length ? (
-            <p style={{ color: C.faint, fontSize: "0.82rem" }}>Tahmin için tekrarlayan gelir/gider ekleyin.</p>
+      {/* 3) Net varlık gelişimi + harcama dağılımı */}
+      <div className="fa-grid" style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 14, marginBottom: 16 }}>
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div className="serif" style={baslik}>Net Varlık Gelişimi</div>
+            <div style={{ fontSize: 11, color: V.ink3 }}>{netGecmis.length >= 2 ? `son ${netGecmis.length} kayıt` : ""}</div>
+          </div>
+          {alanLine ? (
+            <svg width="100%" height="180" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="gMain" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor={V.emerald2} stopOpacity="0.18" />
+                  <stop offset="1" stopColor={V.emerald2} stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <path d={alanFill} fill="url(#gMain)" />
+              <path className="fa-area" style={{ "--len": 760 }} d={alanLine} fill="none" stroke={V.emerald2} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              {sonNokta && <circle cx={sonNokta[0]} cy={sonNokta[1]} r="4.5" fill={V.accent} />}
+            </svg>
           ) : (
-            <>
-              <p style={{ margin: "0 0 0.5rem", fontSize: "0.85rem", color: C.dim }}>Tahmini aylık net: <b style={{ color: aylikNet >= 0 ? C.greenL : C.redL }}>{aylikNet >= 0 ? "+" : ""}{TL(aylikNet)}</b></p>
-              <Sparkline points={tahmin} color={negatifAy ? C.red : C.greenL} height={70} width={280} />
-              <p style={{ margin: "0.5rem 0 0", fontSize: "0.8rem", color: C.dimmer }}>{negatifAy ? <span style={{ color: C.redL }}>⚠️ ~{negatifAy.ay} ay sonra bakiye negatife düşebilir ({TL(negatifAy.deger)})</span> : `6 ay sonra tahmini: ${TL(tahmin[5].deger)}`}</p>
-            </>
-          )}
-        </Card>
-        <Card accent={C.amber}>
-          <h3 style={sectionTitle}>🔔 Yaklaşan Ödemeler (7 gün)</h3>
-          {!yaklasan.length ? (
-            <p style={{ color: C.faint, fontSize: "0.82rem" }}>Önümüzdeki 7 günde ödeme yok.</p>
-          ) : (
-            yaklasan.slice(0, 5).map((y, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.45rem 0", borderBottom: i < Math.min(yaklasan.length, 5) - 1 ? `1px solid ${C.line}` : "none" }}>
-                <span style={{ fontSize: "0.83rem", color: C.dim }}>{y.ad} <span style={tagStyle(y.tip === "Abonelik" ? C.amber : C.cyan)}>{y.gun === 0 ? "BUGÜN" : y.gun + " gün"}</span></span>
-                <span style={{ fontSize: "0.83rem", fontWeight: 600 }}>{TL(y.miktar)}</span>
-              </div>
-            ))
-          )}
-        </Card>
-      </div>
-
-      {anomaliler.length > 0 && (
-        <Card style={{ marginBottom: "1rem" }} accent={C.red}>
-          <h3 style={sectionTitle}>🚨 Olağandışı Harcamalar (bu ay)</h3>
-          {anomaliler.map((a) => (
-            <div key={a.kategori} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.5rem 0", borderBottom: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: "0.85rem", color: C.dim }}>{a.kategori} <span style={tagStyle(C.red)}>{a.kat}× ORTALAMA</span></span>
-              <span style={{ fontSize: "0.82rem" }}><b style={{ color: C.redL }}>{TL(a.simdi)}</b> <span style={{ color: C.faint }}>(ort. {TL(a.ort)})</span></span>
+            <div style={{ height: 180, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <div style={{ width: "100%", height: 1, background: V.line }} />
+              <div style={{ fontSize: 13, color: V.ink3, textAlign: "center", paddingTop: 12 }}>Net varlık geçmişi biriktikçe burada görünecek.</div>
             </div>
-          ))}
+          )}
         </Card>
-      )}
 
-      <Card style={{ marginBottom: "1rem" }} accent={C.cyan}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: icgoru ? "1rem" : 0, flexWrap: "wrap", gap: "0.5rem" }}>
-          <h3 style={{ ...sectionTitle, margin: 0 }}>✨ Akıllı İçgörüler</h3>
-          <Btn variant="ghost" onClick={icgoruOlustur} disabled={icYukleniyor}>{icYukleniyor ? "Analiz ediliyor…" : "İçgörü Oluştur"}</Btn>
-        </div>
-        {icgoru && (
-          <div>
-            <p style={{ color: C.text, fontSize: "0.92rem", margin: "0 0 0.85rem", lineHeight: 1.5 }}>{icgoru.ozet}</p>
-            {(icgoru.maddeler || []).map((m, i) => (
-              <div key={i} style={{ display: "flex", gap: "0.6rem", marginBottom: "0.5rem", alignItems: "flex-start" }}>
-                <span style={{ color: C.cyan, flexShrink: 0 }}>▸</span>
-                <span style={{ color: C.dim, fontSize: "0.85rem", lineHeight: 1.45 }}>{m}</span>
+        <Card>
+          <div className="serif" style={{ ...baslik, marginBottom: 16 }}>Harcama Dağılımı</div>
+          {donutSegments.length ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+              <svg width="112" height="112" viewBox="0 0 42 42" style={{ flex: "none" }}>
+                <circle cx="21" cy="21" r="15.9" fill="none" stroke={V.track} strokeWidth="6" />
+                {donutSegments.map((d, i) => (
+                  <circle key={i} cx="21" cy="21" r="15.9" fill="none" stroke={d.color} strokeWidth="6" strokeDasharray={d.dash} strokeDashoffset={d.offset} transform="rotate(-90 21 21)" style={{ transition: "stroke-dasharray .8s cubic-bezier(.4,0,.2,1)" }} />
+                ))}
+              </svg>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 9 }}>
+                {donutSegments.map((d, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: V.ink2 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, flex: "none" }} />
+                    {d.cat}
+                    <span className="num" style={{ marginLeft: "auto", color: V.ink, fontWeight: 500 }}>{TL(d.amt)}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
+            </div>
+          ) : (
+            <Bos mesaj="Bu dönemde gider yok." icon="wallet" />
+          )}
+        </Card>
+      </div>
 
-      <Card style={{ marginBottom: "1rem" }}>
-        <h3 style={sectionTitle}>Aylık Gelir / Gider</h3>
-        <BarChart data={barData} />
-        <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem", fontSize: "0.75rem" }}>
-          <span style={{ color: C.greenL }}>● Gelir</span>
-          <span style={{ color: C.redL }}>● Gider</span>
-        </div>
-      </Card>
-
-      {butceliler.length > 0 && (
-        <Card style={{ marginBottom: "1rem" }}>
-          <h3 style={sectionTitle}>Bu Ay Bütçe Durumu ({ay})</h3>
-          {butceliler.map((k) => {
-            const h = ayGider[k] || 0,
-              l = etkinButce(findata, k, ay),
-              pct = l > 0 ? (h / l) * 100 : 0;
-            return (
-              <div key={k} style={{ marginBottom: "0.85rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem", fontSize: "0.82rem" }}>
-                  <span style={{ color: C.dim }}>{k} {pct >= 100 && <span style={tagStyle(C.red)}>AŞILDI</span>}</span>
-                  <span style={{ color: C.text, fontWeight: 600 }}>{TL(h)} / {TL(l)}</span>
+      {/* 4) Yaklaşan ödemeler + bütçe durumu */}
+      <div className="fa-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Card>
+          <div className="serif" style={{ ...baslik, marginBottom: 14 }}>Yaklaşan Ödemeler</div>
+          {yaklasan.length ? (
+            yaklasan.map((p, i) => {
+              const tagRenk = p.tip === "Abonelik" ? V.accent : V.pos;
+              return (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < yaklasan.length - 1 ? `1px solid ${V.line}` : "none" }}>
+                  <span style={{ fontSize: 13, color: V.ink2 }}>
+                    {p.ad}{" "}
+                    <span style={{ background: "var(--chip-gold)", border: `1px solid ${tagRenk}55`, color: tagRenk, fontSize: 10, padding: "1px 6px", borderRadius: 6, fontWeight: 700, marginLeft: 4 }}>
+                      {p.gun === 0 ? "BUGÜN" : `${p.gun} gün`}
+                    </span>
+                  </span>
+                  <span className="num" style={{ fontSize: 13, fontWeight: 600, color: V.ink }}>{TL(p.miktar)}</span>
                 </div>
-                <ProgressBar value={h} max={l} />
-              </div>
-            );
-          })}
+              );
+            })
+          ) : (
+            <div style={{ fontSize: 13, color: V.ink3, padding: "10px 0" }}>Önümüzdeki 7 günde ödeme yok.</div>
+          )}
         </Card>
-      )}
 
-    </div>
-  );
-}
-
-export function AcilFon({ nakit, toplamGider, toplamAbonelik, aylik }) {
-  const ayCount = Math.max(1, Object.keys(aylik || {}).length);
-  const aylikOrt = toplamGider / ayCount + toplamAbonelik;
-  const ay = aylikOrt > 0 ? nakit / aylikOrt : 0;
-  const seviye = ay >= 6 ? { r: C.green, t: "Çok güvende" } : ay >= 3 ? { r: C.amber, t: "İyi durumda" } : ay >= 1 ? { r: "#F97316", t: "Zayıf" } : { r: C.red, t: "Riskli" };
-  return (
-    <Card accent={seviye.r}>
-      <h3 style={sectionTitle}>🛟 Acil Fon Kapsamı</h3>
-      {aylikOrt <= 0 ? (
-        <p style={{ color: C.faint, fontSize: "0.82rem" }}>Gider verisi biriktikçe hesaplanır.</p>
-      ) : (
-        <>
-          <p style={{ margin: "0 0 0.25rem", fontSize: "1.8rem", fontWeight: 700, color: seviye.r }}>{ay.toFixed(1)} ay</p>
-          <p style={{ margin: "0 0 0.75rem", fontSize: "0.8rem", color: C.dim }}>{seviye.t} — nakitin ~{ay.toFixed(1)} aylık gideri karşılıyor</p>
-          <ProgressBar value={Math.min(ay, 6)} max={6} color={seviye.r} />
-          <p style={{ margin: "0.5rem 0 0", fontSize: "0.72rem", color: C.faint }}>Önerilen: 3-6 ay · aylık ort. gider {TL(aylikOrt)}</p>
-        </>
-      )}
-    </Card>
-  );
-}
-
-export function NetVarlikGecmisKart({ findata, portfoyGecmis }) {
-  const aylar = new Set();
-  [...findata.gelirler, ...findata.giderler].forEach((t) => {
-    const a = (t.tarih || "").slice(0, 7);
-    if (a) aylar.add(a);
-  });
-  const sirali = [...aylar].sort();
-  const seri = sirali.map((a) => {
-    const sonGun = a + "-31";
-    const gel = findata.gelirler.filter((g) => (g.tarih || "") <= sonGun).reduce((s, g) => s + g.miktar, 0);
-    const gid = findata.giderler.filter((g) => (g.tarih || "") <= sonGun).reduce((s, g) => s + g.miktar, 0);
-    const inv = (portfoyGecmis || []).filter((p) => p.tarih <= sonGun).pop();
-    return { deger: gel - gid + (inv ? inv.deger : 0), tarih: a };
-  });
-  return (
-    <Card accent={C.purple}>
-      <h3 style={sectionTitle}>📈 Net Varlık (zaman içinde)</h3>
-      {seri.length < 2 ? (
-        <p style={{ color: C.faint, fontSize: "0.82rem" }}>En az iki aylık veri gerekiyor.</p>
-      ) : (
-        <>
-          <Sparkline points={seri} color={C.purple} height={90} width={300} />
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.5rem", fontSize: "0.72rem", color: C.faint }}>
-            <span>{seri[0].tarih}: {TL(seri[0].deger)}</span>
-            <span style={{ color: C.dim }}>{seri[seri.length - 1].tarih}: {TL(seri[seri.length - 1].deger)}</span>
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div className="serif" style={baslik}>Bütçe Durumu</div>
+            <span onClick={() => onGit && onGit("butceler")} style={{ fontSize: 11, color: V.accent, cursor: "pointer" }}>Tümü</span>
           </div>
-        </>
-      )}
-    </Card>
+          {butceler.length ? (
+            butceler.map((b) => {
+              const renk = b.pct >= 100 ? V.neg : b.pct >= 85 ? V.accent : V.pos;
+              return (
+                <div key={b.cat} style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
+                    <span style={{ color: V.ink2 }}>
+                      {b.cat}
+                      {b.pct >= 100 && <span style={{ background: "var(--chip-red)", color: V.neg, fontSize: 10, padding: "1px 6px", borderRadius: 6, fontWeight: 700, marginLeft: 6 }}>AŞILDI</span>}
+                    </span>
+                    <span className="num" style={{ color: V.ink }}>{TL(b.harcanan)} / {TL(b.limit)}</span>
+                  </div>
+                  <ProgressBar value={b.harcanan} max={b.limit} color={renk} height={7} />
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ fontSize: 13, color: V.ink3, padding: "10px 0" }}>Bütçe tanımlanmamış. Ayarlar'dan kategori limiti ekleyin.</div>
+          )}
+        </Card>
+      </div>
+    </div>
   );
 }

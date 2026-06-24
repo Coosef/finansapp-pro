@@ -1,113 +1,221 @@
 // ============================================================
-// Ayarlar: PIN, enflasyon, döviz, kategori hafızası, kurallar,
-// tema ve Yapay Zekâ (API anahtarı + model)
+// Ayarlar — Zümrüt & Altın
+// Profil, PWA, görünüm (tema/vurgu), güvenlik (PIN), Yapay Zekâ,
+// bildirimler, para birimi, kategoriler, kurallar, kullanıcılar,
+// veri & yedek. Tüm yazımlar setFindata üzerinden gider.
 // ============================================================
-import { useState } from "react";
-import { C, pageTitle, sectionTitle, inputStyle, rowStyle, GIDER_KAT, ACCENT_SECENEK } from "../lib/constants.js";
-import { uid, TL2 } from "../lib/format.js";
-import { kurCek, MODEL_SECENEK, aiHazir, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
-import { Card, Btn, DelBtn, Field } from "../components/ui.jsx";
+import { useState, useRef } from "react";
+import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
+import { uid, bugun, buAy } from "../lib/format.js";
+import { TL } from "../lib/format.js";
+import { MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres } from "../lib/ai.js";
+import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
+import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Kullanicilar } from "./users.jsx";
-import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 
-export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChange }) {
-  const [pin, setPin] = useState("");
-  const [enf, setEnf] = useState(String(findata.ayarlar?.enflasyon ?? 50));
-  const [kurBekle, setKurBekle] = useState(false);
-  function pinKaydet() {
-    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      bildir("PIN 4 haneli olmalı", "err");
-      return;
-    }
-    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), pin } }));
-    setPin("");
-    bildir("PIN kaydedildi (sonraki girişte sorulur)");
-  }
-  function pinKaldir() {
-    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), pin: null } }));
-    bildir("PIN kaldırıldı");
-  }
-  function enfKaydet() {
-    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), enflasyon: parseFloat(enf) || 0 } }));
-    bildir("Enflasyon oranı güncellendi");
-  }
-  async function kurGuncelle() {
-    setKurBekle(true);
-    try {
-      const k = await kurCek();
-      if (isNaN(k.usd) || isNaN(k.eur)) throw new Error();
-      setFindata((d) => ({ ...d, kurlar: k }));
-      bildir(`Kurlar güncellendi: $${k.usd} · €${k.eur}`);
-    } catch (e) {
-      bildir(e?.name === "AIAnahtarYok" ? e.message : "Kur alınamadı", "err");
-    } finally {
-      setKurBekle(false);
-    }
-  }
-  function hafizaTemizle() {
-    setFindata((d) => ({ ...d, kategoriHafiza: {} }));
-    bildir("Kategori hafızası temizlendi");
-  }
-  const hafizaSayi = Object.keys(findata.kategoriHafiza || {}).length;
+const baslik = { fontSize: "15px", fontWeight: 600, color: V.ink, fontFamily: SERIF, margin: "0 0 14px" };
+const altYazi = { margin: "0 0 14px", fontSize: "12px", color: V.ink3, lineHeight: 1.5 };
+const etiket = { display: "block", fontSize: "11.5px", color: V.ink3, marginBottom: 8 };
+
+export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChange, onLogout }) {
+  const ay = findata.ayarlar || {};
+  const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
+  const isAdmin = user?.rol === "admin";
+
   return (
     <div>
-      <h2 style={pageTitle}>Ayarlar</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "1rem", marginTop: "1rem" }}>
-        <Card accent={C.indigo}>
-          <h3 style={sectionTitle}>🔒 PIN Kilidi</h3>
-          {findata.ayarlar?.pin ? (
-            <>
-              <p style={{ color: C.greenL, fontSize: "0.85rem", margin: "0 0 1rem" }}>✓ PIN aktif. Her girişte sorulur.</p>
-              <Btn variant="ghost" onClick={pinKaldir} style={{ width: "100%" }}>PIN'i Kaldır</Btn>
-            </>
-          ) : (
-            <>
-              <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>4 haneli PIN belirle, açılışta sorulsun.</p>
-              <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="1234" maxLength={4} style={{ ...inputStyle, marginBottom: "0.75rem", letterSpacing: "0.3em", textAlign: "center" }} />
-              <Btn onClick={pinKaydet} style={{ width: "100%" }}>PIN Kaydet</Btn>
-            </>
-          )}
-        </Card>
-
-        <Card accent={C.cyan}>
-          <h3 style={sectionTitle}>🔥 Enflasyon Oranı</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Yatırımların reel getirisini hesaplamak için yıllık enflasyon (%).</p>
-          <div style={{ display: "flex", gap: "0.5rem" }}>
-            <input type="number" value={enf} onChange={(e) => setEnf(e.target.value)} style={{ ...inputStyle }} />
-            <Btn onClick={enfKaydet}>Kaydet</Btn>
-          </div>
-        </Card>
-
-        <Card accent={C.green}>
-          <h3 style={sectionTitle}>💱 Döviz Kurları</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Net varlığını USD/EUR olarak da görmek için güncel kurları çek (AI gerekir).</p>
-          {findata.kurlar && <p style={{ color: C.dim, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Güncel: $1={TL2(findata.kurlar.usd)} · €1={TL2(findata.kurlar.eur)} <span style={{ color: C.faint }}>({findata.kurlar.tarih})</span></p>}
-          <Btn variant="ghost" onClick={kurGuncelle} disabled={kurBekle} style={{ width: "100%" }}>{kurBekle ? "Çekiliyor…" : "Kurları Güncelle"}</Btn>
-        </Card>
-
-        <Card accent={C.purple}>
-          <h3 style={sectionTitle}>🧠 Kategori Hafızası</h3>
-          <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Öğrenilen kategori sayısı: <b style={{ color: C.text }}>{hafizaSayi}</b>. Aynı başlığı girince kategoriyi otomatik önerir.</p>
-          <Btn variant="ghost" onClick={hafizaTemizle} style={{ width: "100%" }} disabled={!hafizaSayi}>Hafızayı Temizle</Btn>
-        </Card>
-
-        <BildirimKart findata={findata} setFindata={setFindata} bildir={bildir} />
-        <ApiKeyKart findata={findata} setFindata={setFindata} bildir={bildir} />
+      <h2 style={{ margin: "0 0 18px", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF }}>Ayarlar</h2>
+      <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 14 }}>
+        <ProfilKart user={user} onLogout={onLogout} />
+        <PwaKart bildir={bildir} />
+        <GorunumKart ay={ay} setAyar={setAyar} />
+        <GuvenlikKart ay={ay} setAyar={setAyar} bildir={bildir} />
+        <AiKart findata={findata} setFindata={setFindata} bildir={bildir} />
+        <div className="fa-grid-2">
+          <BildirimKart ay={ay} setAyar={setAyar} bildir={bildir} />
+          <ParaBirimiKart ay={ay} setAyar={setAyar} />
+        </div>
         <KategoriKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <KurallarKart findata={findata} setFindata={setFindata} bildir={bildir} />
-        <TemaKart findata={findata} setFindata={setFindata} />
+        {isAdmin && users && (
+          <Card style={{ padding: 20 }}>
+            <div style={baslik}>Kullanıcılar</div>
+            <Kullanicilar users={users} onChange={onUsersChange} bildir={bildir} mevcut={user} />
+          </Card>
+        )}
+        <VeriKart findata={findata} setFindata={setFindata} user={user} bildir={bildir} />
       </div>
-
-      {user?.rol === "admin" && users && (
-        <div style={{ marginTop: "1.75rem", paddingTop: "1.5rem", borderTop: `1px solid ${C.line}` }}>
-          <Kullanicilar users={users} onChange={onUsersChange} bildir={bildir} mevcut={user} />
-        </div>
-      )}
     </div>
   );
 }
 
-function ApiKeyKart({ findata, setFindata, bildir }) {
+// ---------- Profil ----------
+function ProfilKart({ user, onLogout }) {
+  const ad = user?.ad || user?.username || "Kullanıcı";
+  const harf = (ad[0] || "K").toUpperCase();
+  const rol = user?.rol === "admin" ? "Yönetici" : "Kullanıcı";
+  return (
+    <Card style={{ padding: 20, display: "flex", alignItems: "center", gap: 15 }}>
+      <div
+        style={{
+          width: 50, height: 50, borderRadius: "50%", flex: "none",
+          background: V.emerald, color: V.cream,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 19, fontWeight: 700,
+        }}
+      >
+        {harf}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: V.ink }}>{ad}</div>
+        <div style={{ fontSize: 12, color: V.ink3 }}>@{user?.username || "kullanici"} · {rol}</div>
+      </div>
+      <Btn variant="soft" onClick={onLogout} style={{ color: V.neg }}>Çıkış</Btn>
+    </Card>
+  );
+}
+
+// ---------- PWA ----------
+function PwaKart({ bildir }) {
+  const kurulu =
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator?.standalone);
+  function yukle() {
+    if (kurulu) {
+      bildir("Uygulama zaten kurulu");
+      return;
+    }
+    bildir("Tarayıcı menüsünden \"Ana ekrana ekle / Uygulamayı yükle\" seçeneğini kullan");
+  }
+  return (
+    <div style={{ background: V.emerald, borderRadius: 14, padding: 20, display: "flex", alignItems: "center", gap: 15 }}>
+      <div
+        style={{
+          width: 44, height: 44, borderRadius: 12, flex: "none",
+          background: V.accent, color: V.emerald,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 22, fontWeight: 800,
+        }}
+      >
+        ₺
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#F4F1E9" }}>Uygulamayı Yükle</div>
+        <div style={{ fontSize: 12, color: V.sage }}>Telefon/masaüstüne kur, çevrimdışı çalışsın</div>
+      </div>
+      <Btn variant="gold" onClick={yukle}>{kurulu ? "Kurulu" : "Yükle"}</Btn>
+    </div>
+  );
+}
+
+// ---------- Görünüm ----------
+function GorunumKart({ ay, setAyar }) {
+  const temaDeger = ay.tema === "acik" ? "acik" : "koyu";
+  const accent = ay.accent || "#C79A4B";
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Görünüm</div>
+      <div style={etiket}>Tema</div>
+      <div style={{ marginBottom: 18 }}>
+        <Seg
+          full
+          items={[{ id: "acik", label: "Açık" }, { id: "koyu", label: "Koyu" }]}
+          value={temaDeger}
+          onChange={(v) => setAyar({ tema: v })}
+        />
+      </div>
+      <div style={etiket}>Vurgu rengi</div>
+      <div style={{ display: "flex", gap: 11, flexWrap: "wrap" }}>
+        {ACCENT_SECENEK.map((a) => {
+          const secili = accent === a.renk;
+          return (
+            <button
+              key={a.renk}
+              onClick={() => setAyar({ accent: a.renk })}
+              title={a.ad}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                background: "none", border: "none", cursor: "pointer", fontFamily: F,
+              }}
+            >
+              <span
+                style={{
+                  width: 30, height: 30, borderRadius: "50%", background: a.renk,
+                  boxShadow: secili ? `0 0 0 2px ${V.card}, 0 0 0 4px ${a.renk}` : "none",
+                  border: secili ? "none" : `1px solid ${V.border2}`,
+                }}
+              />
+              <span style={{ fontSize: 10.5, color: secili ? V.ink : V.ink3 }}>{a.ad}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ---------- Güvenlik (PIN) ----------
+function GuvenlikKart({ ay, setAyar, bildir }) {
+  const pinAktif = !!ay.pin;
+  const [taslak, setTaslak] = useState(ay.pin || "");
+  function togglePin(on) {
+    if (on) {
+      setTaslak("");
+      // Toggle'ı açık göstermek için boş bir pin alanı aç; gerçek kayıt 4 hane girilince olur
+      setAyar({ pin: "" });
+    } else {
+      setTaslak("");
+      setAyar({ pin: null });
+      bildir("PIN kaldırıldı");
+    }
+  }
+  function pinGir(v) {
+    const t = v.replace(/\D/g, "").slice(0, 4);
+    setTaslak(t);
+    if (t.length === 4) {
+      setAyar({ pin: t });
+      bildir("PIN kaydedildi (sonraki girişte sorulur)");
+    } else {
+      // 4 haneye ulaşana kadar geçerli pin'i sıfırla ama toggle'ı açık tut ("" = açık-ama-tanımsız)
+      setAyar({ pin: "" });
+    }
+  }
+  const acik = pinAktif || ay.pin === "";
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Güvenlik</div>
+      <Toggle
+        label="PIN kilidi"
+        sub="Uygulama açılışında 4 haneli PIN sor"
+        checked={acik}
+        onChange={togglePin}
+      />
+      {acik && (
+        <div style={{ marginTop: 12, paddingTop: 14, borderTop: `1px solid ${V.line}` }}>
+          <label style={etiket}>{ay.pin && ay.pin.length === 4 ? "PIN aktif — değiştir" : "Yeni PIN (4 hane)"}</label>
+          <input
+            value={taslak}
+            onChange={(e) => pinGir(e.target.value)}
+            inputMode="numeric"
+            placeholder="••••"
+            maxLength={4}
+            style={{
+              width: 120, padding: "10px 13px", letterSpacing: "6px", textAlign: "center",
+              background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10,
+              color: V.ink, fontSize: 16, fontFamily: MONO, outline: "none",
+            }}
+          />
+          {ay.pin && ay.pin.length === 4 && (
+            <div style={{ fontSize: 11.5, color: V.pos, marginTop: 8 }}>✓ PIN aktif. Her girişte sorulur.</div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ---------- Yapay Zekâ ----------
+function AiKart({ findata, setFindata, bildir }) {
   const ay = findata.ayarlar || {};
   const saglayici = ay.aiSaglayici || "anthropic";
   const yerel = saglayici !== "anthropic";
@@ -139,79 +247,104 @@ function ApiKeyKart({ findata, setFindata, bildir }) {
     try {
       await testAIBaglanti();
       setTest({ durum: "ok", mesaj: "✓ Bağlantı başarılı" });
+      bildir("Bağlantı başarılı");
     } catch (e) {
-      setTest({ durum: "err", mesaj: "✗ " + (e?.message || "Bağlantı başarısız") });
+      const m = "✗ " + (e?.message || "Bağlantı başarısız");
+      setTest({ durum: "err", mesaj: m });
+      bildir(e?.message || "Bağlantı başarısız", "err");
     }
   }
 
-  return (
-    <Card accent={C.cyan} style={{ gridColumn: "1 / -1" }}>
-      <h3 style={sectionTitle}>🤖 Yapay Zekâ</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.85rem" }}>
-        Asistan, doğal dil giriş, içgörü, fiş okuma vb. bunu kullanır. Bulut (Anthropic, anahtar gerekir) ya da
-        bilgisayarında çalışan ücretsiz yerel model (Ollama / LM Studio) seçebilirsin.
-        Durum: {aiHazir() ? <b style={{ color: C.greenL }}>aktif</b> : <b style={{ color: C.amber }}>tanımlı değil</b>}
-      </p>
+  // Seg sağlayıcı: anthropic + yerel seçenekler (anthropic / ollama / lmstudio / ozel)
+  const segItems = SAGLAYICI_SECENEK.map((s) => ({
+    id: s.id,
+    label: s.id === "anthropic" ? "Bulut" : s.id === "ollama" ? "Ollama" : s.id === "lmstudio" ? "LM Studio" : "Özel",
+  }));
 
-      <div style={{ maxWidth: 380 }}>
-        <Field label="Sağlayıcı" value={saglayici} onChange={saglayiciSec} options={SAGLAYICI_SECENEK} />
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={{ ...baslik, marginBottom: 6 }}>Yapay Zekâ</div>
+      <p style={altYazi}>
+        Asistan, fiş okuma ve doğal dil girişi için. Anahtar yalnızca tarayıcında saklanır.
+      </p>
+      <div style={etiket}>Sağlayıcı</div>
+      <div style={{ marginBottom: 16 }}>
+        <Seg full items={segItems} value={saglayici} onChange={saglayiciSec} />
       </div>
 
-      {!yerel && (
-        <>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <Field label="API Anahtarı" type="password" value={anahtar} onChange={setAnahtar} placeholder="sk-ant-..." />
-            </div>
-            <Btn onClick={kaydet} style={{ marginBottom: "0.9rem" }}>Kaydet</Btn>
-          </div>
-          <div style={{ maxWidth: 320 }}>
-            <Field label="Model" value={ay.model || "claude-opus-4-8"} onChange={(m) => setAyar({ model: m })} options={MODEL_SECENEK} />
-          </div>
-          <p style={{ color: C.faint, fontSize: "0.72rem", margin: "0 0 0.5rem" }}>
-            Anahtarını <b style={{ color: C.dim }}>console.anthropic.com</b>'dan alırsın; yalnızca bu tarayıcıda saklanır.
-          </p>
-        </>
-      )}
-
-      {yerel && (
+      {yerel ? (
         <>
           <div className="fa-grid-2">
-            <Field label="Yerel Adres (…/v1)" value={adres} onChange={setAdres} placeholder={varsayilanAdres(saglayici) || "http://localhost:11434/v1"} />
-            <Field label="Model adı" value={yModel} onChange={setYModel} placeholder={saglayici === "lmstudio" ? "yüklü model adı" : "llama3.1"} />
+            <Field
+              label="Yerel sunucu adresi (…/v1)"
+              value={adres}
+              onChange={setAdres}
+              placeholder={varsayilanAdres(saglayici) || "http://localhost:11434/v1"}
+              mono
+            />
+            <Field
+              label="Model adı"
+              value={yModel}
+              onChange={setYModel}
+              placeholder={saglayici === "lmstudio" ? "yüklü model adı" : "llama3.1"}
+              mono
+            />
           </div>
-          <Btn onClick={kaydet} style={{ marginTop: "0.2rem" }}>Kaydet</Btn>
-          <div style={{ color: C.faint, fontSize: "0.72rem", margin: "0.75rem 0 0", lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 12px" }}>
             {saglayici === "ollama" && (
-              <span>
-                <b style={{ color: C.dim }}>Ollama:</b> modeli indir (<code>ollama pull llama3.1</code>), CORS için şöyle başlat:
-                <br /><code>OLLAMA_ORIGINS=* ollama serve</code> &nbsp;·&nbsp; adres <code>http://localhost:11434/v1</code>
-              </span>
+              <span>Ollama: modeli indir, CORS için <span style={{ fontFamily: MONO }}>OLLAMA_ORIGINS=* ollama serve</span> ile başlat.</span>
             )}
             {saglayici === "lmstudio" && (
-              <span>
-                <b style={{ color: C.dim }}>LM Studio:</b> "Local Server" sekmesinde modeli yükle, sunucuyu başlat ve <b>CORS'u aç</b>.
-                Adres <code>http://localhost:1234/v1</code>, model = yüklü model adı.
-              </span>
+              <span>LM Studio: "Local Server" sekmesinde modeli yükle, sunucuyu başlat ve CORS'u aç.</span>
             )}
-            {saglayici === "ozel" && <span>OpenAI-uyumlu herhangi bir <code>/v1</code> adresi (CORS açık olmalı).</span>}
-            <br />Fiş (görsel) için görme yeteneği olan model gerekir (örn. <code>llama3.2-vision</code>). <b>PDF</b> ve <b>web arama (fiyat/kur)</b> yerelde çalışmaz.
+            {saglayici === "ozel" && <span>OpenAI-uyumlu herhangi bir /v1 adresi (CORS açık olmalı).</span>}
+            <br />PDF ve web arama (fiyat/kur) yerelde çalışmaz.
+          </div>
+        </>
+      ) : (
+        <>
+          <Field
+            label="API Anahtarı"
+            type="password"
+            value={anahtar}
+            onChange={setAnahtar}
+            placeholder="sk-ant-..."
+            mono
+          />
+          <Field
+            label="Model"
+            value={ay.model || "claude-opus-4-8"}
+            onChange={(m) => setAyar({ model: m })}
+            options={MODEL_SECENEK}
+          />
+          <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "0 0 12px" }}>
+            Anahtarını console.anthropic.com'dan alırsın; yalnızca bu tarayıcıda saklanır.
           </div>
         </>
       )}
 
-      <div style={{ marginTop: "0.9rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-        <Btn variant="ghost" onClick={baglantiTest}>Bağlantıyı Test Et</Btn>
-        {test && <span style={{ color: test.durum === "ok" ? C.greenL : test.durum === "err" ? C.redL : C.dim, fontSize: "0.8rem" }}>{test.mesaj}</span>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <Btn onClick={kaydet}>Kaydet</Btn>
+        <Btn variant="soft" onClick={baglantiTest}>Bağlantıyı Test Et</Btn>
+        {test && (
+          <span style={{ fontSize: 12.5, color: test.durum === "ok" ? V.pos : test.durum === "err" ? V.neg : V.ink3 }}>
+            {test.mesaj}
+          </span>
+        )}
       </div>
     </Card>
   );
 }
 
-function BildirimKart({ findata, setFindata, bildir }) {
-  const acik = !!findata.ayarlar?.bildirimler;
-  const izin = typeof Notification !== "undefined" ? Notification.permission : "yok";
-  async function ac() {
+// ---------- Bildirimler ----------
+function BildirimKart({ ay, setAyar, bildir }) {
+  const acik = !!ay.bildirimler;
+  async function degis(on) {
+    if (!on) {
+      setAyar({ bildirimler: false });
+      bildir("Bildirimler kapandı");
+      return;
+    }
     if (typeof Notification === "undefined") {
       bildir("Tarayıcı bildirimi desteklemiyor", "err");
       return;
@@ -219,30 +352,37 @@ function BildirimKart({ findata, setFindata, bildir }) {
     let p = Notification.permission;
     if (p !== "granted") p = await Notification.requestPermission();
     if (p === "granted") {
-      setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), bildirimler: true } }));
+      setAyar({ bildirimler: true });
       bildir("Bildirimler açıldı");
     } else {
       bildir("Bildirim izni verilmedi", "err");
     }
   }
-  function kapat() {
-    setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), bildirimler: false } }));
-    bildir("Bildirimler kapandı");
-  }
   return (
-    <Card accent={C.amber}>
-      <h3 style={sectionTitle}>🔔 Bildirimler</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Yaklaşan abonelik/ödemeler için uygulama açıkken günde bir hatırlatma.</p>
-      {acik && izin === "granted" ? (
-        <Btn variant="ghost" onClick={kapat} style={{ width: "100%" }}>Bildirimleri Kapat</Btn>
-      ) : (
-        <Btn onClick={ac} style={{ width: "100%" }}>Bildirimlere İzin Ver</Btn>
-      )}
-      {izin === "denied" && <p style={{ color: C.redL, fontSize: "0.72rem", margin: "0.5rem 0 0" }}>Tarayıcı izni reddedilmiş; tarayıcı ayarlarından açman gerekir.</p>}
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Bildirimler</div>
+      <Toggle label="Yaklaşan ödemeler" sub="3 gün önce uyar" checked={acik} onChange={degis} />
     </Card>
   );
 }
 
+// ---------- Para Birimi ----------
+function ParaBirimiKart({ ay, setAyar }) {
+  const pb = ay.paraBirimi || "TRY";
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Para Birimi</div>
+      <Seg
+        full
+        items={[{ id: "TRY", label: "TRY" }, { id: "USD", label: "USD" }, { id: "EUR", label: "EUR" }]}
+        value={pb}
+        onChange={(v) => setAyar({ paraBirimi: v })}
+      />
+    </Card>
+  );
+}
+
+// ---------- Kategoriler ----------
 function KategoriKart({ findata, setFindata, bildir }) {
   const [yeniGider, setYeniGider] = useState("");
   const [yeniGelir, setYeniGelir] = useState("");
@@ -267,35 +407,61 @@ function KategoriKart({ findata, setFindata, bildir }) {
     const liste = tur === "gider" ? gider : gelir;
     setKat(tur, liste.filter((x) => x !== k));
   }
-  const blok = (tur, liste, yeni, setYeni) => (
-    <div>
-      <p style={{ color: C.dim, fontSize: "0.78rem", fontWeight: 600, margin: "0 0 0.5rem" }}>{tur === "gider" ? "Gider" : "Gelir"} kategorileri</p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.6rem" }}>
-        {liste.map((k) => (
-          <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", background: "rgba(255,255,255,0.04)", border: `1px solid ${C.line2}`, borderRadius: "0.5rem", padding: "0.25rem 0.5rem", fontSize: "0.78rem", color: C.dim }}>
-            {k}
-            <button onClick={() => sil(tur, k)} title="Sil" style={{ background: "none", border: "none", color: C.redL, cursor: "pointer", fontSize: "0.8rem", lineHeight: 1, padding: 0 }}>✕</button>
-          </span>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: "0.4rem" }}>
-        <input value={yeni} onChange={(e) => setYeni(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ekle(tur, yeni, setYeni)} placeholder="Yeni kategori" style={{ ...inputStyle, flex: 1 }} />
-        <Btn variant="ghost" onClick={() => ekle(tur, yeni, setYeni)}>+ Ekle</Btn>
-      </div>
+
+  const chip = (k, tur) => (
+    <span
+      key={k}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "5px 7px 5px 11px", background: V.track, borderRadius: 8,
+        fontSize: 12.5, color: V.ink2,
+      }}
+    >
+      {k}
+      <button
+        onClick={() => sil(tur, k)}
+        title="Sil"
+        style={{ border: "none", background: "none", cursor: "pointer", color: V.ink3, fontSize: 13, lineHeight: 1, padding: 0 }}
+      >
+        ✕
+      </button>
+    </span>
+  );
+
+  const ekleSatir = (tur, yeni, setYeni) => (
+    <div style={{ display: "flex", gap: 8 }}>
+      <input
+        value={yeni}
+        onChange={(e) => setYeni(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && ekle(tur, yeni, setYeni)}
+        placeholder={tur === "gider" ? "Yeni gider kategorisi" : "Yeni gelir kategorisi"}
+        style={{
+          flex: 1, padding: "9px 12px", background: V.card2, border: `1px solid ${V.border}`,
+          borderRadius: 9, color: V.ink, fontSize: 13, fontFamily: F, outline: "none", boxSizing: "border-box",
+        }}
+      />
+      <Btn onClick={() => ekle(tur, yeni, setYeni)}>Ekle</Btn>
     </div>
   );
+
   return (
-    <Card accent={C.green} style={{ gridColumn: "1 / -1" }}>
-      <h3 style={sectionTitle}>🏷️ Kategoriler</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 1rem" }}>Kendi gelir/gider kategorilerini ekle veya kaldır; işlem, bütçe, zarf ve kural ekranları otomatik uyum sağlar. (Silmek eski kayıtları değiştirmez.)</p>
-      <div className="fa-grid-2">
-        {blok("gider", gider, yeniGider, setYeniGider)}
-        {blok("gelir", gelir, yeniGelir, setYeniGelir)}
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Kategoriler</div>
+      <div style={etiket}>Gider kategorileri</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 11 }}>
+        {gider.map((k) => chip(k, "gider"))}
       </div>
+      <div style={{ marginBottom: 18 }}>{ekleSatir("gider", yeniGider, setYeniGider)}</div>
+      <div style={etiket}>Gelir kategorileri</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 11 }}>
+        {gelir.map((k) => chip(k, "gelir"))}
+      </div>
+      {ekleSatir("gelir", yeniGelir, setYeniGelir)}
     </Card>
   );
 }
 
+// ---------- Otomatik Kurallar ----------
 function KurallarKart({ findata, setFindata, bildir }) {
   const [form, setForm] = useState({ tip: "kategori", kelime: "", tutarUstu: "", kategori: "Market", mesaj: "" });
   const kurallar = findata.kurallar || [];
@@ -304,7 +470,13 @@ function KurallarKart({ findata, setFindata, bildir }) {
       bildir("Kelime veya tutar gir", "err");
       return;
     }
-    setFindata((d) => ({ ...d, kurallar: [...(d.kurallar || []), { id: uid(), tip: form.tip, kelime: form.kelime, tutarUstu: parseFloat(form.tutarUstu) || 0, kategori: form.kategori, mesaj: form.mesaj }] }));
+    setFindata((d) => ({
+      ...d,
+      kurallar: [
+        ...(d.kurallar || []),
+        { id: uid(), tip: form.tip, kelime: form.kelime, tutarUstu: parseFloat(form.tutarUstu) || 0, kategori: form.kategori, mesaj: form.mesaj },
+      ],
+    }));
     setForm({ tip: "kategori", kelime: "", tutarUstu: "", kategori: "Market", mesaj: "" });
     bildir("Kural eklendi");
   }
@@ -312,10 +484,10 @@ function KurallarKart({ findata, setFindata, bildir }) {
     setFindata((d) => ({ ...d, kurallar: d.kurallar.filter((k) => k.id !== id) }));
   }
   return (
-    <Card accent={C.amber} style={{ gridColumn: "1 / -1" }}>
-      <h3 style={sectionTitle}>⚙️ Otomatik Kurallar</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.75rem" }}>Başlıkta kelime geçince kategori ata, ya da tutar aşımında uyarı ver. Yeni işlemlere otomatik uygulanır.</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: "0.5rem", marginBottom: "0.5rem" }}>
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Otomatik Kurallar</div>
+      <p style={altYazi}>Başlıkta kelime geçince kategori ata, ya da tutar aşımında uyarı ver. Yeni işlemlere otomatik uygulanır.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10 }}>
         <Field label="Tip" value={form.tip} onChange={(v) => setForm((f) => ({ ...f, tip: v }))} options={[{ id: "kategori", label: "Kategori Ata" }, { id: "uyari", label: "Uyarı Ver" }]} />
         <Field label="Kelime" value={form.kelime} onChange={(v) => setForm((f) => ({ ...f, kelime: v }))} placeholder="Migros" />
         <Field label="Tutar üstü (₺)" type="number" value={form.tutarUstu} onChange={(v) => setForm((f) => ({ ...f, tutarUstu: v }))} />
@@ -326,14 +498,28 @@ function KurallarKart({ findata, setFindata, bildir }) {
         )}
       </div>
       <Btn onClick={ekle}>+ Kural Ekle</Btn>
-      <div style={{ marginTop: "1rem" }}>
-        {!kurallar.length && <p style={{ color: C.faint, fontSize: "0.8rem" }}>Henüz kural yok.</p>}
+      <div style={{ marginTop: 14 }}>
+        {!kurallar.length && <p style={{ color: V.ink3, fontSize: 12.5, margin: 0 }}>Henüz kural yok.</p>}
         {kurallar.map((k) => (
-          <div key={k.id} style={rowStyle}>
-            <p style={{ margin: 0, fontSize: "0.82rem", color: C.dim }}>
-              {k.tip === "kategori" ? `"${k.kelime || k.tutarUstu + "₺+"}" → ${k.kategori}` : `"${k.kelime || k.tutarUstu + "₺+"}" → uyarı`}
-            </p>
-            <DelBtn onClick={() => sil(k.id)} />
+          <div
+            key={k.id}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "9px 0", borderBottom: `1px solid ${V.line}`,
+            }}
+          >
+            <span style={{ fontSize: 13, color: V.ink2 }}>
+              {k.tip === "kategori"
+                ? `"${k.kelime || k.tutarUstu + "₺+"}" → ${k.kategori}`
+                : `"${k.kelime || k.tutarUstu + "₺+"}" → uyarı`}
+            </span>
+            <button
+              onClick={() => sil(k.id)}
+              title="Sil"
+              style={{ border: "none", background: "none", cursor: "pointer", color: V.ink3, fontSize: 14, padding: 0 }}
+            >
+              ✕
+            </button>
           </div>
         ))}
       </div>
@@ -341,25 +527,99 @@ function KurallarKart({ findata, setFindata, bildir }) {
   );
 }
 
-function TemaKart({ findata, setFindata }) {
-  const tema = findata.ayarlar?.tema || "koyu";
-  const accent = findata.ayarlar?.accent || "#10B981";
-  const setAyar = (k, v) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), [k]: v } }));
+// ---------- Veri & Yedek ----------
+function VeriKart({ findata, setFindata, user, bildir }) {
+  const geriRef = useRef();
+
+  function indir(icerik, ad, mime) {
+    try {
+      const blob = new Blob([icerik], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = ad;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      bildir("İndirildi: " + ad);
+    } catch {
+      bildir("İndirme engellenmiş olabilir", "err");
+    }
+  }
+  function yedekAl() {
+    indir(JSON.stringify(findata, null, 2), `finansapp-yedek-${user?.username || "kullanici"}-${bugun()}.json`, "application/json");
+  }
+  function csvAktar() {
+    const s = [["Tip", "Başlık", "Kategori", "Tarih", "Tutar", "Kaynak"]];
+    (findata.gelirler || []).forEach((g) => s.push(["Gelir", g.baslik, g.kategori, g.tarih, g.miktar, g.kaynak || "manuel"]));
+    (findata.giderler || []).forEach((g) => s.push(["Gider", g.baslik, g.kategori, g.tarih, g.miktar, g.kaynak || "manuel"]));
+    (findata.abonelikler || []).forEach((a) => s.push(["Abonelik", a.baslik, a.kategori, a.tarih, a.miktar, "manuel"]));
+    const csv = "﻿" + s.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";")).join("\n");
+    indir(csv, `finansapp-islemler-${bugun()}.csv`, "text/csv;charset=utf-8");
+  }
+  function pdfRapor() {
+    const ay = buAy();
+    const ayGider = {};
+    (findata.giderler || []).filter((g) => (g.tarih || "").startsWith(ay)).forEach((g) => { ayGider[g.kategori] = (ayGider[g.kategori] || 0) + g.miktar; });
+    const katSatir = Object.entries(ayGider).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${k}</td><td style="text-align:right">${TL(v)}</td></tr>`).join("");
+    const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Finans Raporu</title><style>body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;padding:0 20px}h1{color:#1D5240}.kart{display:inline-block;border:1px solid #ddd;border-radius:10px;padding:14px 18px;margin:6px 8px 6px 0}.kart b{display:block;font-size:1.3rem}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:8px;border-bottom:1px solid #eee;font-size:0.9rem}@media print{.no-print{display:none}}</style></head><body><h1>₺ FinansApp — Aylık Rapor</h1><p>${user?.ad || user?.username || ""} · ${bugun()}</p><h3>Bu Ay Kategori Giderleri (${ay})</h3><table><tr><th style="text-align:left">Kategori</th><th style="text-align:right">Tutar</th></tr>${katSatir || '<tr><td colspan=2>Veri yok</td></tr>'}</table><button class="no-print" onclick="window.print()" style="margin-top:24px;padding:10px 18px;background:#1D5240;color:#fff;border:none;border-radius:8px;cursor:pointer">PDF olarak yazdır / kaydet</button></body></html>`;
+    indir(html, `finansapp-rapor-${bugun()}.html`, "text/html");
+    bildir("Rapor indirildi — açıp 'PDF olarak yazdır' ile kaydedebilirsin");
+  }
+  function geriYukle(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const v = JSON.parse(r.result);
+        setFindata({ ...bosVeri(), ...v });
+        bildir("Yedek geri yüklendi");
+      } catch {
+        bildir("Geçersiz yedek", "err");
+      }
+    };
+    r.readAsText(file);
+    if (geriRef.current) geriRef.current.value = "";
+  }
+  function temizle() {
+    if (typeof window !== "undefined" && !window.confirm("Tüm veriler silinecek. Emin misin?")) return;
+    setFindata({ ...bosVeri() });
+    bildir("Tüm veriler temizlendi");
+  }
+
+  const dataBtn = {
+    padding: "11px", borderRadius: 10, border: `1px solid ${V.border2}`,
+    background: V.card2, color: V.ink, fontSize: 13, fontWeight: 500,
+    cursor: "pointer", fontFamily: F, textAlign: "center", boxSizing: "border-box",
+  };
+
   return (
-    <Card accent={accent} style={{ gridColumn: "1 / -1" }}>
-      <h3 style={sectionTitle}>🎨 Tema & Renk</h3>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.6rem" }}>Arka plan tonu</p>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
-        {[{ id: "koyu", ad: "Koyu" }, { id: "gece", ad: "Gece Mavisi" }, { id: "antrasit", ad: "Antrasit" }].map((t) => (
-          <Btn key={t.id} variant={tema === t.id ? "primary" : "ghost"} onClick={() => setAyar("tema", t.id)}>{t.ad}</Btn>
-        ))}
+    <Card style={{ padding: 20 }}>
+      <div style={baslik}>Veri & Yedek</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+        <button onClick={yedekAl} style={dataBtn} className="fa-btn">↓ JSON Yedek Al</button>
+        <label style={{ ...dataBtn }} className="fa-btn">
+          ↑ Yedek Yükle
+          <input ref={geriRef} type="file" accept="application/json,.json" onChange={geriYukle} style={{ display: "none" }} />
+        </label>
       </div>
-      <p style={{ color: C.dimmer, fontSize: "0.8rem", margin: "0 0 0.6rem" }}>Vurgu rengi</p>
-      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-        {ACCENT_SECENEK.map((a) => (
-          <button key={a.renk} onClick={() => setAyar("accent", a.renk)} title={a.ad} style={{ width: 34, height: 34, borderRadius: "50%", background: a.renk, border: accent === a.renk ? "3px solid #fff" : `2px solid ${C.line2}`, cursor: "pointer" }} />
-        ))}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+        <button onClick={csvAktar} style={dataBtn} className="fa-btn">CSV Aktar</button>
+        <button onClick={pdfRapor} style={dataBtn} className="fa-btn">PDF Rapor</button>
       </div>
+      <button
+        onClick={temizle}
+        className="fa-btn"
+        style={{
+          width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${V.neg}`,
+          background: "transparent", color: V.neg, fontSize: 13, fontWeight: 500,
+          cursor: "pointer", fontFamily: F,
+        }}
+      >
+        Tüm Veriyi Temizle
+      </button>
     </Card>
   );
 }

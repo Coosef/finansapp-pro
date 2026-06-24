@@ -7,3 +7,5 @@ dev-dist
 .env
 .env.local
 .vite
+.design/
+docs-design-reference.html
