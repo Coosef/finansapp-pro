@@ -186,7 +186,7 @@ async function localCall(messages, modelOverride) {
   const model = modelOverride || _localModel;
   if (!model) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
   const url = _baseURL.replace(/\/+$/, "") + "/chat/completions";
-  const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 2048 };
+  const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 8192 };
   let res;
   try {
     res = await fetchYeniden(url, {

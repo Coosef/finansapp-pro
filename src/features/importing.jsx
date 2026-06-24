@@ -68,8 +68,9 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   }
 
   async function ekstreYukle(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const file = files[0];
     setIsleniyor(true);
     setSonuc(null);
     try {
@@ -95,7 +96,7 @@ Kategori kuralları:
 - "odeme" için kategori = "Kart Ödemesi".
 - Açıklamadan tahmin et: market/zincir market→Market, restoran/kafe/yemek→Restoran, akaryakıt/petrol/ulaşım/otoyol/taksi→Ulaşım, fatura/telekom/elektrik/su/doğalgaz→Faturalar, e-ticaret/online mağaza→Teknoloji, yazılım/uygulama/abonelik/yapay zekâ→Teknoloji, eczane/hastane/sağlık→Sağlık, giyim→Giyim, sinema/oyun/eğlence→Eğlence. Emin değilsen "Diğer".
 
-miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
+Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfalardaki işlemleri tek bir listede birleştir, tekrar etme. miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 200).`;
       let content;
       if (ext === "csv" || ext === "txt" || (file.type || "").includes("text") || (file.type || "").includes("csv")) {
         const m = await file.text();
@@ -105,8 +106,14 @@ miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
         const b64 = await fileToBase64(file);
         content = [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }, { type: "text", text: talimat }];
       } else {
-        const b64 = await fileToBase64(file);
-        content = [{ type: "image", source: { type: "base64", media_type: file.type || "image/jpeg", data: b64 } }, { type: "text", text: talimat }];
+        // Görsel(ler): çok sayfalı ekstre için birden çok resim tek istekte gönderilir
+        const resimler = files.filter((f) => !/\.(pdf|csv|txt)$/i.test(f.name));
+        const bloklar = [];
+        for (const f of resimler) {
+          const b64 = await fileToBase64(f);
+          bloklar.push({ type: "image", source: { type: "base64", media_type: f.type || "image/jpeg", data: b64 } });
+        }
+        content = [...bloklar, { type: "text", text: talimat }];
       }
       const txt = await claudeCall([{ role: "user", content }]);
       const parsed = parseJSON(txt);
@@ -204,8 +211,8 @@ miktar her zaman pozitif. TÜM işlemleri ekle (en fazla 120).`;
               <Icon d="archive" size={24} stroke={V.accent} />
             </div>
             <p style={{ color: V.ink2, fontSize: "0.9rem", margin: "0 0 0.3rem" }}>Banka ekstresini yükle</p>
-            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>PDF · CSV · Görsel</p>
-            <input ref={ekstreRef} type="file" accept=".pdf,.csv,.txt,image/*" onChange={ekstreYukle} style={{ display: "none" }} />
+            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>PDF · CSV · Görsel · çok sayfalı ekstre için birden çok resim seçebilirsin</p>
+            <input ref={ekstreRef} type="file" accept=".pdf,.csv,.txt,image/*" multiple onChange={ekstreYukle} style={{ display: "none" }} />
             <Btn variant="gold" onClick={() => ekstreRef.current?.click()} disabled={isleniyor}>{isleniyor ? "İşleniyor…" : "Ekstre Yükle"}</Btn>
           </div>
         )}
