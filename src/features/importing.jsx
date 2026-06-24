@@ -139,8 +139,10 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           for (let i = no + 1; i <= toplam; i++) {
             let tarih = temel.tarih;
             for (let k = 0; k < i - no; k++) tarih = sonrakiTarih(tarih, "aylık");
-            kayitlar.push({ baslik: `${temel.baslik} (taksit ${i}/${toplam})`, miktar, kategori: temel.kategori, tarih, kaynak: "taksit", tip: "gider", _tekrar: false, _taksit: true, _sec: true });
-            taksitSayisi++;
+            const tkayit = { baslik: `${temel.baslik} (taksit ${i}/${toplam})`, miktar, kategori: temel.kategori, tarih, kaynak: "taksit", tip: "gider" };
+            const tt = tekrarMi(tkayit); // re-import'ta zaten eklenmiş taksiti yakala
+            kayitlar.push({ ...tkayit, _tekrar: tt, _taksit: true, _sec: !tt });
+            if (!tt) taksitSayisi++;
           }
         }
       });
