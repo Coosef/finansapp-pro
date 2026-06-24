@@ -40,6 +40,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   const [sonuc, setSonuc] = useState(null);
   const fisRef = useRef(),
     ekstreRef = useRef();
+  const eklemeRef = useRef(false); // çift "Seçilenleri Ekle" tıklamasını engelle
 
   function tekrarMi(yeni) {
     const aday = yeni.tip === "gelir" ? findata.gelirler : findata.giderler;
@@ -97,6 +98,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     const file = files[0];
     setIsleniyor(true);
     setSonuc(null);
+    eklemeRef.current = false; // yeni içe aktarma → ekleme tekrar mümkün
     try {
       const ext = (file.name.split(".").pop() || "").toLowerCase();
       const giderKat = giderKategorileri(findata);
@@ -273,32 +275,46 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
   }
 
   function onayla() {
+    if (!sonuc || eklemeRef.current) return; // çift tıklama / yeniden çalışma koruması
     const secili = sonuc.kayitlar.filter((k) => k._sec);
+    if (!secili.length) { bildir("Seçili kayıt yok. Eklemek istediklerini işaretle (sarı 'olası tekrar'lar varsayılan kapalı).", "err"); return; }
+    eklemeRef.current = true;
     const oz = sonuc.ozet || {};
-    kategorileriEkle(secili); // seçili kayıtların yeni kategorilerini listeye ekle
     const hc = hesapCoz();
-    // 1) Hesabı bağla/oluştur, kart bakiyesini dönem borcuna ayarla
-    let hesapId = hc.hedef?.id || null;
-    if (setFindata && (hc.son4 || hc.banka)) {
+    // Hepsini TEK atomik güncellemede yaz: işlemler + hesap + yeni kategoriler
+    setFindata((d) => {
+      const gelirler = [...(d.gelirler || [])];
+      const giderler = [...(d.giderler || [])];
+      const giderKat = [...(d.kategoriler?.gider || [])];
+      const gelirKat = [...(d.kategoriler?.gelir || [])];
+      const gidSet = new Set(giderKat), gelSet = new Set(gelirKat);
+      const hesaplar = [...(d.hesaplar || [])];
+      // Hesabı bağla/oluştur, kart bakiyesini dönem borcuna ayarla
+      let hesapId = hc.hedef?.id || null;
       const borc = parseFloat(oz.donemBorcu);
-      if (!hc.hedef) {
-        hesapId = uid();
-        const yeni = { id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: hc.tip === "kart" && !isNaN(borc) ? borc : 0, son4: hc.son4 || undefined, banka: hc.banka || undefined };
-        setFindata((d) => ({ ...d, hesaplar: [...(d.hesaplar || []), yeni] }));
-      } else if (hc.tip === "kart" && !isNaN(borc)) {
-        setFindata((d) => ({ ...d, hesaplar: (d.hesaplar || []).map((h) => (h.id === hesapId ? { ...h, bakiye: borc, son4: h.son4 || hc.son4 || undefined } : h)) }));
+      if (hc.son4 || hc.banka) {
+        const idx = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
+        if (idx < 0) {
+          hesapId = uid();
+          hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: hc.tip === "kart" && !isNaN(borc) ? borc : 0, son4: hc.son4 || undefined, banka: hc.banka || undefined });
+        } else if (hc.tip === "kart" && !isNaN(borc)) {
+          hesaplar[idx] = { ...hesaplar[idx], bakiye: borc, son4: hesaplar[idx].son4 || hc.son4 || undefined };
+        }
       }
-    }
-    // 2) İşlemleri hesaba yazarak ekle
-    secili.forEach((k) => {
-      const { _tekrar, _sec, _taksit, tip: t, ...kayit } = k;
-      ekle(t, { ...kayit, hesapId: (t === "gelir" || t === "gider") ? hesapId || "" : "" });
-      kategoriOgren(kayit.baslik, kayit.kategori);
+      // İşlemleri ekle + kategorilerini listeye al
+      secili.forEach((k, i) => {
+        const { _tekrar, _sec, _taksit, tip: t, ...kayit } = k;
+        const rec = { id: uid() + i, ...kayit, hesapId: t === "gelir" || t === "gider" ? hesapId || "" : "" };
+        if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
+        else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
+      });
+      return { ...d, gelirler, giderler, hesaplar, kategoriler: { gider: giderKat, gelir: gelirKat } };
     });
+    secili.forEach((k) => kategoriOgren(k.baslik, k.kategori)); // kategori hafızası
     const ay = buAy();
     const gecmis = secili.filter((k) => !(k.tarih || "").startsWith(ay)).length;
-    const ekHesap = hesapId ? ` → ${hc.ad}${hc.yeni ? " (yeni hesap)" : ""}` : "";
-    bildir(`${secili.length} kayıt eklendi${ekHesap}` + (gecmis ? ` · görmek için dönemi "Tümü" yap` : ""));
+    const ekHesap = hc.son4 || hc.banka ? ` → ${hc.ad}${hc.yeni ? " (yeni hesap)" : ""}` : "";
+    bildir(`${secili.length} kayıt eklendi${ekHesap}` + (gecmis ? ` · görmek için üst sağdan dönemi "Tümü" yap` : ""));
     setSonuc(null);
   }
 
