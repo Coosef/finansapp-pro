@@ -262,6 +262,20 @@ export function Hesaplar({ findata, setFindata, bildir }) {
         </Card>
       )}
 
+      {/* Akış yok ama hesap var → yol gösteren ipucu */}
+      {akis.ozet.length === 0 && akis.eslesmeyen.length === 0 && hesaplar.length >= 2 && (
+        <Card style={{ marginTop: "14px", background: V.card2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "0.5rem" }}>
+            <Icon d="repeat" size={16} stroke={V.ink3} />
+            <h3 style={{ margin: 0, fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Hesaplar Arası Para Akışı</h3>
+          </div>
+          <p style={{ margin: 0, fontSize: "12.5px", color: V.ink3, lineHeight: 1.6 }}>
+            Burada hesapların arası transferler eşleşip <b>akış diyagramı</b> olarak görünür. Doldurmak için
+            <b style={{ color: V.ink2 }}> Veri &amp; Yedek → Ekstre Yükle</b> ile banka ekstrelerini (DenizBank, Enpara hesapları) <b>bir kez yeniden yükle</b> — transfer bilgisi eski içe aktarımlarda saklanmamıştı. Çift sayım olmaz.
+          </p>
+        </Card>
+      )}
+
       {/* Son transferler */}
       {(findata.transferler || []).length > 0 && (
         <Card style={{ marginTop: "14px" }}>

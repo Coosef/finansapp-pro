@@ -49,11 +49,17 @@ const SERVIS = [
   [/amazon ?prime|amazonprime/, "Amazon Prime"], [/spotify/, "Spotify"], [/netflix/, "Netflix"],
   [/youtube ?premium|youtubepremium/, "YouTube Premium"], [/disney ?\+?|disneyplus/, "Disney+"],
   [/blu ?tv/, "BluTV"], [/exxen/, "Exxen"], [/\bgain\b/, "Gain"], [/mubi/, "MUBI"], [/\btabii\b/, "tabii"],
-  [/bein ?connect|beinconnect/, "beIN Connect"], [/s ?sport/, "S Sport+"],
-  [/icloud|apple ?music|itunes|apple\.com/, "Apple"], [/google ?one|google ?storage/, "Google One"],
-  [/chatgpt|openai/, "ChatGPT"], [/anthropic|claude\.ai/, "Claude"], [/storytel|audible/, "Storytel"],
-  [/game ?pass|xbox/, "Xbox Game Pass"], [/playstation ?plus|ps ?plus/, "PS Plus"], [/linkedin/, "LinkedIn"],
-  [/\bcanva\b/, "Canva"], [/\badobe\b/, "Adobe"], [/dropbox/, "Dropbox"], [/duolingo/, "Duolingo"], [/\bmedium\b/, "Medium"],
+  [/bein ?connect|beinconnect/, "beIN Connect"], [/s ?sport/, "S Sport+"], [/\btod\b|todtv/, "TOD"],
+  [/hbo ?max|hbomax/, "HBO Max"], [/crunchyroll/, "Crunchyroll"], [/icloud|apple ?music|itunes|apple\.com/, "Apple"],
+  [/google ?one|google ?storage|youtube ?music/, "Google One"], [/microsoft ?365|office ?365|microsoft365/, "Microsoft 365"],
+  [/chatgpt|openai/, "ChatGPT"], [/anthropic|claude\.ai/, "Claude"], [/perplexity/, "Perplexity"], [/midjourney/, "Midjourney"],
+  [/storytel|audible/, "Storytel"], [/\bfizy\b/, "fizy"], [/\bmuud\b/, "Muud"], [/deezer/, "Deezer"], [/\btidal\b/, "Tidal"],
+  [/game ?pass|xbox/, "Xbox Game Pass"], [/playstation ?plus|ps ?plus|psn/, "PS Plus"], [/nintendo/, "Nintendo"],
+  [/linkedin/, "LinkedIn"], [/\bcanva\b/, "Canva"], [/\badobe\b/, "Adobe"], [/dropbox/, "Dropbox"], [/duolingo/, "Duolingo"],
+  [/\bmedium\b/, "Medium"], [/\bnotion\b/, "Notion"], [/\bfigma\b/, "Figma"], [/github/, "GitHub"], [/grammarly/, "Grammarly"],
+  [/discord ?nitro|nitro/, "Discord Nitro"], [/twitch/, "Twitch"], [/patreon/, "Patreon"], [/telegram ?premium/, "Telegram Premium"],
+  [/nordvpn|express ?vpn|surfshark|\bvpn\b/, "VPN"], [/skillshare|udemy|coursera|masterclass/, "Eğitim"],
+  [/tv\+|tivibu|vodafone ?tv|d-?smart ?go/, "TV Aboneliği"], [/headspace|calm\b/, "Meditasyon"], [/strava/, "Strava"],
 ];
 // Marka eşleştirmede hem Türkçe (I→ı) hem düz (I→i) normalize dene — yoksa
 // İngilizce markalar (SPOTIFY→spotıfy) kaçar.
