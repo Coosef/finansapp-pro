@@ -7,6 +7,7 @@ import { V, F, SERIF } from "../lib/constants.js";
 import { TL, bugun, buAy, uid, fileToBase64, parseJSON, sonrakiTarih } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { xlsxToGrid } from "../lib/xlsx.js";
+import { pdfToRows } from "../lib/pdf.js";
 import { ekstreParse } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
@@ -137,18 +138,29 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
         return; // finally temizliği yapar
       }
       if (ext === "xls") {
-        bildir("Eski .xls biçimi desteklenmiyor — bankadan .xlsx (Excel) ya da CSV olarak indir.", "err");
+        bildir("Eski .xls biçimi desteklenmiyor — aynı verinin PDF'ini ya da bankadan .xlsx (Excel) sürümünü yükle.", "err");
         return;
+      }
+      // PDF → önce YEREL metin okuması dene (AI'sız, transfer-bilen, anahtarsız).
+      // Metin tabanlı ekstrelerde işe yarar; taranmış/görsel PDF'lerde boş döner → AI'ya düşülür.
+      if (ext === "pdf" || file.type === "application/pdf") {
+        try {
+          setDurum("PDF metni okunuyor…");
+          const { rows } = await pdfToRows(file);
+          const parsed = ekstreParse(rows);
+          if (parsed.islemler.length) { setSonuc(ekstredenSonuc(parsed)); return; }
+        } catch { /* metin çıkarılamadı → AI görsel yoluna düş */ }
+        setDurum("");
       }
       const giderKat = giderKategorileri(findata);
       const gelirKat = gelirKategorileri(findata);
       const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. SADECE şu yapıda TEK bir JSON nesnesi döndür, başka hiçbir metin yazma:
 {
-  "ozet": {"ekstreTipi":"kart"|"hesap","banka":"kart/banka adı veya null","son4":"kart/hesap numarasının son 4 hanesi veya null","donemBorcu":sayı|null,"asgariOdeme":sayı|null,"sonOdemeTarihi":"YYYY-MM-DD"|null,"krediLimiti":sayı|null,"kullanilabilirLimit":sayı|null},
+  "ozet": {"ekstreTipi":"kart"|"hesap","banka":"kart/banka adı veya null","son4":"kart/hesap numarasının son 4 hanesi veya null","bakiye":sayı|null,"donemBorcu":sayı|null,"asgariOdeme":sayı|null,"sonOdemeTarihi":"YYYY-MM-DD"|null,"krediLimiti":sayı|null,"kullanilabilirLimit":sayı|null},
   "islemler": [{"tarih":"YYYY-MM-DD","aciklama":"kısa açıklama","miktar":pozitif sayı,"tip":"gelir|gider|odeme","kategori":"...","taksit":{"no":sayı,"toplam":sayı} veya null}]
 }
 
-Özet alanlarını ekstrenin ÜST kısmından al (kart/banka adı ör. "Axess"/"Bonus"/"Maximum", kart/hesap numarasının son 4 hanesi, dönem borcu/güncel borç, asgari/en az ödeme tutarı, son ödeme tarihi, kredi/kart limiti, kullanılabilir limit). Yoksa ilgili alanı null bırak. Sayılar gerçek sayı olsun (1.234,56 → 1234.56).
+Özet alanlarını ekstrenin ÜST kısmından al (kart/banka adı ör. "Axess"/"Bonus"/"Maximum", kart/hesap numarasının son 4 hanesi, HESAP ekstresinde güncel/dönem sonu bakiye → "bakiye", KART ekstresinde dönem borcu/güncel borç → "donemBorcu", asgari/en az ödeme tutarı, son ödeme tarihi, kredi/kart limiti, kullanılabilir limit). Yoksa ilgili alanı null bırak. Sayılar gerçek sayı olsun (1.234,56 → 1234.56).
 
 Tip kuralları:
 - Alışveriş, harcama, çekim, fatura, faiz, ücret/komisyon → "gider".

@@ -15,7 +15,7 @@ export const BANKA_KODU = {
   59: "Şekerbank", 62: "Garanti BBVA", 64: "İşbankası", 67: "Yapı Kredi", 92: "Citibank",
   99: "ING", 103: "Fibabanka", 108: "Turkish Bank", 111: "QNB Finansbank", 123: "HSBC",
   124: "Alternatif Bank", 125: "Burgan Bank", 134: "DenizBank", 135: "Anadolubank",
-  143: "Aktif Bank", 146: "Odeabank", 203: "Albaraka Türk", 205: "Kuveyt Türk",
+  143: "Aktif Bank", 146: "Odeabank", 157: "Enpara", 203: "Albaraka Türk", 205: "Kuveyt Türk",
   206: "Türkiye Finans", 209: "Ziraat Katılım", 210: "Vakıf Katılım", 211: "Emlak Katılım",
 };
 
@@ -66,21 +66,28 @@ export function kategoriTahmin(aciklama, tip) {
 
 // Bir işlemi sınıfla: "odeme" (kart borcu) | "transfer" | "gelir" | "gider"
 // sahipTokens: hesap sahibinin ad parçaları (kendine transferi yakalamak için)
-function siniflandir(islem, aciklama, miktar, sahipTokens) {
+// ekstreTipi: "kart" ise işaret bazlı (çıkış=ödeme, giriş=harcama)
+function siniflandir(islem, aciklama, miktar, sahipTokens, ekstreTipi) {
   const i = kucuk(islem);
   const a = kucuk(aciklama);
   const hepsi = i + " " + a;
+  // Kart ekstresi: çıkış (−) = ödeme/iade (borç azaltır) → odeme; giriş (+) = harcama → gider
+  if (ekstreTipi === "kart") return miktar < 0 ? "odeme" : "gider";
   // 1) Kredi kartı borç ödemesi → gelir/gider değil
   if (/kredi kart.*öde|kart ödeme|kart borç|hesaptan ödeme|kredi kart.*tahsil/.test(hepsi)) return "odeme";
   // 2) Maaş → gelir
   if (/maaş|maas/.test(a)) return "gelir";
-  // 3) Transfer mi? Transfer tipli işlem + kendine/iç hesap işareti
-  const transferTipi = /transfer|virman|havale|eft|fast|gönderme|gonderme|para çek|para cek/.test(hepsi);
+  // 3) Vergi/komisyon kesintisi → gider; faiz/temettü geliri → gelir (sıra önemli)
+  if (/vergi kesint|bsmv|stopaj|işlem ücret|hesap işletim/.test(a)) return "gider";
+  if (/faiz gelir|temettü|temettu|kâr payı|kar payı/.test(a)) return "gelir";
+  // 4) Transfer mi? Transfer tipli işlem + kendine/iç hesap işareti; ATM nakit hareketi
+  const transferTipi = /transfer|virman|havale|eft|fast|gönder|gonder|para çek|para cek|para yat/.test(hepsi);
+  if (/para çekme|para cekme|para yatırma|para yatirma|atm/.test(a)) return "transfer"; // nakit ↔ hesap
   const kendine =
-    /virman|hesaptan para transfer|hesaplar aras|kendi hesab|yatırım hesab|yatirim hesab/.test(a) ||
+    /virman|hesaptan para transfer|hesaplar aras|kendi hesab|yatırım hesab|yatirim hesab|hesabımdan|hesabıma|hesabimdan|hesabima/.test(a) ||
     (sahipTokens.length >= 2 && sahipTokens.every((t) => a.includes(t)));
   if ((transferTipi && kendine) || /virman/.test(hepsi)) return "transfer";
-  // 4) İşaret: çıkış gider, giriş gelir
+  // 5) İşaret: çıkış gider, giriş gelir
   return miktar < 0 ? "gider" : "gelir";
 }
 
@@ -92,15 +99,27 @@ export function ekstreParse(rows) {
   for (const r of rows) {
     const k = kucuk(r?.[0]);
     const v = (r?.[1] ?? "").toString().trim();
+    // IBAN değer hangi sütunda olursa olsun tanı (etiket "IBAN"→"ıban" olabilir)
+    if (!ust.iban) for (const c of r || []) { const cs = String(c ?? "").trim(); if (/^tr\d{2}[\d ]{12,}$/i.test(cs)) { ust.iban = cs; break; } }
     if (!k || !v) continue;
-    // IBAN'ı değerden de tanı (etiket "IBAN" küçükte "ıban" olabilir)
-    if (!ust.iban && /^tr\d{2}[\d ]{12,}$/i.test(v)) ust.iban = v;
     if (/ad soyad|ünvan|unvan/.test(k) && !ust.sahip) ust.sahip = v;
     else if (/[iı]ban/.test(k) && !ust.iban) ust.iban = v;
     else if (/hesap numara/.test(k) && !ust.hesapNo) ust.hesapNo = v;
     else if (/hesap tür|hesap turu/.test(k) && !ust.hesapTur) ust.hesapTur = v;
-    else if (/tarih aralı/.test(k) && !ust.donem) ust.donem = v;
+    else if (/tarih aralı|ekstre dönem|ekstre donem/.test(k) && !ust.donem) ust.donem = v;
+    // Kredi kartı ekstresi alanları
+    else if (/ekstre borcu|dönem borcu|donem borcu|güncel borç|guncel borc/.test(k) && ust.donemBorcu == null) ust.donemBorcu = v;
+    else if (/kart numara/.test(k) && !ust.kartNo) ust.kartNo = v;
+    else if (/kart limit/.test(k) && !/kullanıl|kullanil/.test(k) && ust.krediLimiti == null) ust.krediLimiti = v;
+    else if (/kullanılabilir|kullanilabilir/.test(k) && ust.kullanilabilir == null) ust.kullanilabilir = v;
+    else if (/(min|asgari).*(öde|ode)/.test(k) && ust.asgari == null) ust.asgari = v;
+    else if (/son ödeme|son odeme/.test(k) && !ust.sonOdeme) ust.sonOdeme = v;
+    else if (/dönem sonu bakiye|donem sonu bakiye/.test(k) && ust.sonBakiyeMetin == null) ust.sonBakiyeMetin = v;
   }
+  const kart = ust.kartNo != null || ust.donemBorcu != null || /kredi kart/.test(kucuk(ust.hesapTur));
+  // Banka markasını metinden yakala (IBAN yoksa, ör. kart ekstresi)
+  const MARKA = [[/enpara/, "Enpara"], [/denizbank/, "DenizBank"], [/akbank/, "Akbank"], [/garanti/, "Garanti BBVA"], [/yap[ıi].?kredi/, "Yapı Kredi"], [/ziraat/, "Ziraat Bankası"], [/halkbank/, "Halkbank"], [/vak[ıi]fbank/, "VakıfBank"], [/finansbank|qnb/, "QNB"], [/kuveyt türk|kuveyt turk/, "Kuveyt Türk"]];
+  marka: for (const r of rows) for (const c of r || []) { const cs = kucuk(c); for (const [re, ad] of MARKA) if (re.test(cs)) { ust.marka = ad; break marka; } }
 
   // ---- Tablo başlık satırını bul (Tarih + Tutar içeren satır) ----
   let basIdx = -1;
@@ -119,7 +138,7 @@ export function ekstreParse(rows) {
       break;
     }
   }
-  if (basIdx === -1) return { ozet: ozetKur(ust), islemler: [] };
+  if (basIdx === -1) return { ozet: ozetKur(ust, null, kart), islemler: [] };
 
   // ---- Veri satırları ----
   const sahipTokens = kucuk(ust.sahip).split(/\s+/).filter((t) => t.length >= 3);
@@ -134,7 +153,7 @@ export function ekstreParse(rows) {
     const islem = idx.islem >= 0 ? (row[idx.islem] || "") : "";
     const aciklama = idx.aciklama >= 0 ? (row[idx.aciklama] || "") : "";
     const bakiye = idx.bakiye >= 0 && String(row[idx.bakiye] ?? "").trim() !== "" ? sayiCevir(row[idx.bakiye]) : null;
-    const tip = siniflandir(islem, aciklama, miktar, sahipTokens);
+    const tip = siniflandir(islem, aciklama, miktar, sahipTokens, kart ? "kart" : "hesap");
     const kategori = tip === "transfer" || tip === "odeme" ? null : kategoriTahmin(aciklama || islem, tip);
     islemler.push({
       tarih, miktar, bakiye, tip, kategori,
@@ -151,14 +170,18 @@ export function ekstreParse(rows) {
     sonBakiye = enYeni.bakiye;
   }
 
-  return { ozet: ozetKur(ust, sonBakiye), islemler };
+  return { ozet: ozetKur(ust, sonBakiye, kart), islemler };
 }
 
-function ozetKur(ust, sonBakiye) {
-  const banka = ibanBanka(ust.iban);
+function ozetKur(ust, sonBakiye, kart) {
+  const banka = ibanBanka(ust.iban) || ust.marka || null;
   const ibanD = String(ust.iban || "").replace(/[^0-9]/g, "");
-  const son4 = ibanD ? ibanD.slice(-4) : String(ust.hesapNo || "").replace(/\D/g, "").slice(-4) || null;
-  const kart = /kredi kart/.test(kucuk(ust.hesapTur));
+  const son4 =
+    (kart && ust.kartNo ? String(ust.kartNo).replace(/\D/g, "").slice(-4) : null) ||
+    (ibanD ? ibanD.slice(-4) : null) ||
+    (String(ust.hesapNo || "").replace(/\D/g, "").slice(-4) || null);
+  // Banka: önce "Dönem sonu bakiyesi", yoksa satırlardan hesaplanan son bakiye
+  const hesapBakiye = ust.sonBakiyeMetin != null ? sayiCevir(ust.sonBakiyeMetin) : sonBakiye;
   return {
     ekstreTipi: kart ? "kart" : "hesap",
     banka: banka || null,
@@ -166,6 +189,11 @@ function ozetKur(ust, sonBakiye) {
     sahip: ust.sahip || null,
     iban: ust.iban || null,
     donem: ust.donem || null,
-    bakiye: sonBakiye != null ? sonBakiye : null,
+    bakiye: kart ? null : hesapBakiye != null ? hesapBakiye : null,
+    donemBorcu: kart && ust.donemBorcu != null ? sayiCevir(ust.donemBorcu) : null,
+    krediLimiti: kart && ust.krediLimiti != null ? sayiCevir(ust.krediLimiti) : null,
+    kullanilabilirLimit: kart && ust.kullanilabilir != null ? sayiCevir(ust.kullanilabilir) : null,
+    asgariOdeme: kart && ust.asgari != null ? sayiCevir(ust.asgari) : null,
+    sonOdemeTarihi: kart ? tarihCevir(ust.sonOdeme) || ust.sonOdeme || null : null,
   };
 }
