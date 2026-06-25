@@ -4,7 +4,7 @@
 // odeme (kart borcu) olarak sınıflar. Kendine yapılan transferleri
 // (hesaplar arası) tanır; gelir/gider olarak SAYMAZ.
 // ============================================================
-import { sayiCevir } from "./format.js";
+import { sayiCevir, uid } from "./format.js";
 
 // Türkçe-güvenli küçük harf (İ→i, I→ı) — anahtar kelime eşleştirmesi için
 const kucuk = (s) => String(s ?? "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase();
@@ -112,6 +112,29 @@ function siniflandir(islem, aciklama, miktar, sahipTokens, ekstreTipi) {
   if ((transferTipi && kendine) || /virman/.test(hepsi)) return "transfer";
   // 5) İşaret: çıkış gider, giriş gelir
   return miktar < 0 ? "gider" : "gelir";
+}
+
+// Mevcut (ekstreden gelmiş) giderleri yeniden sınıflandır: kategori tahminini
+// güncelle, dijital abonelikleri tespit edip Abonelikler'e taşı. Elle girilen
+// işlemlere (kaynak !== "ekstre") DOKUNMAZ. Geçmişe dönük temizlik içindir.
+export function yenidenSiniflandir(findata) {
+  const giderler = [];
+  const abonelikler = [...(findata?.abonelikler || [])];
+  const aboSet = new Set(abonelikler.map((a) => (a.baslik || "").toLowerCase().trim()));
+  let kategoriDegisen = 0, aboneEklenen = 0;
+  (findata?.giderler || []).forEach((g, i) => {
+    if (g.kaynak !== "ekstre") { giderler.push(g); return; } // sadece içe aktarılanlar
+    const servis = aboneTespit(g.baslik);
+    if (servis) {
+      const ad = servis.toLowerCase().trim();
+      if (!aboSet.has(ad)) { aboSet.add(ad); abonelikler.push({ id: uid() + i, baslik: servis, miktar: g.miktar, kategori: "Abonelik", tarih: g.tarih }); aboneEklenen++; }
+      return; // gider'den çıkar → abonelik oldu
+    }
+    const yeniKat = kategoriTahmin(g.baslik, "gider");
+    if (yeniKat !== g.kategori) { kategoriDegisen++; giderler.push({ ...g, kategori: yeniKat }); }
+    else giderler.push(g);
+  });
+  return { giderler, abonelikler, kategoriDegisen, aboneEklenen };
 }
 
 // Ham ızgara (string[][]) → { ozet, islemler }

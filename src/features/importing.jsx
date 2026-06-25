@@ -8,7 +8,7 @@ import { TL, bugun, buAy, uid, fileToBase64, parseJSON, sonrakiTarih } from "../
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { xlsxToGrid } from "../lib/xlsx.js";
 import { pdfToRows } from "../lib/pdf.js";
-import { ekstreParse } from "../lib/ekstre.js";
+import { ekstreParse, yenidenSiniflandir } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -412,12 +412,28 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     : []);
   const yeniKat = sonuc ? yeniKategoriler(sonuc.kayitlar) : [];
 
+  // Mevcut (içe aktarılmış) giderleri geçmişe dönük yeniden sınıflandır
+  function yenidenSiniflandirYap() {
+    const r = yenidenSiniflandir(findata);
+    if (!r.kategoriDegisen && !r.aboneEklenen) { bildir("Düzeltilecek içe aktarılmış gider bulunamadı.", "ok"); return; }
+    setFindata((d) => { const x = yenidenSiniflandir(d); return { ...d, giderler: x.giderler, abonelikler: x.abonelikler }; });
+    bildir(`${r.kategoriDegisen} işlem yeniden sınıflandı · ${r.aboneEklenen} abonelik ayıklandı`);
+  }
+  const ekstreVar = (findata.giderler || []).some((g) => g.kaynak === "ekstre");
+
   return (
     <div>
       <p style={{ color: V.ink3, fontSize: "12.5px", margin: "0 0 1.25rem" }}>
         Fiş veya ekstre yükleyin; AI okur, kategoriler, tekrarları işaretler.
         {!aiHazir() && <span style={{ color: V.accent }}> (AI okuma için Ayarlar'dan anahtar gir.)</span>}
       </p>
+
+      {ekstreVar && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: "1.1rem", padding: "9px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10 }}>
+          <Btn variant="ghost" onClick={yenidenSiniflandirYap} style={{ padding: "8px 13px" }}>↻ İşlemleri yeniden sınıflandır</Btn>
+          <span style={{ color: V.ink3, fontSize: "11.5px" }}>Eski "Diğer" harcamaları düzeltir, abonelikleri (Spotify, Apple…) ayıklar</span>
+        </div>
+      )}
 
       <div style={{ marginBottom: "1.25rem" }}>
         <Seg

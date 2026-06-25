@@ -1,5 +1,30 @@
 import { describe, it, expect } from "vitest";
-import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit } from "./ekstre.js";
+import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit, yenidenSiniflandir } from "./ekstre.js";
+
+describe("yenidenSiniflandir", () => {
+  const findata = {
+    giderler: [
+      { id: 1, baslik: "0012 - SUPERONLINE - ODEME", kategori: "Diğer", miktar: 700, tarih: "2026-05-01", kaynak: "ekstre" },
+      { id: 2, baslik: "IYZICO/AmazonPrimeTR ISTANBUL", kategori: "Diğer", miktar: 69.9, tarih: "2026-05-02", kaynak: "ekstre" },
+      { id: 3, baslik: "elle girdiğim harcama", kategori: "Diğer", miktar: 100, tarih: "2026-05-03" },
+    ],
+    abonelikler: [],
+  };
+  const r = yenidenSiniflandir(findata);
+
+  it("içe aktarılmış 'Diğer'i doğru kategoriye çeker", () => {
+    expect(r.giderler.find((g) => g.id === 1).kategori).toBe("Faturalar");
+    expect(r.kategoriDegisen).toBe(1);
+  });
+  it("aboneliği gider'den çıkarıp Abonelikler'e taşır", () => {
+    expect(r.giderler.some((g) => g.id === 2)).toBe(false);
+    expect(r.abonelikler.map((a) => a.baslik)).toContain("Amazon Prime");
+    expect(r.aboneEklenen).toBe(1);
+  });
+  it("elle girilen işleme dokunmaz", () => {
+    expect(r.giderler.find((g) => g.id === 3).kategori).toBe("Diğer");
+  });
+});
 
 describe("aboneTespit + kategori (gelişmiş)", () => {
   it("dijital abonelikleri tanır", () => {
