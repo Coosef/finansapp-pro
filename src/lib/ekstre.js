@@ -120,6 +120,109 @@ function siniflandir(islem, aciklama, miktar, sahipTokens, ekstreTipi) {
   return miktar < 0 ? "gider" : "gelir";
 }
 
+// Ekstre eksiksiz mi? Bakiye zinciri + işlem adedi + açılış/kapanış kontrolü.
+// Bakiye kolonu olan banka ekstrelerinde, ardışık bakiyelerin farkı işlemin
+// tutarına eşit olmalı; değilse aradan işlem KAÇMIŞTIR (matematik garanti).
+export function ekstreDogrula(ozet, islemler) {
+  const uyarilar = [];
+  const n = islemler.length;
+  // 1) İşlem adedi (özet belirtmişse)
+  let adetTamam = null;
+  if (ozet?.beklenenSayisi != null) {
+    adetTamam = n === ozet.beklenenSayisi;
+    if (!adetTamam) uyarilar.push(`İşlem adedi: ${n} okundu, ekstre ${ozet.beklenenSayisi} diyor — ${ozet.beklenenSayisi - n > 0 ? `${ozet.beklenenSayisi - n} işlem eksik olabilir` : "fazladan satır var"}.`);
+  }
+  // 2) Bakiye zinciri (tüm satırlarda bakiye varsa)
+  let bakiyeTutarli = null, kirilma = 0;
+  const bakiyeli = islemler.every((x) => x.bakiye != null && isFinite(x.bakiye));
+  if (n >= 2 && bakiyeli) {
+    const yeniIlk = String(islemler[0].tarih) >= String(islemler[n - 1].tarih); // en yeni ilk mi?
+    bakiyeTutarli = true;
+    for (let i = 0; i < n - 1; i++) {
+      const a = islemler[i], b = islemler[i + 1];
+      // yeniIlk: bakiye[i] = bakiye[i+1] + tutar[i]; eskiIlk: bakiye[i+1] = bakiye[i] + tutar[i+1]
+      const beklenen = yeniIlk ? a.bakiye - b.bakiye : b.bakiye - a.bakiye;
+      const gercek = yeniIlk ? a.miktar : b.miktar;
+      if (Math.abs(beklenen - gercek) > 0.02) { bakiyeTutarli = false; kirilma++; }
+    }
+    if (!bakiyeTutarli) uyarilar.push(`Bakiye zinciri ${kirilma} noktada tutmuyor — eksik ya da yanlış okunmuş işlem olabilir.`);
+  }
+  // 3) Açılış + Σtutar = kapanış (varsa)
+  let toplamTamam = null;
+  if (ozet?.acilisBakiye != null && ozet?.bakiye != null && n) {
+    const toplam = islemler.reduce((s, x) => s + (+x.miktar || 0), 0);
+    toplamTamam = Math.abs(ozet.acilisBakiye + toplam - ozet.bakiye) <= 0.02;
+    if (!toplamTamam) uyarilar.push("Açılış + işlemler ≠ kapanış bakiyesi — bir işlem kaçmış olabilir.");
+  }
+  const tamam = uyarilar.length === 0 && (bakiyeTutarli !== false) && (adetTamam !== false) && (toplamTamam !== false);
+  return { tamam, bakiyeTutarli, adetTamam, toplamTamam, kirilma, islemSayisi: n, beklenenSayisi: ozet?.beklenenSayisi ?? null, uyarilar };
+}
+
+// Ekstre özetinden hesabı bul/adlandır (data.hesaplar'a göre, saf).
+// Banka adıyla eşleşme YALNIZCA son4 çakışmıyorsa (farklı hesap birleşmesin).
+export function hesapBul(data, oz) {
+  oz = oz || {};
+  const tip = oz.ekstreTipi === "hesap" ? "banka" : "kart";
+  const son4 = String(oz.son4 || "").replace(/\D/g, "").slice(-4);
+  const banka = (oz.banka || "").trim();
+  const mevcut = data?.hesaplar || [];
+  let hedef = son4 ? mevcut.find((h) => h.son4 === son4 || (h.ad || "").includes(son4)) : null;
+  if (!hedef && banka) hedef = mevcut.find((h) => h.tip === tip && (h.ad || "").toLowerCase().includes(banka.toLowerCase()) && (!son4 || !h.son4 || h.son4 === son4));
+  const ad = hedef?.ad || ((banka || (tip === "kart" ? "Kredi Kartı" : "Hesap")) + (son4 ? ` ••${son4}` : ""));
+  return { tip, son4, banka, hedef, ad, yeni: !hedef && (son4 || banka) };
+}
+
+// Bir ekstrenin seçili kayıtlarını veriye uygula (saf, tek kaynak). Tek ve
+// çoklu içe aktarma bunu kullanır. kayitlar: eklenecek gelir/gider/abonelik
+// + (akış için) _transfer'li kayıtlar. Dön: { data, ozet }.
+export function ekstreUygula(data, ozet, kayitlar) {
+  const oz = ozet || {};
+  const gelirler = [...(data.gelirler || [])];
+  const giderler = [...(data.giderler || [])];
+  const abonelikler = [...(data.abonelikler || [])];
+  const aboSet = new Set(abonelikler.map((a) => (a.baslik || "").toLowerCase().trim()));
+  const giderKat = [...(data.kategoriler?.gider || [])];
+  const gelirKat = [...(data.kategoriler?.gelir || [])];
+  const gidSet = new Set(giderKat), gelSet = new Set(gelirKat);
+  const hesaplar = [...(data.hesaplar || [])];
+  const hc = hesapBul({ ...data, hesaplar }, oz);
+  let hesapId = hc.hedef?.id || null;
+  const borc = parseFloat(oz.donemBorcu), hesB = parseFloat(oz.bakiye);
+  const yeniBakiye = hc.tip === "kart" ? (isNaN(borc) ? null : borc) : (isNaN(hesB) ? null : hesB);
+  if (hc.son4 || hc.banka) {
+    const idx = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
+    if (idx < 0) { hesapId = uid(); hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: yeniBakiye ?? 0, son4: hc.son4 || undefined, banka: hc.banka || undefined }); }
+    else if (yeniBakiye != null) hesaplar[idx] = { ...hesaplar[idx], bakiye: yeniBakiye, son4: hesaplar[idx].son4 || hc.son4 || undefined };
+  }
+  let eklenen = 0, aboEklenen = 0;
+  (kayitlar || []).forEach((k, i) => {
+    if (k._transfer) return;
+    if (k.tip === "abonelik") {
+      const ad = (k.baslik || "").toLowerCase().trim();
+      if (ad && !aboSet.has(ad)) { aboSet.add(ad); abonelikler.push({ id: uid() + 8000 + i, baslik: k.baslik, miktar: k.miktar, kategori: "Abonelik", tarih: k.tarih }); aboEklenen++; }
+      return;
+    }
+    const { _tekrar, _sec, _taksit, _yon, _abonelik, kalemler, tip: t, ...kayit } = k;
+    const rec = { id: uid() + i, ...kayit, ...(kalemler ? { kalemler } : {}), hesapId: t === "gelir" || t === "gider" ? hesapId || "" : "" };
+    if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
+    else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
+    eklenen++;
+  });
+  // Transfer bacaklarını sakla (akış/korelasyon) — tekrarsız
+  const transferAkis = [...(data.transferAkis || [])];
+  let transferN = 0;
+  if (hesapId) {
+    const anahtar = (l) => `${l.hesapId}|${l.tarih}|${Math.round(l.miktar)}|${(l.aciklama || "").slice(0, 14)}`;
+    const mevcut = new Set(transferAkis.map(anahtar));
+    (kayitlar || []).filter((k) => k._transfer).forEach((k, i) => {
+      const leg = { id: uid() + 7000 + i, hesapId, tarih: k.tarih, miktar: k._yon === "cikis" ? -k.miktar : k.miktar, aciklama: k.baslik };
+      if (!mevcut.has(anahtar(leg))) { mevcut.add(anahtar(leg)); transferAkis.push(leg); transferN++; }
+    });
+  }
+  const yeni = { ...data, gelirler, giderler, abonelikler, hesaplar, transferAkis, kategoriler: { gider: giderKat, gelir: gelirKat } };
+  return { data: yeni, ozet: { hesapAd: hc.ad, yeni: hc.yeni, eklenen, aboEklenen, transferN } };
+}
+
 // Mevcut (ekstreden gelmiş) giderleri yeniden sınıflandır: kategori tahminini
 // güncelle, dijital abonelikleri tespit edip Abonelikler'e taşı. Elle girilen
 // işlemlere (kaynak !== "ekstre") DOKUNMAZ. Geçmişe dönük temizlik içindir.
@@ -159,6 +262,8 @@ export function ekstreParse(rows) {
     else if (/hesap numara/.test(k) && !ust.hesapNo) ust.hesapNo = v;
     else if (/hesap tür|hesap turu/.test(k) && !ust.hesapTur) ust.hesapTur = v;
     else if (/tarih aralı|ekstre dönem|ekstre donem/.test(k) && !ust.donem) ust.donem = v;
+    else if (/işlem aded|i̇şlem aded|işlem say|hareket say/.test(k) && ust.adet == null) ust.adet = v;
+    else if (/dönem başı bakiye|donem bası bakiye/.test(k) && ust.acilis == null) ust.acilis = v;
     // Kredi kartı ekstresi alanları
     else if (/ekstre borcu|dönem borcu|donem borcu|güncel borç|guncel borc/.test(k) && ust.donemBorcu == null) ust.donemBorcu = v;
     else if (/kart numara/.test(k) && !ust.kartNo) ust.kartNo = v;
@@ -244,6 +349,8 @@ function ozetKur(ust, sonBakiye, kart) {
     sahip: ust.sahip || null,
     iban: ust.iban || null,
     donem: ust.donem || null,
+    beklenenSayisi: ust.adet != null ? parseInt(String(ust.adet).replace(/[^0-9]/g, ""), 10) || null : null,
+    acilisBakiye: ust.acilis != null ? sayiCevir(ust.acilis) : null,
     bakiye: kart ? null : hesapBakiye != null ? hesapBakiye : null,
     donemBorcu: kart && ust.donemBorcu != null ? sayiCevir(ust.donemBorcu) : null,
     krediLimiti: kart && ust.krediLimiti != null ? sayiCevir(ust.krediLimiti) : null,

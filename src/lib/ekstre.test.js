@@ -1,5 +1,59 @@
 import { describe, it, expect } from "vitest";
-import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit, yenidenSiniflandir } from "./ekstre.js";
+import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit, yenidenSiniflandir, ekstreDogrula, hesapBul, ekstreUygula } from "./ekstre.js";
+
+const bosData = () => ({ gelirler: [], giderler: [], abonelikler: [], hesaplar: [], transferAkis: [], kategoriler: { gider: [], gelir: [] } });
+
+describe("ekstreDogrula — bakiye zinciri", () => {
+  it("tutarlı zincir + doğru adet → eksiksiz", () => {
+    const d = ekstreDogrula({ beklenenSayisi: 2 }, [
+      { tarih: "2026-01-15", miktar: 100, bakiye: 1100 },
+      { tarih: "2026-01-14", miktar: -50, bakiye: 1000 },
+    ]);
+    expect(d.bakiyeTutarli).toBe(true);
+    expect(d.adetTamam).toBe(true);
+    expect(d.tamam).toBe(true);
+  });
+  it("kırık zinciri yakalar (atlanmış işlem)", () => {
+    const d = ekstreDogrula({}, [
+      { tarih: "2026-01-15", miktar: 100, bakiye: 1100 },
+      { tarih: "2026-01-14", miktar: -50, bakiye: 1010 }, // 1100-1010=90 ≠ 100
+    ]);
+    expect(d.bakiyeTutarli).toBe(false);
+    expect(d.tamam).toBe(false);
+  });
+});
+
+describe("hesapBul — farklı son4 birleşmez", () => {
+  const data = { hesaplar: [{ id: "a", ad: "Enpara ••8551", tip: "banka", son4: "8551" }] };
+  it("aynı banka farklı son4 → yeni hesap", () => {
+    const hc = hesapBul(data, { ekstreTipi: "hesap", banka: "Enpara", son4: "0457" });
+    expect(hc.hedef).toBeFalsy();
+    expect(hc.yeni).toBeTruthy();
+    expect(hc.ad).toBe("Enpara ••0457");
+  });
+  it("aynı son4 → mevcut hesabı bulur", () => {
+    const hc = hesapBul(data, { ekstreTipi: "hesap", banka: "Enpara", son4: "8551" });
+    expect(hc.hedef?.id).toBe("a");
+  });
+});
+
+describe("ekstreUygula", () => {
+  const r = ekstreUygula(bosData(), { ekstreTipi: "hesap", banka: "Enpara", son4: "0457", bakiye: 500 }, [
+    { baslik: "Maaş", miktar: 1000, kategori: "Maaş", tarih: "2026-05-01", tip: "gelir", _sec: true },
+    { baslik: "Transfer", miktar: 200, tarih: "2026-05-02", tip: "transfer", _transfer: true, _yon: "cikis" },
+  ]);
+  it("hesabı oluşturur ve bakiyeyi ekstreden ayarlar", () => {
+    expect(r.data.hesaplar.length).toBe(1);
+    expect(r.data.hesaplar[0].bakiye).toBe(500);
+    expect(r.data.hesaplar[0].son4).toBe("0457");
+  });
+  it("geliri ekler, transfer bacağını saklar (gelir/gider değil)", () => {
+    expect(r.data.gelirler.length).toBe(1);
+    expect(r.data.giderler.length).toBe(0);
+    expect(r.data.transferAkis.length).toBe(1);
+    expect(r.data.transferAkis[0].miktar).toBe(-200);
+  });
+});
 
 describe("yenidenSiniflandir", () => {
   const findata = {

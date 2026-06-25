@@ -8,7 +8,7 @@ import { TL, bugun, buAy, uid, fileToBase64, parseJSON, sonrakiTarih } from "../
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { xlsxToGrid } from "../lib/xlsx.js";
 import { pdfToRows } from "../lib/pdf.js";
-import { ekstreParse, yenidenSiniflandir } from "../lib/ekstre.js";
+import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -41,6 +41,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   const [isleniyor, setIsleniyor] = useState(false);
   const [durum, setDurum] = useState("");
   const [sonuc, setSonuc] = useState(null);
+  const [coklu, setCoklu] = useState(null); // çoklu içe aktarma raporu
   const fisRef = useRef(),
     ekstreRef = useRef();
   const eklemeRef = useRef(false); // çift "Seçilenleri Ekle" tıklamasını engelle
@@ -63,6 +64,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
   // XLSX ekstresi (yerel, AI'sız) → sonuç. Transfer/kart-ödemesi satırları
   // gelir/gider sayılmaz: transferler bilgi olarak gösterilir, ödemeler atlanır.
   function ekstredenSonuc({ ozet, islemler }) {
+    const dogrulama = ekstreDogrula(ozet, islemler);
     let atlanan = 0;
     const kayitlar = [];
     for (const x of islemler) {
@@ -83,7 +85,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       const t = tekrarMi(temel);
       kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
     }
-    return { kayitlar, atlanan, ozet, transferSayisi: kayitlar.filter((k) => k._transfer).length, aboneSayisi: kayitlar.filter((k) => k._abonelik).length };
+    return { kayitlar, atlanan, ozet, dogrulama, transferSayisi: kayitlar.filter((k) => k._transfer).length, aboneSayisi: kayitlar.filter((k) => k._abonelik).length };
   }
 
   async function fisYukle(e) {
@@ -121,12 +123,52 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     }
   }
 
+  // Birden çok belge (xlsx/pdf) → her birini yerel oku, doğrula, otomatik içe
+  // aktar; sonunda dosya bazlı rapor göster. (Görsel/taranmış tek tek yüklenir.)
+  async function cokluIceAktar(belgeler) {
+    setIsleniyor(true); setSonuc(null); setCoklu(null); eklemeRef.current = false;
+    const rapor = [], islenmis = [];
+    for (let i = 0; i < belgeler.length; i++) {
+      const f = belgeler[i];
+      setDurum(`${i + 1}/${belgeler.length}: ${f.name} okunuyor…`);
+      try {
+        const ext = (f.name.split(".").pop() || "").toLowerCase();
+        let parsed = null;
+        if (ext === "xlsx") parsed = ekstreParse((await xlsxToGrid(f)).rows);
+        else if (ext === "pdf") { const { rows } = await pdfToRows(f); parsed = ekstreParse(rows); }
+        if (!parsed || !parsed.islemler.length) { rapor.push({ dosya: f.name, hata: "işlem okunamadı (taranmış/görsel PDF olabilir — tek tek AI ile yükle)" }); continue; }
+        const s = ekstredenSonuc(parsed);
+        islenmis.push(s);
+        rapor.push({ dosya: f.name, ad: hesapBul(findata, s.ozet).ad, dogrulama: s.dogrulama, ekle: s.kayitlar.filter((k) => k._sec && !k._transfer).length, transfer: s.transferSayisi, abone: s.aboneSayisi });
+      } catch (err) { rapor.push({ dosya: f.name, hata: aiHata(err) || "okunamadı" }); }
+    }
+    if (islenmis.length) {
+      setFindata((d) => {
+        let cur = d;
+        for (const s of islenmis) {
+          const uyg = [...s.kayitlar.filter((k) => k._sec && !k._transfer), ...s.kayitlar.filter((k) => k._transfer)];
+          cur = ekstreUygula(cur, s.ozet, uyg).data;
+        }
+        return cur;
+      });
+    }
+    setCoklu(rapor);
+    setIsleniyor(false); setDurum("");
+    const ok = rapor.filter((r) => !r.hata).length;
+    bildir(`${ok}/${rapor.length} ekstre içe aktarıldı`, ok ? "ok" : "err");
+    if (ekstreRef.current) ekstreRef.current.value = "";
+  }
+
   async function ekstreYukle(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+    // Birden çok xlsx/pdf seçildiyse → çoklu otomatik içe aktarma
+    const belgeler = files.filter((f) => /\.(xlsx|pdf)$/i.test(f.name));
+    if (belgeler.length > 1) { await cokluIceAktar(belgeler); return; }
     const file = files[0];
     setIsleniyor(true);
     setSonuc(null);
+    setCoklu(null);
     eklemeRef.current = false; // yeni içe aktarma → ekleme tekrar mümkün
     try {
       const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -290,17 +332,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
   }
   // Ekstre özetinden kart/hesabı tanı: son4 ile eşle, yoksa null → onayla'da oluşturulur
   function hesapCoz() {
-    const oz = sonuc?.ozet || {};
-    const tip = oz.ekstreTipi === "hesap" ? "banka" : "kart";
-    const son4 = String(oz.son4 || "").replace(/\D/g, "").slice(-4);
-    const banka = (oz.banka || "").trim();
-    const mevcut = findata.hesaplar || [];
-    let hedef = son4 ? mevcut.find((h) => h.son4 === son4 || (h.ad || "").includes(son4)) : null;
-    // Banka adıyla eşle — ama YALNIZCA son4 çakışmıyorsa. Aynı bankanın farklı
-    // hesapları (ör. Enpara Vadesiz 0457 vs Tatil 8551) BİRLEŞMESİN.
-    if (!hedef && banka) hedef = mevcut.find((h) => h.tip === tip && (h.ad || "").toLowerCase().includes(banka.toLowerCase()) && (!son4 || !h.son4 || h.son4 === son4));
-    const ad = hedef?.ad || ((banka || (tip === "kart" ? "Kredi Kartı" : "Hesap")) + (son4 ? ` ••${son4}` : ""));
-    return { tip, son4, banka, hedef, ad, yeni: !hedef && (son4 || banka) };
+    return hesapBul(findata, sonuc?.ozet || {});
   }
 
   // Kayıtlarda kullanıcının listesinde OLMAYAN kategoriler (öneri)
@@ -347,55 +379,9 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     const hesapVar = !!(hc.son4 || hc.banka);
     if (!secili.length && !hesapVar) { bildir("Seçili kayıt yok. Eklemek istediklerini işaretle (sarı 'olası tekrar'lar varsayılan kapalı).", "err"); return; }
     eklemeRef.current = true;
-    // Hepsini TEK atomik güncellemede yaz: işlemler + hesap + yeni kategoriler
-    setFindata((d) => {
-      const gelirler = [...(d.gelirler || [])];
-      const giderler = [...(d.giderler || [])];
-      const giderKat = [...(d.kategoriler?.gider || [])];
-      const gelirKat = [...(d.kategoriler?.gelir || [])];
-      const gidSet = new Set(giderKat), gelSet = new Set(gelirKat);
-      const abonelikler = [...(d.abonelikler || [])];
-      const aboSet = new Set(abonelikler.map((a) => (a.baslik || "").toLowerCase().trim()));
-      const hesaplar = [...(d.hesaplar || [])];
-      // Hesabı bağla/oluştur; kart → dönem borcu, banka → ekstre güncel bakiyesi
-      let hesapId = hc.hedef?.id || null;
-      const borc = parseFloat(oz.donemBorcu);
-      const hesBakiye = parseFloat(oz.bakiye);
-      const yeniBakiye = hc.tip === "kart" ? (isNaN(borc) ? null : borc) : (isNaN(hesBakiye) ? null : hesBakiye);
-      if (hc.son4 || hc.banka) {
-        const idx = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
-        if (idx < 0) {
-          hesapId = uid();
-          hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: yeniBakiye ?? 0, son4: hc.son4 || undefined, banka: hc.banka || undefined });
-        } else if (yeniBakiye != null) {
-          hesaplar[idx] = { ...hesaplar[idx], bakiye: yeniBakiye, son4: hesaplar[idx].son4 || hc.son4 || undefined };
-        }
-      }
-      // İşlemleri ekle + kategorilerini listeye al
-      secili.forEach((k, i) => {
-        const { _tekrar, _sec, _taksit, _transfer, _yon, _abonelik, tip: t, ...kayit } = k;
-        if (t === "abonelik") {
-          // Aynı servis zaten varsa tekrar ekleme
-          const ad = (kayit.baslik || "").toLowerCase().trim();
-          if (ad && !aboSet.has(ad)) { aboSet.add(ad); abonelikler.push({ id: uid() + 8000 + i, baslik: kayit.baslik, miktar: kayit.miktar, kategori: "Abonelik", tarih: kayit.tarih }); }
-          return;
-        }
-        const rec = { id: uid() + i, ...kayit, hesapId: t === "gelir" || t === "gider" ? hesapId || "" : "" };
-        if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
-        else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
-      });
-      // Transfer bacaklarını sakla (hesaplar arası akış/korelasyon için) — tekrarsız
-      const transferAkis = [...(d.transferAkis || [])];
-      if (hesapId) {
-        const anahtar = (l) => `${l.hesapId}|${l.tarih}|${Math.round(l.miktar)}|${(l.aciklama || "").slice(0, 14)}`;
-        const mevcut = new Set(transferAkis.map(anahtar));
-        sonuc.kayitlar.filter((k) => k._transfer).forEach((k, i) => {
-          const leg = { id: uid() + 7000 + i, hesapId, tarih: k.tarih, miktar: k._yon === "cikis" ? -k.miktar : k.miktar, aciklama: k.baslik };
-          if (!mevcut.has(anahtar(leg))) { mevcut.add(anahtar(leg)); transferAkis.push(leg); }
-        });
-      }
-      return { ...d, gelirler, giderler, abonelikler, hesaplar, transferAkis, kategoriler: { gider: giderKat, gelir: gelirKat } };
-    });
+    // Tek atomik güncelleme: seçili işlemler + tüm transfer bacakları → ekstreUygula
+    const uygulanacak = [...secili, ...sonuc.kayitlar.filter((k) => k._transfer)];
+    setFindata((d) => ekstreUygula(d, oz, uygulanacak).data);
     secili.forEach((k) => kategoriOgren(k.baslik, k.kategori)); // kategori hafızası
     const ay = buAy();
     const gecmis = secili.filter((k) => !(k.tarih || "").startsWith(ay)).length;
@@ -453,7 +439,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       <div style={{ marginBottom: "1.25rem" }}>
         <Seg
           value={mod}
-          onChange={(v) => { setMod(v); setSonuc(null); }}
+          onChange={(v) => { setMod(v); setSonuc(null); setCoklu(null); }}
           items={[{ id: "fis", label: "Fiş Tara" }, { id: "ekstre", label: "Banka Ekstresi" }]}
         />
       </div>
@@ -479,12 +465,44 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               <Icon d="archive" size={24} stroke={V.accent} />
             </div>
             <p style={{ color: V.ink2, fontSize: "0.9rem", margin: "0 0 0.3rem" }}>Banka ekstresini yükle</p>
-            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>Excel (.xlsx) · PDF · CSV · Görsel — Excel'de AI gerekmez, anında okunur; çok sayfalı PDF için birden çok resim seçebilirsin</p>
+            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>Excel (.xlsx) · PDF · CSV · Görsel — Excel/PDF'de AI gerekmez, anında okunur. <b style={{ color: V.ink2 }}>Birden çok ekstreyi aynı anda seç</b> → hepsi otomatik içe aktarılır + doğrulanır.</p>
             <input ref={ekstreRef} type="file" accept=".xlsx,.xls,.pdf,.csv,.txt,image/*" multiple onChange={ekstreYukle} style={{ display: "none" }} />
             <Btn variant="gold" onClick={() => ekstreRef.current?.click()} disabled={isleniyor}>{isleniyor ? "İşleniyor…" : "Ekstre Yükle"}</Btn>
           </div>
         )}
       </Card>
+
+      {/* Çoklu içe aktarma raporu (dosya bazlı + doğrulama) */}
+      {coklu && (
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem", gap: "0.5rem", flexWrap: "wrap" }}>
+            <h3 style={sectionTitle}>Çoklu İçe Aktarma ({coklu.filter((r) => !r.hata).length}/{coklu.length})</h3>
+            <Btn variant="ghost" onClick={() => setCoklu(null)} style={{ padding: "7px 13px" }}>Kapat</Btn>
+          </div>
+          {coklu.map((r, i) => {
+            const dg = r.dogrulama;
+            const dgTamam = dg && dg.tamam && (dg.bakiyeTutarli !== null || dg.adetTamam !== null || dg.toplamTamam !== null);
+            const dgUyari = dg && !dg.tamam;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.7rem 0.85rem", background: r.hata ? "var(--chip-red)" : V.card2, border: `1px solid ${r.hata ? V.neg + "44" : V.border}`, borderRadius: "0.6rem", marginBottom: "0.5rem" }}>
+                <span style={{ fontSize: "1rem", flexShrink: 0 }}>{r.hata ? "⚠️" : dgTamam ? "✅" : dgUyari ? "⚠️" : "ℹ️"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.85rem", color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.hata ? r.dosya : r.ad}</p>
+                  <p style={{ margin: 0, color: r.hata ? V.neg : V.ink3, fontSize: "0.72rem" }}>
+                    {r.hata
+                      ? r.hata
+                      : `${r.ekle} işlem${r.transfer ? ` · ${r.transfer} transfer` : ""}${r.abone ? ` · ${r.abone} abonelik` : ""}` +
+                        (dgTamam ? ` · ✓ ${dg.bakiyeTutarli ? "bakiye zinciri tutarlı" : dg.adetTamam ? `adet eşleşti (${dg.beklenenSayisi})` : "açılış+işlemler=kapanış"}` : dgUyari ? ` · ⚠️ ${dg.uyarilar[0]}` : " · bakiye zinciri yok (kart)")}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+          <p style={{ margin: "0.6rem 0 0", fontSize: "0.72rem", color: V.ink3, lineHeight: 1.6 }}>
+            ✅ = bakiye zinciri/adet doğrulandı, hiçbir işlem atlanmadı. Transferler Hesaplar &gt; Para Akışı'nda eşleşir.
+          </p>
+        </Card>
+      )}
 
       {sonuc && (
         <Card>
@@ -492,6 +510,28 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
             <h3 style={sectionTitle}>Bulunan Kayıtlar ({sonuc.kayitlar.length})</h3>
             <Btn variant="primary" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec && !k._transfer) && !(sonuc.ozet?.son4 || sonuc.ozet?.banka)}>Seçilenleri Ekle</Btn>
           </div>
+
+          {/* Eksiksizlik doğrulaması (bakiye zinciri + işlem adedi) */}
+          {sonuc.dogrulama && (() => {
+            const dg = sonuc.dogrulama;
+            const kart = sonuc.ozet?.ekstreTipi === "kart";
+            if (dg.bakiyeTutarli === null && dg.adetTamam === null && dg.toplamTamam === null) {
+              return (
+                <p style={{ margin: "0 0 0.9rem", fontSize: "0.78rem", color: V.ink3, background: V.card2, border: `1px solid ${V.border}`, padding: "0.55rem 0.8rem", borderRadius: "0.6rem" }}>
+                  ℹ️ {kart ? "Kart ekstresi — çalışan bakiye kolonu yok; satırlar tek tek okundu." : "Bu ekstrede doğrulanacak bakiye/adet bilgisi yok."} {dg.islemSayisi} işlem bulundu.
+                </p>
+              );
+            }
+            return (
+              <div style={{ margin: "0 0 0.9rem", fontSize: "0.8rem", padding: "0.6rem 0.85rem", borderRadius: "0.6rem", background: dg.tamam ? "var(--chip-green)" : "var(--chip-red)", border: `1px solid ${(dg.tamam ? V.pos : V.neg)}55`, color: dg.tamam ? V.pos : V.neg }}>
+                {dg.tamam ? (
+                  <span><b>✓ Eksiksiz okundu</b> — {dg.islemSayisi} işlem{dg.adetTamam ? ` (ekstre ${dg.beklenenSayisi} diyor, eşleşti)` : ""}{dg.bakiyeTutarli ? " · bakiye zinciri tutarlı" : ""}{dg.toplamTamam ? " · açılış+işlemler=kapanış ✓" : ""}. Hiçbir işlem atlanmadı.</span>
+                ) : (
+                  <span><b>⚠️ Doğrulama uyarısı:</b> {dg.uyarilar.join(" ")} Lütfen bu ekstreyi tekrar yükle ya da kontrol et.</span>
+                )}
+              </div>
+            );
+          })()}
           {sonuc.ozet && (ozetSatir.length > 0 || sonuc.ozet.sonOdemeTarihi) && (
             <div style={{ background: V.emerald, borderRadius: 12, padding: "14px 16px", marginBottom: "0.9rem" }}>
               <div className="serif" style={{ fontSize: 14, fontWeight: 600, color: V.cream, marginBottom: 10 }}>Ekstre Özeti</div>
