@@ -6,6 +6,8 @@ import { useState, useRef } from "react";
 import { V, F, SERIF } from "../lib/constants.js";
 import { TL, bugun, buAy, uid, fileToBase64, parseJSON, sonrakiTarih } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
+import { xlsxToGrid } from "../lib/xlsx.js";
+import { ekstreParse } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -57,6 +59,27 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     return e?.message || null;
   }
 
+  // XLSX ekstresi (yerel, AI'sız) → sonuç. Transfer/kart-ödemesi satırları
+  // gelir/gider sayılmaz: transferler bilgi olarak gösterilir, ödemeler atlanır.
+  function ekstredenSonuc({ ozet, islemler }) {
+    let atlanan = 0;
+    const kayitlar = [];
+    for (const x of islemler) {
+      if (x.tip === "odeme") { atlanan++; continue; } // kart borcu ödemesi
+      const miktar = Math.abs(x.miktar);
+      if (x.tip === "transfer") {
+        // Hesaplar arası transfer → gelir/gider DEĞİL; yalnızca bilgi
+        kayitlar.push({ baslik: x.aciklama, miktar, kategori: "Transfer", tarih: x.tarih, kaynak: "ekstre", tip: "transfer", _transfer: true, _yon: x.miktar < 0 ? "cikis" : "giris", _sec: false });
+        continue;
+      }
+      const tip = x.tip === "gelir" ? "gelir" : "gider";
+      const temel = { baslik: x.aciklama, miktar, kategori: x.kategori || "Diğer", tarih: x.tarih, kaynak: "ekstre", tip };
+      const t = tekrarMi(temel);
+      kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
+    }
+    return { kayitlar, atlanan, ozet, transferSayisi: kayitlar.filter((k) => k._transfer).length };
+  }
+
   async function fisYukle(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -101,6 +124,22 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     eklemeRef.current = false; // yeni içe aktarma → ekleme tekrar mümkün
     try {
       const ext = (file.name.split(".").pop() || "").toLowerCase();
+      // Excel (.xlsx) → yerel çözümleme (AI gerekmez, anahtar gerekmez)
+      if (ext === "xlsx") {
+        setDurum("Excel ekstresi okunuyor…");
+        const { rows } = await xlsxToGrid(file);
+        const parsed = ekstreParse(rows);
+        if (!parsed.islemler.length) {
+          bildir("Excel'de işlem bulunamadı. Beklenen sütunlar: Tarih · İşlem · Açıklama · Tutar.", "err");
+        } else {
+          setSonuc(ekstredenSonuc(parsed));
+        }
+        return; // finally temizliği yapar
+      }
+      if (ext === "xls") {
+        bildir("Eski .xls biçimi desteklenmiyor — bankadan .xlsx (Excel) ya da CSV olarak indir.", "err");
+        return;
+      }
       const giderKat = giderKategorileri(findata);
       const gelirKat = gelirKategorileri(findata);
       const talimat = `Bu bir banka HESAP ekstresi veya KREDİ KARTI ekstresi olabilir. SADECE şu yapıda TEK bir JSON nesnesi döndür, başka hiçbir metin yazma:
@@ -251,6 +290,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     const gel = new Set(gelirKategorileri(findata));
     const yeni = new Set();
     (kayitlar || []).forEach((k) => {
+      if (k._transfer || k.tip === "transfer") return; // transfer kategori değil
       const kat = (k.kategori || "").trim();
       if (!kat) return;
       if (k.tip === "gelir" ? !gel.has(kat) : !gid.has(kat)) yeni.add(kat);
@@ -264,6 +304,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     const gel = new Set(gelirKategorileri(findata));
     const giderY = [], gelirY = [];
     (kayitlar || []).forEach((k) => {
+      if (k._transfer || k.tip === "transfer") return; // transfer kategori değil
       const kat = (k.kategori || "").trim();
       if (!kat) return;
       if (k.tip === "gelir") { if (!gel.has(kat)) { gel.add(kat); gelirY.push(kat); } }
@@ -281,11 +322,12 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
 
   function onayla() {
     if (!sonuc || eklemeRef.current) return; // çift tıklama / yeniden çalışma koruması
-    const secili = sonuc.kayitlar.filter((k) => k._sec);
-    if (!secili.length) { bildir("Seçili kayıt yok. Eklemek istediklerini işaretle (sarı 'olası tekrar'lar varsayılan kapalı).", "err"); return; }
-    eklemeRef.current = true;
+    const secili = sonuc.kayitlar.filter((k) => k._sec && !k._transfer); // transfer sayılmaz
     const oz = sonuc.ozet || {};
     const hc = hesapCoz();
+    const hesapVar = !!(hc.son4 || hc.banka);
+    if (!secili.length && !hesapVar) { bildir("Seçili kayıt yok. Eklemek istediklerini işaretle (sarı 'olası tekrar'lar varsayılan kapalı).", "err"); return; }
+    eklemeRef.current = true;
     // Hepsini TEK atomik güncellemede yaz: işlemler + hesap + yeni kategoriler
     setFindata((d) => {
       const gelirler = [...(d.gelirler || [])];
@@ -294,21 +336,23 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       const gelirKat = [...(d.kategoriler?.gelir || [])];
       const gidSet = new Set(giderKat), gelSet = new Set(gelirKat);
       const hesaplar = [...(d.hesaplar || [])];
-      // Hesabı bağla/oluştur, kart bakiyesini dönem borcuna ayarla
+      // Hesabı bağla/oluştur; kart → dönem borcu, banka → ekstre güncel bakiyesi
       let hesapId = hc.hedef?.id || null;
       const borc = parseFloat(oz.donemBorcu);
+      const hesBakiye = parseFloat(oz.bakiye);
+      const yeniBakiye = hc.tip === "kart" ? (isNaN(borc) ? null : borc) : (isNaN(hesBakiye) ? null : hesBakiye);
       if (hc.son4 || hc.banka) {
         const idx = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
         if (idx < 0) {
           hesapId = uid();
-          hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: hc.tip === "kart" && !isNaN(borc) ? borc : 0, son4: hc.son4 || undefined, banka: hc.banka || undefined });
-        } else if (hc.tip === "kart" && !isNaN(borc)) {
-          hesaplar[idx] = { ...hesaplar[idx], bakiye: borc, son4: hesaplar[idx].son4 || hc.son4 || undefined };
+          hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: yeniBakiye ?? 0, son4: hc.son4 || undefined, banka: hc.banka || undefined });
+        } else if (yeniBakiye != null) {
+          hesaplar[idx] = { ...hesaplar[idx], bakiye: yeniBakiye, son4: hesaplar[idx].son4 || hc.son4 || undefined };
         }
       }
       // İşlemleri ekle + kategorilerini listeye al
       secili.forEach((k, i) => {
-        const { _tekrar, _sec, _taksit, tip: t, ...kayit } = k;
+        const { _tekrar, _sec, _taksit, _transfer, _yon, tip: t, ...kayit } = k;
         const rec = { id: uid() + i, ...kayit, hesapId: t === "gelir" || t === "gider" ? hesapId || "" : "" };
         if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
         else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
@@ -318,14 +362,17 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     secili.forEach((k) => kategoriOgren(k.baslik, k.kategori)); // kategori hafızası
     const ay = buAy();
     const gecmis = secili.filter((k) => !(k.tarih || "").startsWith(ay)).length;
-    const ekHesap = hc.son4 || hc.banka ? ` → ${hc.ad}${hc.yeni ? " (yeni hesap)" : ""}` : "";
-    bildir(`${secili.length} kayıt eklendi${ekHesap}` + (gecmis ? ` · görmek için üst sağdan dönemi "Tümü" yap` : ""));
+    const ekHesap = hesapVar ? ` → ${hc.ad}${hc.yeni ? " (yeni hesap)" : ""}` : "";
+    const trNot = sonuc.transferSayisi ? ` · ${sonuc.transferSayisi} transfer sayılmadı` : "";
+    bildir(`${secili.length} kayıt eklendi${ekHesap}${trNot}` + (gecmis ? ` · görmek için üst sağdan dönemi "Tümü" yap` : ""));
     setSonuc(null);
   }
 
   const sectionTitle = { margin: 0, fontSize: "0.82rem", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 };
   const ozetSatir = (sonuc?.ozet
-    ? [["Dönem Borcu", sonuc.ozet.donemBorcu], ["Asgari Ödeme", sonuc.ozet.asgariOdeme], ["Kredi Limiti", sonuc.ozet.krediLimiti], ["Kullanılabilir", sonuc.ozet.kullanilabilirLimit]]
+    ? (sonuc.ozet.ekstreTipi === "hesap"
+        ? [["Güncel Bakiye", sonuc.ozet.bakiye]]
+        : [["Dönem Borcu", sonuc.ozet.donemBorcu], ["Asgari Ödeme", sonuc.ozet.asgariOdeme], ["Kredi Limiti", sonuc.ozet.krediLimiti], ["Kullanılabilir", sonuc.ozet.kullanilabilirLimit]])
         .filter(([, v]) => v != null && !isNaN(parseFloat(v)))
     : []);
   const yeniKat = sonuc ? yeniKategoriler(sonuc.kayitlar) : [];
@@ -366,8 +413,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               <Icon d="archive" size={24} stroke={V.accent} />
             </div>
             <p style={{ color: V.ink2, fontSize: "0.9rem", margin: "0 0 0.3rem" }}>Banka ekstresini yükle</p>
-            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>PDF · CSV · Görsel · çok sayfalı ekstre için birden çok resim seçebilirsin</p>
-            <input ref={ekstreRef} type="file" accept=".pdf,.csv,.txt,image/*" multiple onChange={ekstreYukle} style={{ display: "none" }} />
+            <p style={{ color: V.ink3, fontSize: "0.75rem", margin: "0 0 1rem" }}>Excel (.xlsx) · PDF · CSV · Görsel — Excel'de AI gerekmez, anında okunur; çok sayfalı PDF için birden çok resim seçebilirsin</p>
+            <input ref={ekstreRef} type="file" accept=".xlsx,.xls,.pdf,.csv,.txt,image/*" multiple onChange={ekstreYukle} style={{ display: "none" }} />
             <Btn variant="gold" onClick={() => ekstreRef.current?.click()} disabled={isleniyor}>{isleniyor ? "İşleniyor…" : "Ekstre Yükle"}</Btn>
           </div>
         )}
@@ -377,7 +424,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
         <Card>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.5rem", flexWrap: "wrap" }}>
             <h3 style={sectionTitle}>Bulunan Kayıtlar ({sonuc.kayitlar.length})</h3>
-            <Btn variant="primary" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec)}>Seçilenleri Ekle</Btn>
+            <Btn variant="primary" onClick={onayla} disabled={!sonuc.kayitlar.some((k) => k._sec && !k._transfer) && !(sonuc.ozet?.son4 || sonuc.ozet?.banka)}>Seçilenleri Ekle</Btn>
           </div>
           {sonuc.ozet && (ozetSatir.length > 0 || sonuc.ozet.sonOdemeTarihi) && (
             <div style={{ background: V.emerald, borderRadius: 12, padding: "14px 16px", marginBottom: "0.9rem" }}>
@@ -399,11 +446,15 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               {(sonuc.ozet.banka || sonuc.ozet.son4) && (() => {
                 const hc = hesapCoz();
                 const borc = parseFloat(sonuc.ozet.donemBorcu);
+                const bak = parseFloat(sonuc.ozet.bakiye);
+                const bakiyeNot = hc.tip === "kart"
+                  ? (!isNaN(borc) ? `, borç ${TL(borc)} işlenir` : "")
+                  : (!isNaN(bak) ? `, bakiye ${TL(bak)} olarak ayarlanır` : "");
                 return (
                   <div style={{ marginTop: 12, fontSize: 12, color: V.sage, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                     <Icon d={hc.tip === "kart" ? "card" : "bank"} size={15} stroke={V.cream} />
                     {hc.tip === "kart" ? "Kart" : "Hesap"}: <b style={{ color: V.cream }}>{hc.ad}</b>
-                    <span style={{ opacity: 0.85 }}>· <b style={{ color: V.cream }}>"Seçilenleri Ekle"</b> ile {hc.yeni ? "oluşturulur" : "güncellenir"}{hc.tip === "kart" && !isNaN(borc) ? `, borç ${TL(borc)} işlenir` : ""}</span>
+                    <span style={{ opacity: 0.85 }}>· <b style={{ color: V.cream }}>"Seçilenleri Ekle"</b> ile {hc.yeni ? "oluşturulur" : "güncellenir"}{bakiyeNot}</span>
                   </div>
                 );
               })()}
@@ -412,6 +463,11 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           {sonuc.atlanan > 0 && (
             <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               💳 {sonuc.atlanan} kart borcu ödemesi atlandı (gelir/gider sayılmaz).
+            </p>
+          )}
+          {sonuc.transferSayisi > 0 && (
+            <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              ⇄ {sonuc.transferSayisi} hesaplar-arası transfer tanındı — gelir/gider sayılmadı. Hesabın güncel bakiyesi ekstreden alınır; diğer hesabının ekstresini de yüklersen o taraf da çift sayılmaz.
             </p>
           )}
           {sonuc.taksitSayisi > 0 && (
@@ -435,15 +491,22 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               key={i}
               style={{
                 display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.7rem 0.85rem",
-                background: k._tekrar ? "var(--chip-gold)" : V.card2,
+                background: k._transfer ? V.card : k._tekrar ? "var(--chip-gold)" : V.card2,
                 border: `1px solid ${k._tekrar ? V.accent + "55" : V.border}`,
-                borderRadius: "0.6rem", marginBottom: "0.5rem",
+                borderRadius: "0.6rem", marginBottom: "0.5rem", opacity: k._transfer ? 0.72 : 1,
               }}
             >
-              <input type="checkbox" checked={k._sec} onChange={() => secimDegis(i)} style={{ width: 18, height: 18, accentColor: V.emerald2 }} />
+              {k._transfer ? (
+                <span title="Transfer — gelir/gider sayılmaz" style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", color: V.ink3, fontSize: "1rem", flexShrink: 0 }}>⇄</span>
+              ) : (
+                <input type="checkbox" checked={k._sec} onChange={() => secimDegis(i)} style={{ width: 18, height: 18, accentColor: V.emerald2 }} />
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.85rem", color: V.ink, fontFamily: F }}>
+                <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.85rem", color: V.ink, fontFamily: F, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {k.baslik}
+                  {k._transfer && (
+                    <span style={{ background: V.track, border: `1px solid ${V.border2}`, color: V.ink3, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>TRANSFER</span>
+                  )}
                   {k._tekrar && (
                     <span style={{ background: "var(--chip-gold)", border: `1px solid ${V.accent}55`, color: V.accent, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>OLASI TEKRAR</span>
                   )}
@@ -452,9 +515,9 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
                   )}
                   {k.kalemler?.length ? <span style={{ color: V.accent, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
                 </p>
-                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.kategori} · {k.tarih} · {k.tip === "gelir" ? "Gelir" : "Gider"}</p>
+                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
               </div>
-              <p className="num" style={{ margin: 0, fontWeight: 700, color: k.tip === "gelir" ? V.pos : V.neg }}>{k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
+              <p className="num" style={{ margin: 0, fontWeight: 700, color: k._transfer ? V.ink3 : k.tip === "gelir" ? V.pos : V.neg }}>{k._transfer ? "⇄ " : k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
             </div>
           ))}
         </Card>
