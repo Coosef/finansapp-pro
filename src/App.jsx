@@ -287,14 +287,22 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   const toplamGelirTum = findata.gelirler.reduce((s, x) => s + x.miktar, 0);
   const toplamGiderTum = findata.giderler.reduce((s, x) => s + x.miktar, 0);
   const toplamAbonelik = findata.abonelikler.reduce((s, x) => s + x.miktar, 0);
-  const nakitTum = toplamGelirTum - toplamGiderTum - toplamAbonelik;
+  // Net nakit/varlık: HESAP VARSA gerçek bakiyelerden (varlık − kart borcu);
+  // hesap yoksa eski akış modeline (gelir − gider) düşülür. Böylece ekstreden
+  // gelen ama başka hesaba aktarılan para "elimde varmış" gibi görünmez.
+  const hesapVarlik = (findata.hesaplar || []).filter((h) => h.tip !== "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
+  const hesapBorc = (findata.hesaplar || []).filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
+  const hesapNet = hesapVarlik - hesapBorc;
+  const hesapVarMi = (findata.hesaplar || []).length > 0;
+  const nakitTum = hesapVarMi ? hesapNet : toplamGelirTum - toplamGiderTum - toplamAbonelik;
   const netDeger = nakitTum + yatirimDeger;
 
   // ---- Döneme göre filtrelenmiş veriler ----
   const fd = useMemo(() => donemFiltre(findata, donem, bugun()), [findata, donem]);
   const toplamGelir = fd.gelirler.reduce((s, x) => s + x.miktar, 0);
   const toplamGider = fd.giderler.reduce((s, x) => s + x.miktar, 0);
-  const nakit = toplamGelir - toplamGider - toplamAbonelik;
+  // "Net Nakit" kartı: hesap varsa gerçek bakiye, yoksa dönem akışı
+  const nakit = hesapVarMi ? hesapNet : toplamGelir - toplamGider - toplamAbonelik;
 
   const bildirimTimer = useRef(null);
   function bildir(msg, tip = "ok", action = null) {
@@ -397,7 +405,10 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
 
   // ---- İşlem modalı (gelir/gider tek modal, tip değiştirilebilir) ----
   function islemAc(tip = "gider") {
-    setForm({ tip, baslik: "", miktar: "", kategori: tip === "gelir" ? "Maaş" : "Market", tarih: bugun(), tekrarla: false, hane: false, hesapId: "" });
+    // Hesap modelinde işlem bir hesaba bağlanmalı ki bakiyeyi (ve net varlığı)
+    // etkilesin. Varsayılan: ilk vadesiz/nakit hesap (modalde değiştirilebilir).
+    const ilkHesap = (findata.hesaplar || []).find((h) => h.tip !== "kart") || (findata.hesaplar || [])[0];
+    setForm({ tip, baslik: "", miktar: "", kategori: tip === "gelir" ? "Maaş" : "Market", tarih: bugun(), tekrarla: false, hane: false, hesapId: ilkHesap ? String(ilkHesap.id) : "" });
     setModal("islem");
   }
   function abonelikAc() {
