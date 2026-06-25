@@ -1,5 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, transferleriEslestir, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, transferleriEslestir, iceAktarilaniTemizle, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre } from "./finance.js";
+
+describe("iceAktarilaniTemizle", () => {
+  const f = {
+    gelirler: [{ id: 1, kaynak: "ekstre" }, { id: 2 }],
+    giderler: [{ id: 3, kaynak: "ekstre" }, { id: 4, kaynak: "taksit" }, { id: 5, kaynak: "manuel" }, { id: 6 }],
+    hesaplar: [{ id: "a", son4: "0457" }, { id: "b", banka: "Enpara" }, { id: "c", ad: "Nakit" }],
+    transferAkis: [{ id: 1 }],
+    abonelikler: [{ id: 9 }],
+  };
+  const r = iceAktarilaniTemizle(f);
+  it("ekstre/taksit işlemleri siler, elle gireni tutar", () => {
+    expect(r.gelirler.map((x) => x.id)).toEqual([2]);
+    expect(r.giderler.map((x) => x.id).sort()).toEqual([5, 6]);
+  });
+  it("içe aktarılan hesapları (son4/banka) siler, elle gireni tutar", () => {
+    expect(r.hesaplar.map((h) => h.id)).toEqual(["c"]);
+  });
+  it("transfer akışını temizler, abonelikleri korur", () => {
+    expect(r.transferAkis).toEqual([]);
+    expect(r.abonelikler.length).toBe(1);
+  });
+});
 
 describe("transferleriEslestir", () => {
   const findata = {

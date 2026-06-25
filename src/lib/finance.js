@@ -195,6 +195,19 @@ export function transferleriEslestir(findata) {
   return { eslesen, eslesmeyen, ozet };
 }
 
+// İçe aktarılan veriyi temizle (temiz baştan içe aktarmak için). Ekstreden
+// gelen gelir/gider/taksit, içe aktarılan hesaplar (son4/banka'lı) ve transfer
+// akışını siler. ELLE girilen işlem/hesaplar ve abonelikler korunur.
+export function iceAktarilaniTemizle(findata) {
+  return {
+    ...findata,
+    gelirler: (findata.gelirler || []).filter((x) => x.kaynak !== "ekstre"),
+    giderler: (findata.giderler || []).filter((x) => x.kaynak !== "ekstre" && x.kaynak !== "taksit"),
+    hesaplar: (findata.hesaplar || []).filter((h) => !h.son4 && !h.banka),
+    transferAkis: [],
+  };
+}
+
 // Boş kullanıcı verisi — tüm okuma noktaları { ...bosVeri(), ...kayitli }
 // ile birleştirilir, böylece eski yedeklerde eksik alanlar otomatik dolar.
 export const bosVeri = () => ({

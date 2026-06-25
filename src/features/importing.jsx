@@ -9,7 +9,7 @@ import { claudeCall, aiHazir } from "../lib/ai.js";
 import { xlsxToGrid } from "../lib/xlsx.js";
 import { pdfToRows } from "../lib/pdf.js";
 import { ekstreParse, yenidenSiniflandir } from "../lib/ekstre.js";
-import { giderKategorileri, gelirKategorileri } from "../lib/finance.js";
+import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
@@ -296,7 +296,9 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     const banka = (oz.banka || "").trim();
     const mevcut = findata.hesaplar || [];
     let hedef = son4 ? mevcut.find((h) => h.son4 === son4 || (h.ad || "").includes(son4)) : null;
-    if (!hedef && banka) hedef = mevcut.find((h) => h.tip === tip && (h.ad || "").toLowerCase().includes(banka.toLowerCase()));
+    // Banka adıyla eşle — ama YALNIZCA son4 çakışmıyorsa. Aynı bankanın farklı
+    // hesapları (ör. Enpara Vadesiz 0457 vs Tatil 8551) BİRLEŞMESİN.
+    if (!hedef && banka) hedef = mevcut.find((h) => h.tip === tip && (h.ad || "").toLowerCase().includes(banka.toLowerCase()) && (!son4 || !h.son4 || h.son4 === son4));
     const ad = hedef?.ad || ((banka || (tip === "kart" ? "Kredi Kartı" : "Hesap")) + (son4 ? ` ••${son4}` : ""));
     return { tip, son4, banka, hedef, ad, yeni: !hedef && (son4 || banka) };
   }
@@ -421,6 +423,13 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
   }
   const ekstreVar = (findata.giderler || []).some((g) => g.kaynak === "ekstre");
 
+  // Temiz baştan içe aktarmak için: içe aktarılan veriyi sil (geri alınabilir)
+  function iceAktariSifirla() {
+    const onceki = findata;
+    setFindata((d) => iceAktarilaniTemizle(d));
+    bildir("İçe aktarılan hesaplar, işlemler ve akış temizlendi — şimdi ekstreleri temiz baştan yükle.", "ok", { label: "↩ Geri al", onClick: () => setFindata(() => onceki) });
+  }
+
   return (
     <div>
       <p style={{ color: V.ink3, fontSize: "12.5px", margin: "0 0 1.25rem" }}>
@@ -429,9 +438,15 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       </p>
 
       {ekstreVar && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: "1.1rem", padding: "9px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10 }}>
-          <Btn variant="ghost" onClick={yenidenSiniflandirYap} style={{ padding: "8px 13px" }}>↻ İşlemleri yeniden sınıflandır</Btn>
-          <span style={{ color: V.ink3, fontSize: "11.5px" }}>Eski "Diğer" harcamaları düzeltir, abonelikleri (Spotify, Apple…) ayıklar</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: "1.1rem", padding: "10px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Btn variant="ghost" onClick={yenidenSiniflandirYap} style={{ padding: "8px 13px" }}>↻ İşlemleri yeniden sınıflandır</Btn>
+            <span style={{ color: V.ink3, fontSize: "11.5px" }}>Eski "Diğer" harcamaları düzeltir, abonelikleri (Spotify, Apple…) ayıklar</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={iceAktariSifirla} className="fa-btn" style={{ padding: "8px 13px", borderRadius: 9, border: `1px solid ${V.neg}55`, background: "transparent", color: V.neg, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: F }}>⌦ İçe aktarılanı sıfırla</button>
+            <span style={{ color: V.ink3, fontSize: "11.5px" }}>Hesaplar karışmışsa temiz başla, sonra ekstreleri tek tek yeniden yükle (geri alınabilir)</span>
+          </div>
         </div>
       )}
 
