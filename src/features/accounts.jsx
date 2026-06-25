@@ -109,6 +109,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   const borc = hesaplar.filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
   const net = varlik - borc;
   const akis = transferleriEslestir(findata); // hesaplar arası transfer korelasyonu
+  const [acikYol, setAcikYol] = useState(null); // akış listesinde açık hesap-çifti
 
   function modalKaydet(form) {
     if (!form.ad.trim()) {
@@ -231,18 +232,39 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           {/* Akış diyagramı (Sankey) */}
           <AkisDiyagram ozet={akis.ozet} />
 
-          {/* Korelasyon özeti: hesap çiftleri arası toplam akış (legend, tam ad+₺) */}
+          {/* Korelasyon özeti: hesap çiftleri — tıkla → tek tek transferler açılır */}
           {akis.ozet.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {akis.ozet.map((p) => (
-                <div key={p.fromAd + p.toAd} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "10px", padding: "9px 12px" }}>
-                  <span style={{ fontSize: "13px", color: V.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    <b>{p.fromAd}</b> <span style={{ color: V.accent }}>→</span> <b>{p.toAd}</b>
-                    <span style={{ color: V.ink3, fontSize: "11.5px" }}> · {p.adet} transfer</span>
-                  </span>
-                  <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(p.toplam)}</span>
-                </div>
-              ))}
+              {akis.ozet.map((p) => {
+                const yol = `${p.fromAd}→${p.toAd}`;
+                const acik = acikYol === yol;
+                const detay = acik ? akis.eslesen.filter((e) => e.fromAd === p.fromAd && e.toAd === p.toAd) : [];
+                return (
+                  <div key={yol} style={{ background: V.card2, border: `1px solid ${acik ? V.border2 : V.border}`, borderRadius: "10px", overflow: "hidden" }}>
+                    <div onClick={() => setAcikYol(acik ? null : yol)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", padding: "9px 12px", cursor: "pointer" }}>
+                      <span style={{ fontSize: "13px", color: V.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ display: "inline-block", width: 11, color: V.ink3, transform: acik ? "rotate(90deg)" : "none", transition: "transform .15s", marginRight: 3 }}>›</span>
+                        <b>{p.fromAd}</b> <span style={{ color: V.accent }}>→</span> <b>{p.toAd}</b>
+                        <span style={{ color: V.ink3, fontSize: "11.5px" }}> · {p.adet} transfer</span>
+                      </span>
+                      <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(p.toplam)}</span>
+                    </div>
+                    {acik && (
+                      <div style={{ borderTop: `1px solid ${V.line}`, padding: "3px 12px 7px 27px" }}>
+                        {detay.map((e, i) => (
+                          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", padding: "7px 0", borderBottom: i < detay.length - 1 ? `1px solid ${V.line}` : "none", fontSize: "12px" }}>
+                            <span style={{ color: V.ink2, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              <span style={{ color: V.ink3 }}>{e.tarih}</span>
+                              {e.aciklama ? ` · ${e.aciklama}` : e.kaynak === "manuel" ? " · elle transfer" : ""}
+                            </span>
+                            <span className="num" style={{ fontWeight: 600, color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(e.miktar)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 

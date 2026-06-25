@@ -159,7 +159,7 @@ export function transferleriEslestir(findata) {
   const eslesen = [];
   // Manuel transferler her zaman eşleşmiş kabul edilir
   (findata?.transferler || []).forEach((t) =>
-    eslesen.push({ fromAd: ad(t.kaynakId), toAd: ad(t.hedefId), miktar: Math.abs(+t.miktar || 0), tarih: t.tarih, kaynak: "manuel" })
+    eslesen.push({ fromAd: ad(t.kaynakId), toAd: ad(t.hedefId), miktar: Math.abs(+t.miktar || 0), tarih: t.tarih, kaynak: "manuel", aciklama: "" })
   );
   // İçe aktarılan bacaklar: çıkan (−) ile giren (+) eşle
   const legs = (findata?.transferAkis || []).map((l, i) => ({ ...l, _i: i }));
@@ -177,7 +177,7 @@ export function transferleriEslestir(findata) {
     if (g) {
       used.add(g._i);
       used.add(c._i);
-      eslesen.push({ fromAd: ad(c.hesapId), toAd: ad(g.hesapId), miktar: Math.abs(+c.miktar), tarih: c.tarih, kaynak: "ekstre" });
+      eslesen.push({ fromAd: ad(c.hesapId), toAd: ad(g.hesapId), miktar: Math.abs(+c.miktar), tarih: c.tarih, kaynak: "ekstre", aciklama: c.aciklama || g.aciklama || "" });
     }
   }
   const eslesmeyen = legs
