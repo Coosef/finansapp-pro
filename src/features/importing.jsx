@@ -73,12 +73,17 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
         kayitlar.push({ baslik: x.aciklama, miktar, kategori: "Transfer", tarih: x.tarih, kaynak: "ekstre", tip: "transfer", _transfer: true, _yon: x.miktar < 0 ? "cikis" : "giris", _sec: false });
         continue;
       }
+      if (x.tip === "abonelik") {
+        // Tespit edilen dijital abonelik → Abonelikler'e (gider değil)
+        kayitlar.push({ baslik: x.servis || x.aciklama, miktar, kategori: "Abonelik", tarih: x.tarih, kaynak: "ekstre", tip: "abonelik", _abonelik: true, _sec: true });
+        continue;
+      }
       const tip = x.tip === "gelir" ? "gelir" : "gider";
       const temel = { baslik: x.aciklama, miktar, kategori: x.kategori || "Diğer", tarih: x.tarih, kaynak: "ekstre", tip };
       const t = tekrarMi(temel);
       kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
     }
-    return { kayitlar, atlanan, ozet, transferSayisi: kayitlar.filter((k) => k._transfer).length };
+    return { kayitlar, atlanan, ozet, transferSayisi: kayitlar.filter((k) => k._transfer).length, aboneSayisi: kayitlar.filter((k) => k._abonelik).length };
   }
 
   async function fisYukle(e) {
@@ -302,7 +307,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     const gel = new Set(gelirKategorileri(findata));
     const yeni = new Set();
     (kayitlar || []).forEach((k) => {
-      if (k._transfer || k.tip === "transfer") return; // transfer kategori değil
+      if (k._transfer || k.tip === "transfer" || k._abonelik || k.tip === "abonelik") return; // transfer/abonelik kategori değil
       const kat = (k.kategori || "").trim();
       if (!kat) return;
       if (k.tip === "gelir" ? !gel.has(kat) : !gid.has(kat)) yeni.add(kat);
@@ -316,7 +321,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
     const gel = new Set(gelirKategorileri(findata));
     const giderY = [], gelirY = [];
     (kayitlar || []).forEach((k) => {
-      if (k._transfer || k.tip === "transfer") return; // transfer kategori değil
+      if (k._transfer || k.tip === "transfer" || k._abonelik || k.tip === "abonelik") return; // transfer/abonelik kategori değil
       const kat = (k.kategori || "").trim();
       if (!kat) return;
       if (k.tip === "gelir") { if (!gel.has(kat)) { gel.add(kat); gelirY.push(kat); } }
@@ -347,6 +352,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       const giderKat = [...(d.kategoriler?.gider || [])];
       const gelirKat = [...(d.kategoriler?.gelir || [])];
       const gidSet = new Set(giderKat), gelSet = new Set(gelirKat);
+      const abonelikler = [...(d.abonelikler || [])];
+      const aboSet = new Set(abonelikler.map((a) => (a.baslik || "").toLowerCase().trim()));
       const hesaplar = [...(d.hesaplar || [])];
       // Hesabı bağla/oluştur; kart → dönem borcu, banka → ekstre güncel bakiyesi
       let hesapId = hc.hedef?.id || null;
@@ -364,7 +371,13 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       }
       // İşlemleri ekle + kategorilerini listeye al
       secili.forEach((k, i) => {
-        const { _tekrar, _sec, _taksit, _transfer, _yon, tip: t, ...kayit } = k;
+        const { _tekrar, _sec, _taksit, _transfer, _yon, _abonelik, tip: t, ...kayit } = k;
+        if (t === "abonelik") {
+          // Aynı servis zaten varsa tekrar ekleme
+          const ad = (kayit.baslik || "").toLowerCase().trim();
+          if (ad && !aboSet.has(ad)) { aboSet.add(ad); abonelikler.push({ id: uid() + 8000 + i, baslik: kayit.baslik, miktar: kayit.miktar, kategori: "Abonelik", tarih: kayit.tarih }); }
+          return;
+        }
         const rec = { id: uid() + i, ...kayit, hesapId: t === "gelir" || t === "gider" ? hesapId || "" : "" };
         if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
         else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
@@ -379,7 +392,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           if (!mevcut.has(anahtar(leg))) { mevcut.add(anahtar(leg)); transferAkis.push(leg); }
         });
       }
-      return { ...d, gelirler, giderler, hesaplar, transferAkis, kategoriler: { gider: giderKat, gelir: gelirKat } };
+      return { ...d, gelirler, giderler, abonelikler, hesaplar, transferAkis, kategoriler: { gider: giderKat, gelir: gelirKat } };
     });
     secili.forEach((k) => kategoriOgren(k.baslik, k.kategori)); // kategori hafızası
     const ay = buAy();
@@ -497,6 +510,11 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               📅 {sonuc.taksitSayisi} gelecek taksit, sonraki aylara borç olarak hazırlandı (mavi etiketli). İstemezsen işaretini kaldır.
             </p>
           )}
+          {sonuc.aboneSayisi > 0 && (
+            <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              🔁 {sonuc.aboneSayisi} abonelik tespit edildi (Spotify, Amazon Prime vb.) — gider yerine <b>Abonelikler</b>'e eklenir. İstemezsen işaretini kaldır.
+            </p>
+          )}
           {yeniKat.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 0.75rem", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               <span style={{ color: V.ink2, fontSize: "0.78rem" }}>🏷️ Listende olmayan kategoriler: <b style={{ color: V.ink }}>{yeniKat.join(", ")}</b> — onaylarken otomatik eklenir.</span>
@@ -535,11 +553,14 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
                   {k._taksit && (
                     <span style={{ background: "var(--chip-green)", border: `1px solid ${V.pos}55`, color: V.pos, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>GELECEK TAKSİT</span>
                   )}
+                  {k._abonelik && (
+                    <span style={{ background: "var(--chip-gold)", border: `1px solid ${V.accent}55`, color: V.accent, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>ABONELİK</span>
+                  )}
                   {k.kalemler?.length ? <span style={{ color: V.accent, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
                 </p>
-                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
+                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : k._abonelik ? "Abonelik · aylık" : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
               </div>
-              <p className="num" style={{ margin: 0, fontWeight: 700, color: k._transfer ? V.ink3 : k.tip === "gelir" ? V.pos : V.neg }}>{k._transfer ? "⇄ " : k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
+              <p className="num" style={{ margin: 0, fontWeight: 700, color: k._transfer ? V.ink3 : k._abonelik ? V.accent : k.tip === "gelir" ? V.pos : V.neg }}>{k._transfer ? "⇄ " : k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
             </div>
           ))}
         </Card>

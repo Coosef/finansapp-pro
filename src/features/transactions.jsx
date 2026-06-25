@@ -21,15 +21,16 @@ const TIP_STIL = {
   abonelik: { bg: V.chipGold, renk: V.gold, icon: "repeat", sign: "−", amtRenk: V.neg },
 };
 
-function IslemSatir({ t, son, onDuzenle, onSil }) {
+function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
   const s = TIP_STIL[t.tip] || TIP_STIL.gider;
   const tekrar = t.otomatik || t.tekrar || t.tip === "abonelik";
+  const meta = [hesapAd, t.kategori, isoKisa(t.tarih)].filter(Boolean).join(" · ");
   return (
     <div
       onClick={() => onDuzenle(t.tip, t)}
       style={{
         display: "flex", alignItems: "center", gap: "13px",
-        padding: "13px 0", borderBottom: son ? "none" : `1px solid ${V.line}`, cursor: "pointer",
+        padding: "12px 0", borderBottom: son ? "none" : `1px solid ${V.line}`, cursor: "pointer",
       }}
     >
       <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: s.bg, color: s.renk, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -41,12 +42,15 @@ function IslemSatir({ t, son, onDuzenle, onSil }) {
           {tekrar && (
             <span title="Her ay tekrarlanır" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "10px", color: V.gold, background: V.chipGold, padding: "1px 6px", borderRadius: 6, fontWeight: 600, flexShrink: 0 }}>⟳ aylık</span>
           )}
+          {t.kaynak === "ekstre" && (
+            <span title="Ekstreden içe aktarıldı" style={{ fontSize: "9.5px", color: V.ink3, border: `1px solid ${V.border2}`, padding: "1px 5px", borderRadius: 5, fontWeight: 600, flexShrink: 0, letterSpacing: "0.03em" }}>EKSTRE</span>
+          )}
         </div>
         <div style={{ fontSize: "11.5px", color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {t.kategori} · {isoKisa(t.tarih)}
+          {meta}
         </div>
       </div>
-      <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: s.amtRenk, flexShrink: 0 }}>
+      <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: s.amtRenk, flexShrink: 0, fontFamily: MONO }}>
         {s.sign}{TL(t.miktar)}
       </span>
       <DelBtn onClick={() => onSil(t.tip, t.id)} />
@@ -64,13 +68,26 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
     ...(findata.abonelikler || []).map((x) => ({ ...x, tip: "abonelik" })),
   ].sort((a, b) => String(b.tarih || "").localeCompare(String(a.tarih || "")));
 
+  const hesapAdi = (id) => (findata.hesaplar || []).find((h) => String(h.id) === String(id))?.ad || "";
+
   const aranan = q.trim().toLocaleLowerCase("tr");
   const liste = hepsi.filter((t) => {
     if (filter !== "tumu" && t.tip !== filter) return false;
     if (!aranan) return true;
-    const metin = `${t.baslik || ""} ${t.kategori || ""}`.toLocaleLowerCase("tr");
+    const metin = `${t.baslik || ""} ${t.kategori || ""} ${hesapAdi(t.hesapId)}`.toLocaleLowerCase("tr");
     return metin.includes(aranan);
   });
+
+  // Özet (filtreli liste): gelir / gider / net
+  const ozetGelir = liste.filter((t) => t.tip === "gelir").reduce((s, t) => s + (+t.miktar || 0), 0);
+  const ozetGider = liste.filter((t) => t.tip !== "gelir").reduce((s, t) => s + (+t.miktar || 0), 0);
+
+  // Aya göre grupla (YYYY-MM), her grupta net alt-toplam
+  const gruplar = {};
+  liste.forEach((t) => { const ay = String(t.tarih || "").slice(0, 7) || "—"; (gruplar[ay] = gruplar[ay] || []).push(t); });
+  const aylar = Object.keys(gruplar).sort().reverse();
+  const ayBaslik = (ay) => { const [y, m] = ay.split("-"); return AY_ADI[+m - 1] ? `${AY_ADI[+m - 1]} ${y}` : ay; };
+  const ayNet = (arr) => arr.reduce((s, t) => s + (t.tip === "gelir" ? +t.miktar : -t.miktar), 0);
 
   const FILTRELER = [
     { id: "tumu", label: "Tümü" },
@@ -116,11 +133,47 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
       {liste.length === 0 ? (
         <Bos baslik="İşlem yok" mesaj="Bu dönemde işlem bulunmuyor." icon="doc" />
       ) : (
-        <Card style={{ padding: "6px 18px" }}>
-          {liste.map((t, i) => (
-            <IslemSatir key={`${t.tip}-${t.id}`} t={t} son={i === liste.length - 1} onDuzenle={onDuzenle} onSil={onSil} />
-          ))}
-        </Card>
+        <>
+          {/* Özet şeridi */}
+          <Card style={{ marginBottom: 14, padding: "13px 18px", display: "flex", gap: 22, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em" }}>İşlem</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: V.ink, fontFamily: MONO }}>{liste.length}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em" }}>Gelir</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: V.pos, fontFamily: MONO }}>+{TL(ozetGelir)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em" }}>Gider</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: V.neg, fontFamily: MONO }}>−{TL(ozetGider)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em" }}>Net</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: ozetGelir - ozetGider >= 0 ? V.pos : V.neg, fontFamily: MONO }}>{TL(ozetGelir - ozetGider)}</div>
+            </div>
+          </Card>
+
+          {/* Aya göre gruplu liste */}
+          {aylar.map((ay) => {
+            const net = ayNet(gruplar[ay]);
+            return (
+              <div key={ay} style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "0 4px 7px" }}>
+                  <span className="serif" style={{ fontSize: 13.5, fontWeight: 600, color: V.ink2, fontFamily: SERIF }}>{ayBaslik(ay)}</span>
+                  <span style={{ fontSize: 11.5, color: V.ink3 }}>
+                    {gruplar[ay].length} işlem · net <b className="num" style={{ color: net >= 0 ? V.pos : V.neg, fontFamily: MONO }}>{TL(net)}</b>
+                  </span>
+                </div>
+                <Card style={{ padding: "6px 18px" }}>
+                  {gruplar[ay].map((t, i) => (
+                    <IslemSatir key={`${t.tip}-${t.id}`} t={t} hesapAd={hesapAdi(t.hesapId)} son={i === gruplar[ay].length - 1} onDuzenle={onDuzenle} onSil={onSil} />
+                  ))}
+                </Card>
+              </div>
+            );
+          })}
+        </>
       )}
     </div>
   );

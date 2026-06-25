@@ -8,6 +8,63 @@ import { transferUygula, transferleriEslestir } from "../lib/finance.js";
 import { Card, Btn, Field, Modal, DelBtn, Bos } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
+// ---- Hesaplar arası akış diyagramı (SVG Sankey: sol kaynak → sağ hedef) ----
+function AkisDiyagram({ ozet }) {
+  if (!ozet?.length) return null;
+  const kisalt = (s) => (s.length > 18 ? s.slice(0, 17) + "…" : s);
+  const sources = [...new Set(ozet.map((f) => f.fromAd))];
+  const targets = [...new Set(ozet.map((f) => f.toAd))];
+  const boxW = 138, boxH = 34, rowH = 48, W = 472;
+  const n = Math.max(sources.length, targets.length, 1);
+  const H = n * rowH + 6;
+  const leftX = 4, rightX = W - boxW - 4;
+  const colY = (arr, name) => {
+    const cnt = arr.length, i = arr.indexOf(name);
+    if (cnt === 1) return H / 2;
+    const top = boxH / 2 + 4, bot = H - boxH / 2 - 4;
+    return top + (bot - top) * (i / (cnt - 1));
+  };
+  const maxAmt = Math.max(...ozet.map((f) => f.toplam), 1);
+  const sw = (amt) => 2.5 + (amt / maxAmt) * 13;
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", marginBottom: 14 }}>
+      <defs>
+        <marker id="akisOk" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill={V.emerald2} />
+        </marker>
+      </defs>
+      {ozet.map((f, i) => {
+        const y1 = colY(sources, f.fromAd), y2 = colY(targets, f.toAd);
+        const x1 = leftX + boxW, x2 = rightX, xm = (x1 + x2) / 2;
+        return (
+          <g key={i}>
+            <path d={`M${x1},${y1} C${xm},${y1} ${xm},${y2} ${x2 - 9},${y2}`} fill="none" stroke={V.emerald2} strokeOpacity="0.3" strokeWidth={sw(f.toplam)} markerEnd="url(#akisOk)" />
+            <text x={xm} y={(y1 + y2) / 2 - 4} textAnchor="middle" fontSize="9.5" fill={V.ink2} fontWeight="700">{TL(f.toplam)}</text>
+          </g>
+        );
+      })}
+      {sources.map((s) => {
+        const y = colY(sources, s);
+        return (
+          <g key={"s" + s}>
+            <rect x={leftX} y={y - boxH / 2} width={boxW} height={boxH} rx="8" fill={V.card2} stroke={V.border2} />
+            <text x={leftX + 11} y={y + 3.5} fontSize="10.5" fill={V.ink} fontWeight="600">{kisalt(s)}</text>
+          </g>
+        );
+      })}
+      {targets.map((t) => {
+        const y = colY(targets, t);
+        return (
+          <g key={"t" + t}>
+            <rect x={rightX} y={y - boxH / 2} width={boxW} height={boxH} rx="8" fill={V.card2} stroke={V.border2} />
+            <text x={rightX + 11} y={y + 3.5} fontSize="10.5" fill={V.ink} fontWeight="600">{kisalt(t)}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // ---- Hesap ekle/düzenle modalı (yerel form durumu) ----
 function HesapModal({ baslangic, onKaydet, onClose }) {
   const [ad, setAd] = useState(baslangic?.ad || "");
@@ -171,14 +228,20 @@ export function Hesaplar({ findata, setFindata, bildir }) {
       {/* Hesaplar arası para akışı (korelasyon haritası) */}
       {(akis.ozet.length > 0 || akis.eslesmeyen.length > 0) && (
         <Card style={{ marginTop: "14px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "0.85rem" }}>
-            <Icon d="repeat" size={16} stroke={V.accent} />
-            <h3 style={{ margin: 0, fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Hesaplar Arası Para Akışı</h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: "0.85rem", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon d="repeat" size={16} stroke={V.accent} />
+              <h3 style={{ margin: 0, fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Hesaplar Arası Para Akışı</h3>
+            </div>
+            <span style={{ fontSize: "11px", color: V.ink3 }}>{akis.eslesen.length} eşleşen transfer</span>
           </div>
 
-          {/* Korelasyon özeti: hesap çiftleri arası toplam akış */}
+          {/* Akış diyagramı (Sankey) */}
+          <AkisDiyagram ozet={akis.ozet} />
+
+          {/* Korelasyon özeti: hesap çiftleri arası toplam akış (legend, tam ad+₺) */}
           {akis.ozet.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: akis.eslesen.length ? "1rem" : 0 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {akis.ozet.map((p) => (
                 <div key={p.fromAd + p.toAd} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "10px", padding: "9px 12px" }}>
                   <span style={{ fontSize: "13px", color: V.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -190,17 +253,6 @@ export function Hesaplar({ findata, setFindata, bildir }) {
               ))}
             </div>
           )}
-
-          {/* Son eşleşen transferler (detay) */}
-          {akis.eslesen.slice(0, 7).map((e, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${V.line}`, fontSize: "12.5px" }}>
-              <span style={{ color: V.ink2, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {e.fromAd} <span style={{ color: V.ink3 }}>→</span> {e.toAd}
-                <span style={{ color: V.ink3 }}> · {e.tarih}{e.kaynak === "manuel" ? " · elle" : ""}</span>
-              </span>
-              <span className="num" style={{ fontWeight: 600, color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(e.miktar)}</span>
-            </div>
-          ))}
 
           {akis.eslesmeyen.length > 0 && (
             <p style={{ margin: "0.85rem 0 0", fontSize: "11.5px", color: V.ink3, lineHeight: 1.6 }}>

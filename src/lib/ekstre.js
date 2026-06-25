@@ -44,23 +44,46 @@ export function tarihCevir(raw) {
   return null;
 }
 
-// Açıklamadan kaba kategori tahmini (gider/gelir). AI yok; kullanıcı düzeltebilir.
+// Bilinen abonelik/dijital servisler → temiz ad (gider'den ayrı "abonelik" olur)
+const SERVIS = [
+  [/amazon ?prime|amazonprime/, "Amazon Prime"], [/spotify/, "Spotify"], [/netflix/, "Netflix"],
+  [/youtube ?premium|youtubepremium/, "YouTube Premium"], [/disney ?\+?|disneyplus/, "Disney+"],
+  [/blu ?tv/, "BluTV"], [/exxen/, "Exxen"], [/\bgain\b/, "Gain"], [/mubi/, "MUBI"], [/\btabii\b/, "tabii"],
+  [/bein ?connect|beinconnect/, "beIN Connect"], [/s ?sport/, "S Sport+"],
+  [/icloud|apple ?music|itunes|apple\.com/, "Apple"], [/google ?one|google ?storage/, "Google One"],
+  [/chatgpt|openai/, "ChatGPT"], [/anthropic|claude\.ai/, "Claude"], [/storytel|audible/, "Storytel"],
+  [/game ?pass|xbox/, "Xbox Game Pass"], [/playstation ?plus|ps ?plus/, "PS Plus"], [/linkedin/, "LinkedIn"],
+  [/\bcanva\b/, "Canva"], [/\badobe\b/, "Adobe"], [/dropbox/, "Dropbox"], [/duolingo/, "Duolingo"], [/\bmedium\b/, "Medium"],
+];
+// Marka eşleştirmede hem Türkçe (I→ı) hem düz (I→i) normalize dene — yoksa
+// İngilizce markalar (SPOTIFY→spotıfy) kaçar.
+const ikiyon = (s) => [kucuk(s), String(s ?? "").toLowerCase()];
+export function aboneTespit(aciklama) {
+  const [a1, a2] = ikiyon(aciklama);
+  for (const [re, ad] of SERVIS) if (re.test(a1) || re.test(a2)) return ad;
+  return null;
+}
+
+// Açıklamadan kategori tahmini (gider/gelir). AI yok; kullanıcı düzeltebilir.
 const KATEGORI_DESEN = [
-  [/maaş|maas|ücret ödeme|özlük/, "Maaş"],
-  [/market|migros|bim|a101|şok|sok|carrefour|metro|tarım kredi/, "Market"],
-  [/restoran|kafe|cafe|yemek|lokanta|getir yemek|yemeksepeti|burger|pizza|starbucks/, "Restoran"],
-  [/akaryakıt|akaryakit|petrol|benzin|opet|shell|bp |po |otoyol|hgs|ogs|otobüs|metro|taksi|uber|bitaksi|ulaşım|ulasim/, "Ulaşım"],
-  [/elektrik|su |doğalgaz|dogalgaz|fatura|telekom|turkcell|vodafone|türk telekom|internet|tv\+/, "Faturalar"],
-  [/eczane|hastane|sağlık|saglik|medikal|doktor|diş|dis /, "Sağlık"],
-  [/giyim|defacto|lc waikiki|koton|mavi|boyner|zara|h&m|trendyol|ayakkabı/, "Giyim"],
-  [/teknosa|vatan|media markt|apple|google|microsoft|yazılım|yazilim|abonelik|spotify|netflix|amazon|hepsiburada/, "Teknoloji"],
-  [/sinema|oyun|eğlence|eglence|konser|bilet|steam|playstation/, "Eğlence"],
-  [/faiz|temettü|temettu|kar payı|kar payi/, "Faiz/Yatırım"],
-  [/kira/, "Kira"],
+  [/maaş|maas|ücret ödeme|özlük|bordro/, "Maaş"],
+  [/migros|bim\b|a101|a 101|şok market|şok mar|carrefour|tarım kredi|file market|hakmar|onur market|macrocenter|metro market|market|bakkal|manav|kasap/, "Market"],
+  [/yemeksepeti|getir ?yemek|trendyol ?yemek|migros ?yemek|mcdonald|burger ?king|dominos|popeyes|kfc|starbucks|kahve dünya|gloria jean|caffe|cafe|kafe|restoran|restaurant|lokanta|pizza|burger|döner|doner|fırın|firin|pastane|simit/, "Restoran"],
+  [/opet|shell|\bbp\b|petrol ofisi|\bpo\b|total\b|aytemiz|akaryakıt|akaryakit|benzin|motorin|otoyol|köprü|hgs|ogs|otobüs|metro\b|metrobüs|taksi|uber\b|bitaksi|marti|martı|scooter|iett|ego|ulaşım|ulasim|park ?yeri|otopark/, "Ulaşım"],
+  [/superonline|türknet|turknet|millenicom|kablonet|d-?smart|digiturk|ttnet|türk ?telekom|turk ?telekom|turkcell|vodafone|netgsm|aydem|\bck\b|akdeniz elektrik|başkent|baskent|enerjisa|gdz|uedaş|uedas|igdaş|igdas|aksa doğal|asat|i̇ski|iski|aski|aská|elektrik|doğalgaz|dogalgaz|\bsu \b|\bsu faturas|internet|fatura|telekom/, "Faturalar"],
+  [/eczane|pharma|hastane|medical ?park|acıbadem|acibadem|memorial|medikal|poliklinik|laboratuvar|doktor|diş|\bdent|optik|gözlük/, "Sağlık"],
+  [/lc ?waikiki|defacto|de facto|koton|\bmavi\b|boyner|\bzara\b|pull ?& ?bear|bershka|stradivarius|h&m|ayakkabı|\bflo\b|deichmann|sneaks|giyim|tekstil|moda/, "Giyim"],
+  [/trendyol|hepsiburada|amazon|\bn11\b|gittigidiyor|teknosa|\bvatan\b|mediamarkt|media ?markt|incehesap|itopya|microsoft|samsung|\bapple\b|yazılım|yazilim/, "Teknoloji"],
+  [/sinema|cinemaximum|cineverse|tiyatro|konser|festival|bilet|biletix|passo|\boyun\b|steam|playstation|epic ?games|eğlence|eglence/, "Eğlence"],
+  [/spor ?salon|gym\b|fitness|macfit|sporium|mac ?fit|hms\b/, "Spor"],
+  [/giden transfer|para ?gönder|para ?gonder|gönderim|gonderim|havale|\beft\b|\bfast\b/, "Gönderim"],
+  [/faiz|temettü|temettu|kâr payı|kar payı|kar payi|getiri/, "Faiz/Yatırım"],
+  [/kira\b/, "Kira"],
+  [/vergi|mtv|harç|harc|ceza|trafik ceza|sgk|bağkur|bagkur/, "Vergi/Resmi"],
 ];
 export function kategoriTahmin(aciklama, tip) {
-  const a = kucuk(aciklama);
-  for (const [re, kat] of KATEGORI_DESEN) if (re.test(a)) return kat;
+  const [a1, a2] = ikiyon(aciklama);
+  for (const [re, kat] of KATEGORI_DESEN) if (re.test(a1) || re.test(a2)) return kat;
   return tip === "gelir" ? "Diğer Gelir" : "Diğer";
 }
 
@@ -153,10 +176,13 @@ export function ekstreParse(rows) {
     const islem = idx.islem >= 0 ? (row[idx.islem] || "") : "";
     const aciklama = idx.aciklama >= 0 ? (row[idx.aciklama] || "") : "";
     const bakiye = idx.bakiye >= 0 && String(row[idx.bakiye] ?? "").trim() !== "" ? sayiCevir(row[idx.bakiye]) : null;
-    const tip = siniflandir(islem, aciklama, miktar, sahipTokens, kart ? "kart" : "hesap");
-    const kategori = tip === "transfer" || tip === "odeme" ? null : kategoriTahmin(aciklama || islem, tip);
+    let tip = siniflandir(islem, aciklama, miktar, sahipTokens, kart ? "kart" : "hesap");
+    let kategori = tip === "transfer" || tip === "odeme" ? null : kategoriTahmin(aciklama || islem, tip);
+    // Abonelik tespiti: gider bir dijital servise aitse → "abonelik"
+    let servis = null;
+    if (tip === "gider") { servis = aboneTespit(aciklama || islem); if (servis) { tip = "abonelik"; kategori = "Abonelik"; } }
     islemler.push({
-      tarih, miktar, bakiye, tip, kategori,
+      tarih, miktar, bakiye, tip, kategori, servis,
       islem: String(islem).trim(),
       aciklama: String(aciklama).trim() || String(islem).trim() || "İşlem",
     });

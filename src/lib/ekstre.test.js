@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin } from "./ekstre.js";
+import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit } from "./ekstre.js";
+
+describe("aboneTespit + kategori (gelişmiş)", () => {
+  it("dijital abonelikleri tanır", () => {
+    expect(aboneTespit("IYZICO/AmazonPrimeTR ISTANBUL TR")).toBe("Amazon Prime");
+    expect(aboneTespit("SPOTIFY AB STOCKHOLM")).toBe("Spotify");
+    expect(aboneTespit("APPLE.COM/BILL")).toBe("Apple");
+    expect(aboneTespit("MIGROS MARKET")).toBeNull();
+  });
+  it("fatura/gönderim/market kategorilerini ayırır", () => {
+    expect(kategoriTahmin("0012278988 - SUPERONLINE - ODEME", "gider")).toBe("Faturalar");
+    expect(kategoriTahmin("ANTALYA SU (ASAT)", "gider")).toBe("Faturalar");
+    expect(kategoriTahmin("Giden Transfer, Helin Ergüzel, EFT (FAST)", "gider")).toBe("Gönderim");
+    expect(kategoriTahmin("MIGROS 5M", "gider")).toBe("Market");
+  });
+  it("ekstreParse aboneliği 'abonelik' tipine ayırır", () => {
+    const rows = [["Ad soyad", "ALI"], ["Tarih", "Açıklama", "Tutar", "Bakiye"], ["01/05/2026", "IYZICO/AmazonPrimeTR ISTANBUL", "-69,90", "100,00"]];
+    const { islemler } = ekstreParse(rows);
+    expect(islemler[0].tip).toBe("abonelik");
+    expect(islemler[0].servis).toBe("Amazon Prime");
+  });
+});
 
 // Gerçek banka XLSX biçimini taklit eden anonim ızgara
 const ornekIzgara = () => [
