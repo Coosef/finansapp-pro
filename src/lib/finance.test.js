@@ -1,5 +1,40 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, transferleriEslestir, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre } from "./finance.js";
+
+describe("transferleriEslestir", () => {
+  const findata = {
+    hesaplar: [{ id: "a", ad: "DenizBank" }, { id: "b", ad: "Enpara" }],
+    transferler: [{ id: "m1", kaynakId: "a", hedefId: "b", miktar: 1000, tarih: "2026-03-01" }],
+    transferAkis: [
+      { id: 1, hesapId: "a", tarih: "2026-04-04", miktar: -50000, aciklama: "Giden" },
+      { id: 2, hesapId: "b", tarih: "2026-04-05", miktar: 50000, aciklama: "Gelen" },
+      { id: 3, hesapId: "a", tarih: "2026-04-10", miktar: -9000, aciklama: "Helin Ergüzel" },
+    ],
+  };
+  const r = transferleriEslestir(findata);
+
+  it("çıkan↔giren bacakları farklı hesaplarda eşler", () => {
+    const e = r.eslesen.find((x) => x.kaynak === "ekstre");
+    expect(e.fromAd).toBe("DenizBank");
+    expect(e.toAd).toBe("Enpara");
+    expect(e.miktar).toBe(50000);
+  });
+
+  it("manuel transferi de eşleşmiş listeye katar", () => {
+    expect(r.eslesen.some((x) => x.kaynak === "manuel" && x.miktar === 1000)).toBe(true);
+  });
+
+  it("karşılığı olmayan bacağı eşleşmeyen sayar", () => {
+    expect(r.eslesmeyen.length).toBe(1);
+    expect(r.eslesmeyen[0].aciklama).toBe("Helin Ergüzel");
+  });
+
+  it("hesap çiftine göre özet (korelasyon) çıkarır", () => {
+    const yol = r.ozet.find((o) => o.fromAd === "DenizBank" && o.toAd === "Enpara");
+    expect(yol.toplam).toBe(51000); // 50000 ekstre + 1000 manuel
+    expect(yol.adet).toBe(2);
+  });
+});
 
 describe("bosVeri", () => {
   it("beklenen alanları içerir", () => {

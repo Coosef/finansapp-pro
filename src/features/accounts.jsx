@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { V, F, SERIF, MONO, HESAP_TIP } from "../lib/constants.js";
 import { uid, TL, bugun, sayiCevir } from "../lib/format.js";
-import { transferUygula } from "../lib/finance.js";
+import { transferUygula, transferleriEslestir } from "../lib/finance.js";
 import { Card, Btn, Field, Modal, DelBtn, Bos } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -59,6 +59,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   const varlik = hesaplar.filter((h) => h.tip !== "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
   const borc = hesaplar.filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
   const net = varlik - borc;
+  const akis = transferleriEslestir(findata); // hesaplar arası transfer korelasyonu
 
   function modalKaydet(form) {
     if (!form.ad.trim()) {
@@ -165,6 +166,48 @@ export function Hesaplar({ findata, setFindata, bildir }) {
             );
           })}
         </div>
+      )}
+
+      {/* Hesaplar arası para akışı (korelasyon haritası) */}
+      {(akis.ozet.length > 0 || akis.eslesmeyen.length > 0) && (
+        <Card style={{ marginTop: "14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "0.85rem" }}>
+            <Icon d="repeat" size={16} stroke={V.accent} />
+            <h3 style={{ margin: 0, fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Hesaplar Arası Para Akışı</h3>
+          </div>
+
+          {/* Korelasyon özeti: hesap çiftleri arası toplam akış */}
+          {akis.ozet.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: akis.eslesen.length ? "1rem" : 0 }}>
+              {akis.ozet.map((p) => (
+                <div key={p.fromAd + p.toAd} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: "10px", padding: "9px 12px" }}>
+                  <span style={{ fontSize: "13px", color: V.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <b>{p.fromAd}</b> <span style={{ color: V.accent }}>→</span> <b>{p.toAd}</b>
+                    <span style={{ color: V.ink3, fontSize: "11.5px" }}> · {p.adet} transfer</span>
+                  </span>
+                  <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(p.toplam)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Son eşleşen transferler (detay) */}
+          {akis.eslesen.slice(0, 7).map((e, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${V.line}`, fontSize: "12.5px" }}>
+              <span style={{ color: V.ink2, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {e.fromAd} <span style={{ color: V.ink3 }}>→</span> {e.toAd}
+                <span style={{ color: V.ink3 }}> · {e.tarih}{e.kaynak === "manuel" ? " · elle" : ""}</span>
+              </span>
+              <span className="num" style={{ fontWeight: 600, color: V.ink, fontFamily: MONO, whiteSpace: "nowrap" }}>{TL(e.miktar)}</span>
+            </div>
+          ))}
+
+          {akis.eslesmeyen.length > 0 && (
+            <p style={{ margin: "0.85rem 0 0", fontSize: "11.5px", color: V.ink3, lineHeight: 1.6 }}>
+              ⇆ {akis.eslesmeyen.length} eşleşmeyen hareket — karşı hesabın ekstresi yok ya da dışarıya/dışarıdan (ör. başka kişiye gönderim). Bunlar gelir/gider olarak ayrı işlenir.
+            </p>
+          )}
+        </Card>
       )}
 
       {/* Son transferler */}

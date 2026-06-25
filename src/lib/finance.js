@@ -149,6 +149,52 @@ export function transferUygula(d, kaynakId, hedefId, miktar) {
   };
 }
 
+// ---- Hesaplar arası transfer eşleştirme (korelasyon) ----
+// Ekstrelerden gelen tek-yönlü bacakları (transferAkis) ve manuel iki-yönlü
+// transferleri (transferler) birleştirir; çıkan↔giren bacakları farklı
+// hesaplarda eşler (aynı tutar, ±4 gün). Eşleşmeyenler "dış" sayılır.
+export function transferleriEslestir(findata) {
+  const hesaplar = findata?.hesaplar || [];
+  const ad = (id) => hesaplar.find((h) => String(h.id) === String(id))?.ad || "Bilinmeyen hesap";
+  const eslesen = [];
+  // Manuel transferler her zaman eşleşmiş kabul edilir
+  (findata?.transferler || []).forEach((t) =>
+    eslesen.push({ fromAd: ad(t.kaynakId), toAd: ad(t.hedefId), miktar: Math.abs(+t.miktar || 0), tarih: t.tarih, kaynak: "manuel" })
+  );
+  // İçe aktarılan bacaklar: çıkan (−) ile giren (+) eşle
+  const legs = (findata?.transferAkis || []).map((l, i) => ({ ...l, _i: i }));
+  const cikan = legs.filter((l) => (+l.miktar || 0) < 0);
+  const giren = legs.filter((l) => (+l.miktar || 0) > 0);
+  const used = new Set();
+  for (const c of cikan) {
+    const g = giren.find(
+      (x) =>
+        !used.has(x._i) &&
+        String(x.hesapId) !== String(c.hesapId) &&
+        Math.abs(Math.abs(+x.miktar) - Math.abs(+c.miktar)) < 1 &&
+        Math.abs(new Date(x.tarih) - new Date(c.tarih)) <= 4 * 86400000
+    );
+    if (g) {
+      used.add(g._i);
+      used.add(c._i);
+      eslesen.push({ fromAd: ad(c.hesapId), toAd: ad(g.hesapId), miktar: Math.abs(+c.miktar), tarih: c.tarih, kaynak: "ekstre" });
+    }
+  }
+  const eslesmeyen = legs
+    .filter((l) => !used.has(l._i))
+    .map((l) => ({ hesapAd: ad(l.hesapId), miktar: +l.miktar || 0, tarih: l.tarih, aciklama: l.aciklama }));
+  // Hesap çiftine göre özet (korelasyon haritası)
+  const ozetMap = {};
+  eslesen.forEach((e) => {
+    const k = `${e.fromAd}→${e.toAd}`;
+    (ozetMap[k] = ozetMap[k] || { fromAd: e.fromAd, toAd: e.toAd, toplam: 0, adet: 0 }).toplam += e.miktar;
+    ozetMap[k].adet++;
+  });
+  const ozet = Object.values(ozetMap).sort((a, b) => b.toplam - a.toplam);
+  eslesen.sort((a, b) => new Date(b.tarih) - new Date(a.tarih));
+  return { eslesen, eslesmeyen, ozet };
+}
+
 // Boş kullanıcı verisi — tüm okuma noktaları { ...bosVeri(), ...kayitli }
 // ile birleştirilir, böylece eski yedeklerde eksik alanlar otomatik dolar.
 export const bosVeri = () => ({
@@ -166,6 +212,7 @@ export const bosVeri = () => ({
   kurlar: null,
   hesaplar: [],
   transferler: [],
+  transferAkis: [], // ekstrelerden gelen tek-yönlü transfer bacakları (eşleştirme için)
   zarflar: {},
   kurallar: [],
   meydanOkumalar: [],

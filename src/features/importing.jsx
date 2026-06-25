@@ -369,7 +369,17 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
         if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
         else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
       });
-      return { ...d, gelirler, giderler, hesaplar, kategoriler: { gider: giderKat, gelir: gelirKat } };
+      // Transfer bacaklarını sakla (hesaplar arası akış/korelasyon için) — tekrarsız
+      const transferAkis = [...(d.transferAkis || [])];
+      if (hesapId) {
+        const anahtar = (l) => `${l.hesapId}|${l.tarih}|${Math.round(l.miktar)}|${(l.aciklama || "").slice(0, 14)}`;
+        const mevcut = new Set(transferAkis.map(anahtar));
+        sonuc.kayitlar.filter((k) => k._transfer).forEach((k, i) => {
+          const leg = { id: uid() + 7000 + i, hesapId, tarih: k.tarih, miktar: k._yon === "cikis" ? -k.miktar : k.miktar, aciklama: k.baslik };
+          if (!mevcut.has(anahtar(leg))) { mevcut.add(anahtar(leg)); transferAkis.push(leg); }
+        });
+      }
+      return { ...d, gelirler, giderler, hesaplar, transferAkis, kategoriler: { gider: giderKat, gelir: gelirKat } };
     });
     secili.forEach((k) => kategoriOgren(k.baslik, k.kategori)); // kategori hafızası
     const ay = buAy();
