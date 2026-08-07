@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from "react";
 import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
 import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
-import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
+import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele, anahtarKaydet } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
 import { sifreDogrula, sifreHashle } from "../lib/kripto.js";
 import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril } from "../lib/sync.js";
@@ -476,9 +476,22 @@ function AiKart({ findata, setFindata, bildir }) {
     setAyar(guncel);
     setTest(null);
   }
-  function kaydet() {
-    setAyar({ apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
-    bildir("AI ayarları kaydedildi");
+  const bulut = saglayici === "anthropic" || gemini || openai;
+  async function kaydet() {
+    const key = anahtar.trim();
+    try {
+      if (bulut && ay.proxyMod) {
+        // Anahtarı SUNUCUYA yaz, cihazda tutma
+        if (key) { await anahtarKaydet(saglayici, key); setAnahtar(""); }
+        setAyar({ apiKey: "", yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+        bildir(key ? "Anahtar sunucuya kaydedildi (cihazda saklanmadı)" : "AI ayarları kaydedildi");
+      } else {
+        setAyar({ apiKey: key, yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+        bildir("AI ayarları kaydedildi");
+      }
+    } catch (e) {
+      bildir(e?.message || "Kaydedilemedi", "err");
+    }
   }
   async function baglantiTest() {
     configureAI({ ...ay, aiSaglayici: saglayici, apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
@@ -617,6 +630,17 @@ function AiKart({ findata, setFindata, bildir }) {
             Anahtarını console.anthropic.com'dan alırsın; yalnızca bu tarayıcıda saklanır.
           </div>
         </>
+      )}
+
+      {bulut && (
+        <div style={{ marginBottom: 14, padding: "10px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10 }}>
+          <Toggle
+            label="Anahtarı sunucuda tut (proxy)"
+            sub="Anahtar cihazda saklanmaz; sunucundaki PocketBase'de tutulur ve AI çağrısı sunucudan yapılır. (Giriş gerekir.)"
+            checked={!!ay.proxyMod}
+            onChange={(v) => setAyar({ proxyMod: v })}
+          />
+        </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

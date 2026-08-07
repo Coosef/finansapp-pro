@@ -30,12 +30,12 @@ let _apiKey = "";
 let _model = "claude-opus-4-8";
 let _baseURL = ""; // yerel için OpenAI-uyumlu temel adres (…/v1)
 let _localModel = "";
+let _proxyMod = false; // true: bulut çağrıları sunucu proxy'sinden gider (anahtar sunucuda)
 let _bildirim = null; // UI bildirimi (örn. otomatik model yedeği)
 // App, bildir fonksiyonunu buraya kaydeder; ai.js olay bildirebilir
 export function aiBildirimAyarla(fn) { _bildirim = fn; }
 
 export const SAGLAYICI_SECENEK = [
-  { id: "proxy", label: "Sunucu Proxy (anahtar sunucuda · self-host)" },
   { id: "anthropic", label: "Anthropic Claude (bulut · anahtar gerekir)" },
   { id: "gemini", label: "Google Gemini (bulut · ücretsiz katman)" },
   { id: "openai", label: "OpenAI ChatGPT (bulut · anahtar gerekir)" },
@@ -84,9 +84,33 @@ function proxyURL() {
 }
 
 // Sağlayıcı, OpenAI-uyumlu /v1/chat/completions yolunu mu kullanıyor?
-// "proxy" ve "anthropic" Anthropic mesaj biçimini kullanır (proxy sunucudan iletir).
 function openAIUyumlu(p) {
-  return p !== "anthropic" && p !== "proxy";
+  return p !== "anthropic";
+}
+// Proxy uçlar için ortak POST (PocketBase auth token'lı). yol: /ai, /ai/anahtar, /ai/anahtar/durum
+async function proxyPost(yol, govde) {
+  const token = syncDurum().token;
+  const base = proxyURL().replace(/\/ai$/, "");
+  return fetch(base + yol, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: token } : {}) },
+    body: JSON.stringify(govde),
+  });
+}
+// Anahtarı SUNUCUYA kaydet (write-only; cihaza/localStorage'a yazılmaz)
+export async function anahtarKaydet(saglayici, anahtar) {
+  const res = await proxyPost("/ai/anahtar", { saglayici, anahtar });
+  if (!res.ok) throw new Error("Anahtar sunucuya kaydedilemedi (giriş yaptın mı?).");
+  return true;
+}
+// Hangi sağlayıcıda sunucuda kayıtlı anahtar var? → { anthropic, gemini, openai }
+export async function anahtarDurum() {
+  try {
+    const res = await proxyPost("/ai/anahtar/durum", {});
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
 }
 // Sağlayıcı bir API anahtarı gerektiriyor mu? (bulut)
 function anahtarGerekli(p) {
@@ -96,6 +120,7 @@ function anahtarGerekli(p) {
 // Tüm AI ayarlarını tek noktadan uygula (App, ayarlar değişince çağırır)
 export function configureAI(ayarlar = {}) {
   _provider = ayarlar.aiSaglayici || "anthropic";
+  _proxyMod = !!ayarlar.proxyMod; // bulut çağrıları sunucudan gitsin (anahtar sunucuda)
   _apiKey = ayarlar.apiKey || "";
   _model = ayarlar.model || "claude-opus-4-8";
   _localModel = (ayarlar.yerelModel || "").trim();
@@ -116,7 +141,7 @@ export function yerelMi() {
 }
 
 export function aiHazir() {
-  if (_provider === "proxy") return true; // anahtar sunucuda; istemci tarafında hazır say
+  if (_proxyMod && anahtarGerekli(_provider)) return true; // anahtar sunucuda tutuluyor
   if (anahtarGerekli(_provider)) return !!_apiKey;
   return !!_baseURL;
 }
@@ -163,22 +188,25 @@ async function fetchYeniden(url, opts, deneme = 3) {
 async function anthropicCall(messages, useSearch) {
   const body = { model: _model, max_tokens: 2048, messages };
   if (useSearch) body.tools = [WEB_SEARCH_TOOL];
-  const proxy = _provider === "proxy";
+  const proxy = _proxyMod;
   const url = proxy ? proxyURL() : ANTHROPIC_URL;
   const headers = { "Content-Type": "application/json" };
+  let gonder;
   if (!proxy) {
-    // Doğrudan Anthropic: anahtar + tarayıcı erişim başlığı. Proxy'de anahtar sunucuda.
+    // Doğrudan Anthropic: anahtar + tarayıcı erişim başlığı.
     headers["x-api-key"] = _apiKey;
     headers["anthropic-version"] = ANTHROPIC_VERSION;
     headers["anthropic-dangerous-direct-browser-access"] = "true";
+    gonder = JSON.stringify(body);
   } else {
-    // Proxy auth korumalı: PocketBase oturum token'ını ilet
+    // Proxy: yalnız mesaj gider, anahtar sunucuda. Auth token'ı ilet.
     const token = syncDurum().token;
     if (token) headers["Authorization"] = token;
+    gonder = JSON.stringify({ saglayici: "anthropic", govde: body });
   }
   let res;
   try {
-    res = await fetchYeniden(url, { method: "POST", headers, body: JSON.stringify(body) });
+    res = await fetchYeniden(url, { method: "POST", headers, body: gonder });
   } catch {
     throw new Error(proxy ? "Sunucu AI proxy'sine ulaşılamadı (PocketBase açık mı?)." : "Ağ hatası: Anthropic API'ye ulaşılamadı.");
   }
@@ -215,25 +243,36 @@ function toOpenAI(messages) {
 }
 
 async function localCall(messages, modelOverride, json) {
-  if (anahtarGerekli(_provider) && !_apiKey) throw yapilandirmaHatasi();
-  if (!_baseURL) throw yapilandirmaHatasi();
+  const proxy = _proxyMod && anahtarGerekli(_provider); // gemini/openai → sunucu proxy'si
+  if (!proxy) {
+    if (anahtarGerekli(_provider) && !_apiKey) throw yapilandirmaHatasi();
+    if (!_baseURL) throw yapilandirmaHatasi();
+  }
   const model = modelOverride || _localModel;
   if (!model) throw new Error("Model adı gir (Ayarlar → Yapay Zekâ). Örn: llama3.1");
-  const url = _baseURL.replace(/\/+$/, "") + "/chat/completions";
+  const url = proxy ? proxyURL() : _baseURL.replace(/\/+$/, "") + "/chat/completions";
   const body = { model, messages: toOpenAI(messages), stream: false, temperature: 0.3, max_tokens: 16384 };
   if (json) body.response_format = { type: "json_object" }; // geçerli JSON'a zorla
+  const headers = { "Content-Type": "application/json" };
+  let gonder;
+  if (proxy) {
+    const token = syncDurum().token;
+    if (token) headers["Authorization"] = token;
+    gonder = JSON.stringify({ saglayici: _provider, govde: body }); // anahtar sunucuda
+  } else {
+    // Bulut (Gemini) gerçek anahtarı ister; yerel sunucular "local" değerini yok sayar
+    headers["Authorization"] = "Bearer " + (_apiKey || "local");
+    gonder = JSON.stringify(body);
+  }
   let res;
   try {
-    res = await fetchYeniden(url, {
-      method: "POST",
-      // Bulut (Gemini) gerçek anahtarı ister; yerel sunucular "local" değerini yok sayar
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (_apiKey || "local") },
-      body: JSON.stringify(body),
-    });
+    res = await fetchYeniden(url, { method: "POST", headers, body: gonder });
   } catch {
-    throw new Error(_provider === "gemini"
-      ? "Gemini'ye ulaşılamadı. İnternet bağlantını ve API anahtarını kontrol et."
-      : `Yerel modele ulaşılamadı (${_baseURL}). Ollama/LM Studio açık mı ve CORS izinli mi?`);
+    throw new Error(proxy
+      ? "Sunucu AI proxy'sine ulaşılamadı (PocketBase açık mı?)."
+      : _provider === "gemini"
+        ? "Gemini'ye ulaşılamadı. İnternet bağlantını ve API anahtarını kontrol et."
+        : `Yerel modele ulaşılamadı (${_baseURL}). Ollama/LM Studio açık mı ve CORS izinli mi?`);
   }
   if (!res.ok) {
     if (_provider === "gemini" && (res.status === 503 || res.status === 429)) { const e = new Error(GEMINI_YOGUN); e.yogun = true; throw e; }
