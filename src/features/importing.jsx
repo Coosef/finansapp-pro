@@ -10,9 +10,29 @@ import { xlsxToGrid } from "../lib/xlsx.js";
 import { pdfToRows } from "../lib/pdf.js";
 import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
+import { gibKareParse, faturaKategori, kalemDogrula, yinelenenFaturaMi } from "../lib/fatura.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
+import jsQR from "jsqr";
+
+// Görselden GİB/e-Arşiv karekodunu yerel oku (AI'sız). Bulamazsa null.
+async function qrOku(file) {
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const maxK = 1400;
+    const olcek = Math.min(1, maxK / Math.max(img.width, img.height));
+    const w = Math.round(img.width * olcek), h = Math.round(img.height * olcek);
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+    const data = ctx.getImageData(0, 0, w, h);
+    return jsQR(data.data, w, h)?.data || null;
+  } catch { return null; }
+}
 
 // PDF'i sayfa sayfa görsele çevir (yerel model PDF okuyamaz; görseli okur).
 // Banka fontu sorunu yaşamaz çünkü pdf.js sayfayı piksel olarak render eder.
@@ -94,26 +114,43 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     setIsleniyor(true);
     setSonuc(null);
     try {
+      // Önce yerel QR (e-Arşiv/GİB karekodu) dene — varsa AI'sız, anında, kesin
+      const qrMetin = await qrOku(file);
+      const qrVeri = qrMetin ? gibKareParse(qrMetin) : null;
+      if (qrVeri && qrVeri.toplam) {
+        const magaza = qrVeri.satici || "e-Arşiv Fatura";
+        const kayit = { baslik: magaza, miktar: qrVeri.toplam, kategori: faturaKategori(magaza) || "Faturalar", tarih: qrVeri.tarih || bugun(), kaynak: "fis", tip: "gider" };
+        setSonuc({ kayitlar: [{ ...kayit, _tekrar: tekrarMi(kayit), _sec: !tekrarMi(kayit) }] });
+        bildir("e-Arşiv karekodu okundu (AI'sız)");
+        return; // finally temizler
+      }
       const b64 = await fileToBase64(file);
       const txt = await claudeCall([
         {
           role: "user",
           content: [
             { type: "image", source: { type: "base64", media_type: file.type || "image/jpeg", data: b64 } },
-            { type: "text", text: `Alışveriş fişi. SADECE JSON: {"magaza":"...","tarih":"YYYY-MM-DD","toplam":sayı,"kategori":"Market|Restoran|Konut|Ulaşım|Sağlık|Giyim|Teknoloji|Faturalar|Diğer","kalemler":[{"ad":"ürün","miktar":sayı,"fiyat":sayı}]}. Tarih yoksa bugünü kullan.` },
+            { type: "text", text: `Fiş veya fatura. SADECE JSON: {"magaza":"...","tarih":"YYYY-MM-DD","toplam":sayı,"kategori":"Market|Restoran|Konut|Ulaşım|Sağlık|Giyim|Teknoloji|Faturalar|Diğer","kalemler":[{"ad":"ürün","miktar":sayı,"fiyat":sayı}],"qr":"varsa GİB e-Arşiv/e-Fatura karekodunun tam metni, yoksa null"}. Tarih yoksa bugünü kullan.` },
           ],
         },
       ], false, true);
       const j = parseJSON(txt);
+      const qr = j.qr ? gibKareParse(j.qr) : null; // GİB karekodu → AI'sız çapraz kontrol/tamamlama
+      const magaza = j.magaza || qr?.satici || "Fiş";
+      const toplam = parseFloat(j.toplam) || qr?.toplam || 0;
+      const kalemler = (j.kalemler || []).map((k) => ({ ad: k.ad, miktar: k.miktar, fiyat: parseFloat(k.fiyat) || 0 }));
       const kayit = {
-        baslik: j.magaza || "Fiş",
-        miktar: parseFloat(j.toplam) || 0,
-        kategori: j.kategori || "Market",
-        tarih: j.tarih || bugun(),
-        kalemler: (j.kalemler || []).map((k) => ({ ad: k.ad, miktar: k.miktar, fiyat: parseFloat(k.fiyat) || 0 })),
+        baslik: magaza,
+        miktar: toplam,
+        kategori: faturaKategori(magaza) || j.kategori || "Market",
+        tarih: j.tarih || qr?.tarih || bugun(),
+        kalemler,
         kaynak: "fis",
         tip: "gider",
       };
+      const kd = kalemDogrula(kalemler, toplam);
+      if (kd.gecerli === false) bildir("Fiş kalemleri toplamı tutmuyor — tutarı kontrol et", "err");
+      else if (faturaKategori(magaza) && yinelenenFaturaMi(kayit, findata.giderler)) bildir("Yinelenen fatura: bu satıcı geçen ay da vardı");
       setSonuc({ kayitlar: [{ ...kayit, _tekrar: tekrarMi(kayit), _sec: !tekrarMi(kayit) }] });
     } catch (err) {
       bildir(aiHata(err) || "Fiş okunamadı", "err");

@@ -10,6 +10,7 @@ import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
+import { sifreDogrula, sifreHashle } from "../lib/kripto.js";
 import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -234,12 +235,13 @@ function SifreKart({ user, users, onUsersChange, bildir }) {
   }
 
   const mevcut = (users || []).find((x) => x.username === user?.username);
-  function degistir() {
+  async function degistir() {
     if (!mevcut) { bildir("Kullanıcı bulunamadı", "err"); return; }
-    if (eski !== mevcut.sifre) { bildir("Mevcut şifre yanlış", "err"); return; }
+    if (!(await sifreDogrula(eski, mevcut.sifre))) { bildir("Mevcut şifre yanlış", "err"); return; }
     if (yeni.length < 4) { bildir("Yeni şifre en az 4 karakter olmalı", "err"); return; }
     if (yeni !== tekrar) { bildir("Yeni şifreler eşleşmiyor", "err"); return; }
-    onUsersChange((users || []).map((x) => (x.username === user.username ? { ...x, sifre: yeni } : x)));
+    const sifre = await sifreHashle(yeni); // düz-metin saklama
+    onUsersChange((users || []).map((x) => (x.username === user.username ? { ...x, sifre } : x)));
     setEski(""); setYeni(""); setTekrar("");
     bildir("Şifre güncellendi");
   }

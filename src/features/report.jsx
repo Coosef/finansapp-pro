@@ -6,6 +6,7 @@ import { useState, useRef } from "react";
 import { V, F, SERIF } from "../lib/constants.js";
 import { TL, buAy, bugun } from "../lib/format.js";
 import { bosVeri } from "../lib/finance.js";
+import { aylikKarne, runwayAy } from "../lib/karne.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { Card, Btn, SubNav } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -28,6 +29,10 @@ export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGi
   const [rapor, setRapor] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(false);
   const geriRef = useRef();
+
+  const karne = aylikKarne(findata, buAy());
+  const runway = runwayAy(findata, bugun());
+  const notRenk = (n) => ({ A: V.pos, B: V.pos, C: V.accent, D: V.accent, F: V.neg }[n] || V.ink3);
 
   function indir(icerik, ad, mime) {
     try {
@@ -139,6 +144,28 @@ export function Rapor({ findata, setFindata, user, bildir, toplamGelir, toplamGi
           </div>
         </div>
       </div>
+
+      {/* Ay Karnesi — mevcut veriden, AI'sız */}
+      <Card style={{ marginBottom: "1.25rem" }}>
+        <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ width: 62, height: 62, borderRadius: 16, background: notRenk(karne.not), color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, fontWeight: 800, fontFamily: SERIF, flexShrink: 0 }}>{karne.not}</div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div className="serif" style={{ fontSize: 16, fontWeight: 600, color: V.ink }}>Ay Karnesi</div>
+            <div style={{ fontSize: 12.5, color: V.ink2, marginTop: 5, lineHeight: 1.6 }}>
+              Tasarruf oranı <b className="num" style={{ color: karne.tasarrufOrani >= 20 ? V.pos : karne.tasarrufOrani < 0 ? V.neg : V.ink }}>{karne.tasarrufOrani == null ? "—" : `%${karne.tasarrufOrani}`}</b>
+              {karne.enBuyukKategori && <> · en çok <b>{karne.enBuyukKategori.ad}</b> (%{karne.enBuyukKategori.oran})</>}
+              {karne.degisimPct != null && <> · gider ay-üstü <b className="num" style={{ color: karne.degisimPct > 0 ? V.neg : V.pos }}>{karne.degisimPct > 0 ? "+" : ""}%{karne.degisimPct}</b></>}
+            </div>
+          </div>
+          {runway && (
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontSize: 11, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em" }}>Dayanma süresi</div>
+              <div className="num" style={{ fontSize: 20, fontWeight: 700, color: V.ink, marginTop: 2 }}>{runway.ay} ay</div>
+              <div style={{ fontSize: 11, color: V.ink3 }}>likit ÷ aylık gider</div>
+            </div>
+          )}
+        </div>
+      </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: "12px", marginBottom: "1.25rem" }}>
         <AksiyonKart icon="doc" baslik="CSV (Excel)" aciklama="Tüm işlemleri tablo olarak indir.">

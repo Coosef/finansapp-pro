@@ -3,8 +3,9 @@
 // Pill filtre + arama + satır düzenleme/silme; tek İşlem/Abonelik modalı
 // ============================================================
 import { useState } from "react";
-import { V, F, SERIF, MONO, AY_ADI } from "../lib/constants.js";
-import { TL } from "../lib/format.js";
+import { V, F, SERIF, MONO, AY_ADI, inputStyle } from "../lib/constants.js";
+import { TL, sayiCevir } from "../lib/format.js";
+import { tryeCevir, pbSembol, PB_SECENEK } from "../lib/parabirimi.js";
 import { Icon } from "../components/icons.jsx";
 import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 
@@ -50,9 +51,14 @@ function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
           {meta}
         </div>
       </div>
-      <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: s.amtRenk, flexShrink: 0, fontFamily: MONO }}>
-        {s.sign}{TL(t.miktar)}
-      </span>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <span className="num" style={{ fontSize: "14px", fontWeight: 600, color: s.amtRenk, fontFamily: MONO }}>
+          {s.sign}{TL(t.miktar)}
+        </span>
+        {t.orjinalPb && t.orjinalPb !== "TRY" && (
+          <div style={{ fontSize: "10.5px", color: V.ink3, fontFamily: MONO }}>{pbSembol(t.orjinalPb)}{(t.orjinalTutar || 0).toLocaleString("tr-TR")}</div>
+        )}
+      </div>
       <DelBtn onClick={() => onSil(t.tip, t.id)} />
     </div>
   );
@@ -179,7 +185,7 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
   );
 }
 
-export function IslemModal({ mod, form, setForm, kategorilerGelir, kategorilerGider, hesaplar, hafiza, onClose, onKaydet }) {
+export function IslemModal({ mod, form, setForm, kategorilerGelir, kategorilerGider, hesaplar, hafiza, kurlar, onClose, onKaydet }) {
   const abonelik = mod === "abonelik";
   const baslik = abonelik
     ? (form._editId ? "Abonelik Düzenle" : "Abonelik Ekle")
@@ -226,13 +232,32 @@ export function IslemModal({ mod, form, setForm, kategorilerGelir, kategorilerGi
 
       <Field label="Başlık" value={form.baslik} onChange={baslikDegis} placeholder="Örn: Migros market" />
 
-      <Field
-        label={abonelik ? "Aylık Ücret (₺)" : "Tutar (₺)"}
-        value={form.miktar}
-        onChange={(v) => setForm((f) => ({ ...f, miktar: v }))}
-        placeholder="0"
-        mono
-      />
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{abonelik ? "Aylık Ücret" : "Tutar"}</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={form.miktar}
+            onChange={(e) => setForm((f) => ({ ...f, miktar: e.target.value }))}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ ...inputStyle, fontFamily: MONO, flex: 1, width: "auto" }}
+          />
+          <select
+            value={form.pb || "TRY"}
+            onChange={(e) => setForm((f) => ({ ...f, pb: e.target.value }))}
+            style={{ ...inputStyle, width: 96, flex: "none", cursor: "pointer" }}
+          >
+            {PB_SECENEK.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </div>
+        {form.pb && form.pb !== "TRY" && (
+          <div style={{ fontSize: "11.5px", marginTop: 6, color: kurlar ? V.ink3 : V.neg }}>
+            {kurlar
+              ? `≈ ${TL(tryeCevir(sayiCevir(form.miktar), form.pb, kurlar) || 0)} olarak kaydedilir (${pbSembol(form.pb)}1 = ${TL(form.pb === "USD" ? kurlar.usd : kurlar.eur)})`
+              : "Kur bilgisi yok — Ayarlar → Kur'dan güncelle."}
+          </div>
+        )}
+      </div>
 
       <Field
         label="Kategori"

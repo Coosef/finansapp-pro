@@ -33,6 +33,11 @@ input, select, button, textarea { font-family: inherit; }
 .num { font-family:'IBM Plex Mono', monospace; font-feature-settings:'tnum'; letter-spacing:-0.02em; }
 .serif { font-family:'Newsreader', serif; }
 
+/* Enflasyon-flip para (imza) — klavye odağı görünür kalsın */
+.fa-flip { border-radius:4px; }
+.fa-flip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media (hover:hover) { .fa-flip { text-decoration:underline dotted var(--accent); text-underline-offset:3px; } }
+
 /* ---- Kaydırma çubukları ---- */
 .fa-nav::-webkit-scrollbar { width:0; }
 .fa-scr::-webkit-scrollbar { width:9px; }

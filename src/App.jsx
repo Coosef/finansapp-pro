@@ -7,8 +7,12 @@ import { V } from "./lib/constants.js";
 import { uid, bugun, TL, sayiCevir } from "./lib/format.js";
 import { storage } from "./lib/storage.js";
 import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
-import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre } from "./lib/finance.js";
+import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
+import { sifreDogrula, sifreHashle, sifreHashliMi } from "./lib/kripto.js";
+import { tryeCevir } from "./lib/parabirimi.js";
+import { bildirimOzeti } from "./lib/bildirim.js";
+import { SURUM, sonSurumKontrol, SURUM_URL } from "./lib/surum.js";
 import { Icon, IK } from "./components/icons.jsx";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -140,9 +144,19 @@ export default function FinansAppPro() {
   }
 
   async function girisYap(username, sifre) {
-    // 1) Yerel kullanıcı (admin gibi)
-    const u = kullanicilar.find((x) => x.username === username && x.sifre === sifre);
+    // 1) Yerel kullanıcı (admin gibi) — hash veya (eski) düz-metin doğrulama
+    let u = null;
+    for (const x of kullanicilar) {
+      if (x.username === username && (await sifreDogrula(sifre, x.sifre))) { u = x; break; }
+    }
     if (u) {
+      // Eski düz-metin şifreyi sessizce hash'e yükselt (kilitlenme riski yok: düz-metin de çalışır)
+      if (!sifreHashliMi(u.sifre)) {
+        try {
+          const yh = await sifreHashle(sifre);
+          kullanicilariKaydet(kullanicilar.map((x) => (x.username === u.username ? { ...x, sifre: yh } : x)));
+        } catch { /* yükseltme başarısızsa düz-metin doğrulama devam eder */ }
+      }
       let veri = bosVeri();
       let bulutVar = false;
       if (syncBagliMi()) {
@@ -265,6 +279,7 @@ function tarihUzun() {
 
 function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab, dark, onLogout }) {
   const [modal, setModal] = useState(null);
+  const [guncelleme, setGuncelleme] = useState(null); // yeni sürüm bilgisi
   const [form, setForm] = useState({});
   const [fiyatGuncelleniyor, setFiyatGuncelleniyor] = useState(false);
   const [bildirim, setBildirim] = useState(null);
@@ -296,6 +311,24 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   const hesapVarMi = (findata.hesaplar || []).length > 0;
   const nakitTum = hesapVarMi ? hesapNet : toplamGelirTum - toplamGiderTum - toplamAbonelik;
   const netDeger = nakitTum + yatirimDeger;
+
+  // Net varlık geçmişini günlük besle (grafik zamanla dolsun) — açılışta bir kez
+  const netKaydedildi = useRef(false);
+  useEffect(() => {
+    if (netKaydedildi.current) return;
+    netKaydedildi.current = true;
+    setFindata((d) => {
+      const ng = netGecmisGuncelle(d.netGecmis, netDeger, bugun());
+      return ng === (d.netGecmis || []) ? d : { ...d, netGecmis: ng };
+    });
+  }, []);
+
+  // Yeni sürüm kontrolü (açılışta bir kez; çevrimdışıysa sessiz)
+  useEffect(() => {
+    let iptal = false;
+    sonSurumKontrol().then((r) => { if (!iptal && r?.guncellemeVar) setGuncelleme(r); });
+    return () => { iptal = true; };
+  }, []);
 
   // ---- Döneme göre filtrelenmiş veriler ----
   const fd = useMemo(() => donemFiltre(findata, donem, bugun()), [findata, donem]);
@@ -394,10 +427,10 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
     if (!ay.bildirimler || typeof Notification === "undefined" || Notification.permission !== "granted") return;
     const t = bugun();
     if (ay.sonBildirim === t) return;
-    const yak = yaklasanOdemeler(findata, t, ay.bildirimGun || 3);
-    if (yak.length) {
+    const satirlar = bildirimOzeti(findata, t, ay.bildirimGun || 3);
+    if (satirlar.length) {
       try {
-        new Notification("FinansApp — Yaklaşan ödeme", { body: yak.slice(0, 3).map((y) => `${y.ad} · ${y.gun === 0 ? "bugün" : y.gun + " gün"} · ${TL(y.miktar)}`).join("\n"), icon: "/pwa-192.png" });
+        new Notification("FinansApp", { body: satirlar.join("\n"), icon: "/pwa-192.png" });
       } catch { /* yoksay */ }
       setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), sonBildirim: t } }));
     }
@@ -417,10 +450,18 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   }
   function kaydetIslem(tur) {
     if (!form.baslik || !form.miktar) { bildir("Başlık ve tutar gerekli", "err"); return; }
-    const miktar = sayiCevir(form.miktar);
-    if (miktar <= 0) { bildir("Geçerli tutar gir", "err"); return; }
+    const girilen = sayiCevir(form.miktar);
+    if (girilen <= 0) { bildir("Geçerli tutar gir", "err"); return; }
+    // Yabancı para → girişte TRY'ye çevir (kayıtlar TRY saklanır); orijinali sakla
+    const pb = form.pb || "TRY";
+    let miktar = girilen, orjinal = {};
+    if (pb !== "TRY") {
+      const cev = tryeCevir(girilen, pb, findata.kurlar);
+      if (cev == null) { bildir("Kur bilgisi yok — Ayarlar → Kur'dan güncelle", "err"); return; }
+      miktar = cev; orjinal = { orjinalTutar: girilen, orjinalPb: pb };
+    }
     const hesapId = tur === "gelir" || tur === "gider" ? form.hesapId || "" : "";
-    const veri = { baslik: form.baslik, miktar, kategori: form.kategori, tarih: form.tarih, hane: !!form.hane, hesapId };
+    const veri = { baslik: form.baslik, miktar, kategori: form.kategori, tarih: form.tarih, hane: !!form.hane, hesapId, ...orjinal };
     if (form._editId) {
       const m = { gelir: "gelirler", gider: "giderler", abonelik: "abonelikler" };
       const eski = (findata[m[tur]] || []).find((x) => x.id === form._editId);
@@ -441,7 +482,7 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
     bildir(form.tekrarla ? "Eklendi + otomatik tekrara alındı" : "Eklendi");
   }
   function duzenleIslem(tur, kayit) {
-    setForm({ tip: tur, baslik: kayit.baslik, miktar: String(kayit.miktar), kategori: kayit.kategori, tarih: kayit.tarih, hane: !!kayit.hane, hesapId: kayit.hesapId || "", tekrarla: false, _editId: kayit.id });
+    setForm({ tip: tur, baslik: kayit.baslik, miktar: String(kayit.orjinalPb ? kayit.orjinalTutar : kayit.miktar), pb: kayit.orjinalPb || "TRY", kategori: kayit.kategori, tarih: kayit.tarih, hane: !!kayit.hane, hesapId: kayit.hesapId || "", tekrarla: false, _editId: kayit.id });
     setModal(tur === "abonelik" ? "abonelik" : "islem");
   }
 
@@ -533,6 +574,16 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
           <div style={{ fontSize: 10.5, color: "#8FAE9E", textTransform: "uppercase", letterSpacing: "0.07em" }}>Net Varlık</div>
           <div className="num" style={{ fontSize: 19, fontWeight: 600, color: "#E9D9B4", marginTop: 3 }}>{TL(netDeger)}</div>
           {fxSatir && <div className="num" style={{ fontSize: 10.5, color: "#8FAE9E" }}>{fxSatir}</div>}
+        </div>
+        {/* Sürüm + güncelleme bildirimi (sol alt) */}
+        <div style={{ marginTop: 10, textAlign: "center" }}>
+          {guncelleme?.guncellemeVar && (
+            <a href={SURUM_URL} target="_blank" rel="noreferrer"
+              style={{ display: "block", marginBottom: 8, padding: "7px 10px", borderRadius: 9, background: "var(--accent)", color: "#143A2B", fontSize: 11.5, fontWeight: 700, textDecoration: "none", animation: "obfade .4s both" }}>
+              ⬆ Yeni sürüm v{guncelleme.sonSurum}
+            </a>
+          )}
+          <div className="num" style={{ fontSize: 10.5, color: "#6E8B7C" }}>v{SURUM}</div>
         </div>
       </aside>
 
@@ -682,8 +733,8 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
       )}
 
       {/* Modallar */}
-      {modal === "islem" && <IslemModal mod="islem" form={form} setForm={setForm} kategorilerGelir={gelirKategorileri(findata)} kategorilerGider={giderKategorileri(findata)} hesaplar={findata.hesaplar} hafiza={findata.kategoriHafiza} onClose={() => setModal(null)} onKaydet={() => kaydetIslem(form.tip)} />}
-      {modal === "abonelik" && <IslemModal mod="abonelik" form={form} setForm={setForm} kategorilerGider={["Eğlence", "Müzik", "Yazılım", "Sağlık", "Eğitim", "Haberler", "Diğer"]} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("abonelik")} />}
+      {modal === "islem" && <IslemModal mod="islem" form={form} setForm={setForm} kategorilerGelir={gelirKategorileri(findata)} kategorilerGider={giderKategorileri(findata)} hesaplar={findata.hesaplar} hafiza={findata.kategoriHafiza} kurlar={findata.kurlar} onClose={() => setModal(null)} onKaydet={() => kaydetIslem(form.tip)} />}
+      {modal === "abonelik" && <IslemModal mod="abonelik" form={form} setForm={setForm} kategorilerGider={["Eğlence", "Müzik", "Yazılım", "Sağlık", "Eğitim", "Haberler", "Diğer"]} kurlar={findata.kurlar} onClose={() => setModal(null)} onKaydet={() => kaydetIslem("abonelik")} />}
       {modal === "yatirim" && <YatirimModal form={form} setForm={setForm} onClose={() => setModal(null)} onKaydet={kaydetYatirim} />}
     </div>
   );

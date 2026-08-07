@@ -1,23 +1,31 @@
+name: finansapp
+
 services:
   finansapp:
     build: .
-    image: finansapp-pro
+    image: ghcr.io/coosef/finansapp-pro:latest
     container_name: finansapp
+    depends_on:
+      - pocketbase
     ports:
       - "8080:80"
+    environment:
+      - TZ=${TZ:-Europe/Istanbul}
     restart: unless-stopped
 
-  # Bulut senkron için self-hosted backend (auth + veri). Veri ./pb/pb_data'da kalır.
+  # DB + auth + senkron backend. Hook/migration imaja gömülü; veri pb_data volume'de.
+  # PocketBase dışarı port AÇMAZ — nginx same-origin /pb altında proxy'ler.
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest
+    build: ./pb
+    image: ghcr.io/coosef/finansapp-pb:latest
     container_name: finansapp-pb
     restart: unless-stopped
-    ports:
-      - "8090:8090"
+    environment:
+      - TZ=${TZ:-Europe/Istanbul}
+      # AI proxy için (opsiyonel). Boşsa AI çağrıları 503 döner; app yine çalışır.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
-      - ./pb/pb_data:/pb_data
-      - ./pb/pb_migrations:/pb_migrations
-      - ./pb/pb_hooks:/pb_hooks
+      - pb_data:/pb_data
     command:
       - serve
       - --http=0.0.0.0:8090
@@ -29,3 +37,28 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+
+volumes:
+  pb_data:
+
+# ---- CasaOS App Store meta verisi ----
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: finansapp
+  author: Coosef
+  developer: Coosef
+  category: Finance
+  port_map: "8080"
+  scheme: http
+  index: /
+  title:
+    en_us: FinansApp Pro
+    tr_tr: FinansApp Pro
+  tagline:
+    en_us: Self-hosted Turkish personal finance manager
+    tr_tr: Kendi sunucunda Türkçe kişisel finans yönetimi
+  description:
+    en_us: Track income/expenses, budgets, investments, statements (OCR) and get AI insights. Data stays on your server (PocketBase).
+    tr_tr: Gelir/gider, bütçe, yatırım, ekstre (OCR) takibi ve AI içgörüleri. Veri kendi sunucunda (PocketBase) kalır.

@@ -1,7 +1,7 @@
 // ============================================================
 // Veri modeli ve finansal mantık (saf fonksiyonlar)
 // ============================================================
-import { uid, bugun, buAy, sonrakiTarih } from "./format.js";
+import { uid, bugun, buAy, sonrakiTarih, TL } from "./format.js";
 import { GIDER_KAT, GELIR_KAT, AY_ADI } from "./constants.js";
 
 // "YYYY-MM" → bir sonraki ay (UTC, kararlı)
@@ -23,6 +23,33 @@ export function butceDevri(findata, kategori, ay) {
 }
 export function etkinButce(findata, kategori, ay) {
   return ((findata.butceler || {})[kategori] || 0) + butceDevri(findata, kategori, ay);
+}
+
+// Kategori bütçe önerisi: veride bulunan EN YENİ ayCount ayın (bu aydan eski/eşit)
+// kategori-bazlı ortalamasından, %10 pay bırakıp 100'e yuvarlayarak limit önerir.
+// Takvim ayına değil mevcut veriye bakar → seyrek/geçmiş ekstrede de çalışır. Taksit hariç.
+export function butceOnerisi(findata, bugunStr, ayCount = 3) {
+  const d = findata || {};
+  const buAyStr = String(bugunStr).slice(0, 7);
+  const aylikKat = {}; // ay -> { kategori: toplam }
+  (d.giderler || []).forEach((g) => {
+    if (/taksit/i.test(g.baslik || "")) return;
+    const ay = (g.tarih || "").slice(0, 7);
+    if (!ay || ay > buAyStr) return;
+    aylikKat[ay] = aylikKat[ay] || {};
+    aylikKat[ay][g.kategori] = (aylikKat[ay][g.kategori] || 0) + (g.miktar || 0);
+  });
+  const aylar = Object.keys(aylikKat).sort().slice(-ayCount);
+  if (!aylar.length) return {};
+  const kat = {};
+  aylar.forEach((ay) => Object.entries(aylikKat[ay]).forEach(([k, v]) => { kat[k] = (kat[k] || 0) + v; }));
+  const oneri = {};
+  Object.entries(kat).forEach(([k, toplam]) => {
+    const aylik = toplam / aylar.length;
+    if (aylik < 1) return;
+    oneri[k] = Math.max(100, Math.round((aylik * 1.1) / 100) * 100);
+  });
+  return oneri;
 }
 
 // ---- Hedeflere otomatik aylık katkı ----
@@ -65,6 +92,19 @@ export function yaklasanOdemeler(findata, bugunStr, gun = 7) {
     if (fark >= 0 && fark <= gun) list.push({ ad: s.baslik, miktar: s.miktar, gun: fark, tip: "Tekrar" });
   });
   return list.sort((a, b) => a.gun - b.gun);
+}
+
+// ---- Yaklaşan kredi kartı son ödemeleri (ekstreden gelen sonOdeme tarihi) ----
+export function kartOdemeler(findata, bugunStr, gun = 15) {
+  const bugunD = new Date(bugunStr + "T00:00:00");
+  const out = [];
+  (findata?.hesaplar || []).filter((h) => h.tip === "kart" && h.sonOdeme).forEach((h) => {
+    const t = new Date(String(h.sonOdeme).slice(0, 10) + "T00:00:00");
+    if (isNaN(+t)) return;
+    const fark = Math.ceil((t - bugunD) / 86400000);
+    if (fark >= 0 && fark <= gun) out.push({ ad: `${h.ad} son ödeme`, miktar: h.asgari || h.bakiye || 0, gun: fark, tip: "Kart", asgari: h.asgari, borc: h.bakiye });
+  });
+  return out.sort((a, b) => a.gun - b.gun);
 }
 
 // Bir yılın aylık gelir/gider özeti + tasarruf oranı (saf, test edilebilir)
@@ -115,6 +155,92 @@ export function donemFiltre(findata, donem, bugunStr) {
     gelirler: (findata.gelirler || []).filter((g) => donemde(g.tarih, aralik)),
     giderler: (findata.giderler || []).filter((g) => donemde(g.tarih, aralik)),
   };
+}
+
+// ---- Enflasyon: geçmiş tutarın bugünkü alım gücü ----
+// tarih'te harcanan tutar'ı bugüne kadar enflasyonla şişirir → bugünkü karşılığı.
+// enflasyonYuzde: yıllık % (ör. 50). Veri eksik veya gelecek tarih ise tutarı aynen döndürür.
+export function reelDeger(tutar, tarih, enflasyonYuzde, bugunStr = bugun()) {
+  const oran = (+enflasyonYuzde || 0) / 100;
+  if (!tutar || !tarih || oran <= 0) return tutar || 0;
+  const t = new Date((tarih || "").slice(0, 10) + "T00:00:00Z");
+  const b = new Date((bugunStr || "").slice(0, 10) + "T00:00:00Z");
+  if (isNaN(+t) || isNaN(+b)) return tutar;
+  const yil = (b - t) / (365.25 * 86400000);
+  if (yil <= 0) return tutar; // gelecek/bugün → düzeltme yok
+  return tutar * Math.pow(1 + oran, yil);
+}
+
+// ---- Net varlık geçmişi snapshot'ı ----
+// Bugünün net değerini geçmişe ekler (günde bir kayıt; aynı gün değişmişse günceller).
+// Değişiklik yoksa aynı diziyi döndürür (çağıran no-op'u anlar). En çok 60 kayıt tutar.
+export function netGecmisGuncelle(netGecmis, deger, bugunStr) {
+  const ng = Array.isArray(netGecmis) ? netGecmis : [];
+  const son = ng[ng.length - 1];
+  if (son && son.tarih === bugunStr) {
+    if (Math.round(son.deger) === Math.round(deger)) return ng; // aynı gün, değişmedi
+    return [...ng.slice(0, -1), { tarih: bugunStr, deger }];
+  }
+  return [...ng, { tarih: bugunStr, deger }].slice(-60);
+}
+
+// ---- Panel editoryal brifing (saf, test edilebilir) ----
+const AY_UZUN_BRIFING = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+function ayGiderOzet(findata, aralik) {
+  const g = (findata.giderler || []).filter((x) => donemde(x.tarih, aralik));
+  const toplam = g.reduce((s, x) => s + (x.miktar || 0), 0);
+  const kat = {};
+  g.forEach((x) => { kat[x.kategori] = (kat[x.kategori] || 0) + (x.miktar || 0); });
+  return { toplam, kat };
+}
+// Veriden tek cümlelik manşet ({oncesi,vurgu,sonrasi}) + en çok 3 destek göstergesi üretir.
+// Ay-üstü gider değişimi → tasarruf oranı → toplam harcama → "ilk işlem" sırasıyla düşer.
+export function panelBrifing(findata, bugunStr = bugun()) {
+  const d = findata || {};
+  const ay = (bugunStr || "").slice(0, 7);
+  const ayAdi = AY_UZUN_BRIFING[parseInt((bugunStr || "").slice(5, 7), 10) - 1] || "Bu ay";
+  const buAralik = donemAraligi("buAy", bugunStr);
+  const gecenAralik = donemAraligi("gecenAy", bugunStr);
+  const bu = ayGiderOzet(d, buAralik);
+  const gecen = ayGiderOzet(d, gecenAralik);
+  const gelirBu = (d.gelirler || []).filter((x) => donemde(x.tarih, buAralik)).reduce((s, x) => s + (x.miktar || 0), 0);
+  const tasarruf = gelirBu > 0 ? Math.round(((gelirBu - bu.toplam) / gelirBu) * 100) : null;
+
+  let artan = null;
+  Object.keys(bu.kat).forEach((k) => {
+    const fark = bu.kat[k] - (gecen.kat[k] || 0);
+    if (fark > 0 && (!artan || fark > artan.fark)) artan = { kategori: k, fark };
+  });
+
+  const asim = Object.entries(d.butceler || {})
+    .filter(([, lim]) => lim > 0)
+    .filter(([kat]) => (bu.kat[kat] || 0) > etkinButce(d, kat, ay)).length;
+
+  const degisimPct = gecen.toplam > 0 ? Math.round(((bu.toplam - gecen.toplam) / gecen.toplam) * 100) : null;
+
+  let manset;
+  if (degisimPct != null && Math.abs(degisimPct) >= 5 && bu.toplam > 0) {
+    const yon = degisimPct > 0 ? "arttı" : "azaldı";
+    manset = { oncesi: `${ayAdi}: giderin geçen aya göre `, vurgu: `%${Math.abs(degisimPct)} ${yon}`, sonrasi: artan && degisimPct > 0 ? ` — en çok ${artan.kategori} kaleminde.` : "." };
+  } else if (tasarruf != null) {
+    manset = { oncesi: `${ayAdi}: gelirinin `, vurgu: `%${Math.max(0, tasarruf)}'ini`, sonrasi: tasarruf >= 20 ? " biriktirdin — iyi gidiyorsun." : " biriktirdin." };
+  } else if (bu.toplam > 0) {
+    manset = { oncesi: `${ayAdi}: bu ay `, vurgu: TL(bu.toplam), sonrasi: " harcadın." };
+  } else {
+    manset = { oncesi: `${ayAdi}: `, vurgu: "ilk işlemini", sonrasi: " ekleyerek panelini canlandır." };
+  }
+
+  const destek = [];
+  if (tasarruf != null) destek.push({ etiket: "Tasarruf oranı", deger: `%${Math.max(0, tasarruf)}`, ton: tasarruf >= 20 ? "pos" : tasarruf < 0 ? "neg" : "notr" });
+  if (degisimPct != null && bu.toplam > 0) destek.push({ etiket: "Geçen aya göre gider", deger: `${degisimPct > 0 ? "+" : ""}%${degisimPct}`, ton: degisimPct > 0 ? "neg" : "pos" });
+  if (asim > 0) destek.push({ etiket: "Bütçe aşımı", deger: `${asim} kategori`, ton: "neg" });
+  const ng = (d.netGecmis || []).filter((p) => p && typeof p.deger === "number");
+  if (ng.length >= 2) {
+    const fark = ng[ng.length - 1].deger - ng[ng.length - 2].deger;
+    if (fark !== 0) destek.push({ etiket: "Net varlık", deger: `${fark > 0 ? "+" : "−"}${TL(Math.abs(fark))}`, ton: fark > 0 ? "pos" : "neg" });
+  }
+
+  return { manset, destek: destek.slice(0, 3) };
 }
 
 // Etkin kategori listeleri (özel kategoriler varsa onları, yoksa varsayılanı)

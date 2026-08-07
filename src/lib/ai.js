@@ -12,6 +12,7 @@
 // ============================================================
 import { KRIPTO_MAP } from "./constants.js";
 import { sayiCikar, bugun } from "./format.js";
+import { syncDurum } from "./sync.js";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -34,6 +35,7 @@ let _bildirim = null; // UI bildirimi (örn. otomatik model yedeği)
 export function aiBildirimAyarla(fn) { _bildirim = fn; }
 
 export const SAGLAYICI_SECENEK = [
+  { id: "proxy", label: "Sunucu Proxy (anahtar sunucuda · self-host)" },
   { id: "anthropic", label: "Anthropic Claude (bulut · anahtar gerekir)" },
   { id: "gemini", label: "Google Gemini (bulut · ücretsiz katman)" },
   { id: "openai", label: "OpenAI ChatGPT (bulut · anahtar gerekir)" },
@@ -73,9 +75,18 @@ export function varsayilanAdres(saglayici) {
   return "";
 }
 
+// Sunucu-taraflı Anthropic proxy adresi (same-origin /pb/ai; nginx → PocketBase hook)
+function proxyURL() {
+  const base = typeof location !== "undefined" && /^https?:/.test(location.origin || "")
+    ? `${location.origin.replace(/\/+$/, "")}/pb`
+    : "http://localhost:8090";
+  return base + "/ai";
+}
+
 // Sağlayıcı, OpenAI-uyumlu /v1/chat/completions yolunu mu kullanıyor?
+// "proxy" ve "anthropic" Anthropic mesaj biçimini kullanır (proxy sunucudan iletir).
 function openAIUyumlu(p) {
-  return p !== "anthropic";
+  return p !== "anthropic" && p !== "proxy";
 }
 // Sağlayıcı bir API anahtarı gerektiriyor mu? (bulut)
 function anahtarGerekli(p) {
@@ -105,6 +116,7 @@ export function yerelMi() {
 }
 
 export function aiHazir() {
+  if (_provider === "proxy") return true; // anahtar sunucuda; istemci tarafında hazır say
   if (anahtarGerekli(_provider)) return !!_apiKey;
   return !!_baseURL;
 }
@@ -151,20 +163,24 @@ async function fetchYeniden(url, opts, deneme = 3) {
 async function anthropicCall(messages, useSearch) {
   const body = { model: _model, max_tokens: 2048, messages };
   if (useSearch) body.tools = [WEB_SEARCH_TOOL];
+  const proxy = _provider === "proxy";
+  const url = proxy ? proxyURL() : ANTHROPIC_URL;
+  const headers = { "Content-Type": "application/json" };
+  if (!proxy) {
+    // Doğrudan Anthropic: anahtar + tarayıcı erişim başlığı. Proxy'de anahtar sunucuda.
+    headers["x-api-key"] = _apiKey;
+    headers["anthropic-version"] = ANTHROPIC_VERSION;
+    headers["anthropic-dangerous-direct-browser-access"] = "true";
+  } else {
+    // Proxy auth korumalı: PocketBase oturum token'ını ilet
+    const token = syncDurum().token;
+    if (token) headers["Authorization"] = token;
+  }
   let res;
   try {
-    res = await fetchYeniden(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": _apiKey,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify(body),
-    });
+    res = await fetchYeniden(url, { method: "POST", headers, body: JSON.stringify(body) });
   } catch {
-    throw new Error("Ağ hatası: Anthropic API'ye ulaşılamadı.");
+    throw new Error(proxy ? "Sunucu AI proxy'sine ulaşılamadı (PocketBase açık mı?)." : "Ağ hatası: Anthropic API'ye ulaşılamadı.");
   }
   if (!res.ok) {
     let detay = "";

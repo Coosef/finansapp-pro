@@ -189,10 +189,20 @@ export function ekstreUygula(data, ozet, kayitlar) {
   let hesapId = hc.hedef?.id || null;
   const borc = parseFloat(oz.donemBorcu), hesB = parseFloat(oz.bakiye);
   const yeniBakiye = hc.tip === "kart" ? (isNaN(borc) ? null : borc) : (isNaN(hesB) ? null : hesB);
+  // Kredi kartı ek bilgileri (son ödeme / asgari / limit) — varsa hesaba yaz
+  const kartBilgi = {};
+  if (hc.tip === "kart") {
+    const so = oz.sonOdemeTarihi || oz.sonOdeme;
+    if (so) { const iso = /^\d{4}-\d{2}-\d{2}/.test(so) ? String(so).slice(0, 10) : tarihCevir(so); if (iso) kartBilgi.sonOdeme = iso; }
+    const as = parseFloat(oz.asgariOdeme ?? oz.asgari);
+    if (!isNaN(as)) kartBilgi.asgari = as;
+    const kl = parseFloat(oz.krediLimiti);
+    if (!isNaN(kl)) kartBilgi.krediLimiti = kl;
+  }
   if (hc.son4 || hc.banka) {
     const idx = hc.hedef ? hesaplar.findIndex((h) => h.id === hc.hedef.id) : -1;
-    if (idx < 0) { hesapId = uid(); hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: yeniBakiye ?? 0, son4: hc.son4 || undefined, banka: hc.banka || undefined }); }
-    else if (yeniBakiye != null) hesaplar[idx] = { ...hesaplar[idx], bakiye: yeniBakiye, son4: hesaplar[idx].son4 || hc.son4 || undefined };
+    if (idx < 0) { hesapId = uid(); hesaplar.push({ id: hesapId, ad: hc.ad, tip: hc.tip, bakiye: yeniBakiye ?? 0, son4: hc.son4 || undefined, banka: hc.banka || undefined, ...kartBilgi }); }
+    else if (yeniBakiye != null || Object.keys(kartBilgi).length) hesaplar[idx] = { ...hesaplar[idx], ...(yeniBakiye != null ? { bakiye: yeniBakiye } : {}), son4: hesaplar[idx].son4 || hc.son4 || undefined, ...kartBilgi };
   }
   let eklenen = 0, aboEklenen = 0;
   (kayitlar || []).forEach((k, i) => {

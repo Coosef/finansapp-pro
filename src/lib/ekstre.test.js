@@ -53,6 +53,15 @@ describe("ekstreUygula", () => {
     expect(r.data.transferAkis.length).toBe(1);
     expect(r.data.transferAkis[0].miktar).toBe(-200);
   });
+  it("kredi kartında son ödeme/asgari/limit bilgisini hesaba yazar", () => {
+    const rk = ekstreUygula(bosData(), { ekstreTipi: "kart", banka: "Axess", son4: "7189", donemBorcu: 5000, asgariOdeme: 750, sonOdemeTarihi: "2026-09-15", krediLimiti: 30000 }, []);
+    const h = rk.data.hesaplar[0];
+    expect(h.tip).toBe("kart");
+    expect(h.bakiye).toBe(5000);
+    expect(h.sonOdeme).toBe("2026-09-15");
+    expect(h.asgari).toBe(750);
+    expect(h.krediLimiti).toBe(30000);
+  });
 });
 
 describe("yenidenSiniflandir", () => {

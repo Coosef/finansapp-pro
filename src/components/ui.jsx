@@ -1,7 +1,10 @@
 // ============================================================
 // Yeniden kullanılabilir UI parçaları — Zümrüt & Altın tasarımı
 // ============================================================
+import { useState } from "react";
 import { V, F, SERIF, MONO } from "../lib/constants.js";
+import { TL } from "../lib/format.js";
+import { reelDeger } from "../lib/finance.js";
 import { Icon } from "./icons.jsx";
 
 const lbl = { display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" };
@@ -191,6 +194,63 @@ export function Bos({ mesaj, baslik, icon = "doc" }) {
       </div>
       {baslik && <div style={{ fontSize: "14.5px", fontWeight: 600, color: V.ink, marginBottom: 5 }}>{baslik}</div>}
       <div style={{ fontSize: "13px", color: V.ink3 }}>{mesaj}</div>
+    </div>
+  );
+}
+
+// ---- Enflasyon-flip para (imza öğe) ----
+// Nominal TL gösterir; geçmiş tarihli ve enflasyon > 0 ise hover/tap/odak ile
+// "bugünkü alım gücü" karşılığına döner. Fark önemsizse (yakın tarih) sade metin kalır.
+export function Para({ tutar, tarih, enflasyon, renk, style = {}, className = "num" }) {
+  const [flip, setFlip] = useState(false);
+  const oran = +enflasyon || 0;
+  const reel = tarih ? reelDeger(tutar, tarih, oran) : tutar;
+  const fark = Math.abs(reel - (tutar || 0));
+  const etkilesimli = !!tarih && oran > 0 && fark >= 1 && fark / Math.max(1, Math.abs(tutar || 0)) >= 0.02;
+  if (!etkilesimli) return <span className={className} style={{ color: renk, ...style }}>{TL(tutar)}</span>;
+  return (
+    <span
+      className={`${className} fa-flip`.trim()}
+      tabIndex={0}
+      role="button"
+      aria-label={flip ? `${TL(reel)} bugünkü alım gücü` : `${TL(tutar)}, bugünkü karşılığı için üzerine gel`}
+      title={flip ? "Nominal değere dön" : "≈ bugünkü alım gücü"}
+      onMouseEnter={() => setFlip(true)}
+      onMouseLeave={() => setFlip(false)}
+      onFocus={() => setFlip(true)}
+      onBlur={() => setFlip(false)}
+      onClick={() => setFlip((f) => !f)}
+      style={{ color: flip ? V.accent : renk, cursor: "help", transition: "color .2s ease", ...style }}
+    >
+      {TL(flip ? reel : tutar)}
+      {flip && <span style={{ fontSize: "0.6em", color: V.accent, marginLeft: 4, fontFamily: F, letterSpacing: 0, verticalAlign: "middle" }}>≈ bugünkü</span>}
+    </span>
+  );
+}
+
+// ---- Editoryal panel brifingi (hero) ----
+// manset: {oncesi, vurgu, sonrasi} — vurgu altın renkte öne çıkar.
+// destek: [{etiket, deger, ton:"pos"|"neg"|"notr"}] — küçük gösterge çipleri.
+export function Brifing({ manset, destek = [] }) {
+  if (!manset) return null;
+  const tonRenk = { pos: V.pos, neg: V.neg, notr: V.ink3 };
+  return (
+    <div className="fa-card" style={{ padding: "18px 20px", marginBottom: 16, borderLeft: `3px solid ${V.accent}`, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="serif" style={{ fontSize: 21, lineHeight: 1.34, color: V.ink, fontWeight: 500, letterSpacing: "-0.01em" }}>
+        {manset.oncesi}
+        <span style={{ color: V.accent, fontWeight: 600 }}>{manset.vurgu}</span>
+        {manset.sonrasi}
+      </div>
+      {destek.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {destek.map((s, i) => (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 12 }}>
+              <span style={{ color: V.ink3 }}>{s.etiket}</span>
+              <span className="num" style={{ color: tonRenk[s.ton] || V.ink, fontWeight: 600 }}>{s.deger}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

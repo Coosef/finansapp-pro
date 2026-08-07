@@ -1,7 +1,7 @@
 // ============================================================
 // Giriş, PIN kilidi ve onboarding — Zümrüt & Altın tasarımı
 // ============================================================
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { V, F, SERIF, MONO } from "../lib/constants.js";
 import { uid, bugun, sayiCevir } from "../lib/format.js";
 import { Icon } from "../components/icons.jsx";
@@ -56,21 +56,38 @@ export function Login({ onLogin }) {
 export function PinGate({ dogruPin, onAc, onCikis }) {
   const [pin, setPin] = useState("");
   const [hata, setHata] = useState(false);
+  const [yanlis, setYanlis] = useState(0); // ard arda yanlış deneme
+  const [kilit, setKilit] = useState(0); // kalan kilit saniyesi
+  const MAX = 5, BEKLE = 30;
+  useEffect(() => {
+    if (kilit <= 0) return undefined;
+    const t = setInterval(() => setKilit((k) => Math.max(0, k - 1)), 1000);
+    return () => clearInterval(t);
+  }, [kilit]);
   function bas(d) {
-    if (pin.length >= 4) return;
+    if (kilit > 0 || pin.length >= 4) return;
     const yeni = pin + d;
     setPin(yeni);
     if (yeni.length === 4) {
-      if (yeni === dogruPin) onAc();
-      else {
-        setHata(true);
-        setTimeout(() => {
-          setPin("");
-          setHata(false);
-        }, 600);
-      }
+      if (yeni === dogruPin) { onAc(); return; }
+      const say = yanlis + 1;
+      setYanlis(say);
+      setHata(true);
+      if (say >= MAX) { setKilit(BEKLE); setYanlis(0); } // çok fazla deneme → kilitle
+      setTimeout(() => { setPin(""); setHata(false); }, 600);
     }
   }
+  // Fiziksel klavye desteği: rakam tuşları PIN girer, Backspace siler
+  useEffect(() => {
+    function onKey(e) {
+      if (kilit > 0) return;
+      if (/^[0-9]$/.test(e.key)) { e.preventDefault(); bas(e.key); }
+      else if (e.key === "Backspace") { e.preventDefault(); setPin((p) => p.slice(0, -1)); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pin, kilit, yanlis, dogruPin]);
+  const mesaj = kilit > 0 ? `Çok fazla deneme — ${kilit} sn bekle` : yanlis > 0 ? `PIN'ini gir · ${MAX - yanlis} deneme kaldı` : "PIN'ini gir";
   const tus = {
     width: 72, height: 72, borderRadius: "50%", background: "rgba(255,255,255,0.05)",
     border: `1px solid #3A6B55`, color: "#F4F1E9", fontSize: "1.5rem",
@@ -80,13 +97,13 @@ export function PinGate({ dogruPin, onAc, onCikis }) {
     <div style={ekran}>
       <div style={{ textAlign: "center", animation: "obfade .4s both" }}>
         <Icon d="lock" size={34} stroke={V.accent} width={1.6} style={{ marginBottom: "14px" }} />
-        <p style={{ margin: "0 0 22px", fontSize: "15px", color: "#F4F1E9" }}>PIN'ini gir</p>
+        <p style={{ margin: "0 0 22px", fontSize: "15px", color: kilit > 0 ? V.neg : "#F4F1E9" }}>{mesaj}</p>
         <div style={{ display: "flex", gap: "14px", justifyContent: "center", marginBottom: "30px", animation: hata ? "shake .3s" : "none" }}>
           {[0, 1, 2, 3].map((i) => (
             <span key={i} style={{ width: 14, height: 14, borderRadius: "50%", boxSizing: "border-box", background: i < pin.length ? V.accent : "transparent", border: i < pin.length ? "none" : "2px solid #3A6B55", transition: "all .15s" }} />
           ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,72px)", gap: "14px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,72px)", gap: "14px", opacity: kilit > 0 ? 0.4 : 1, pointerEvents: kilit > 0 ? "none" : "auto", transition: "opacity .2s" }}>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
             <button key={d} onClick={() => bas(String(d))} style={tus}>{d}</button>
           ))}

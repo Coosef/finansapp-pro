@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, transferleriEslestir, iceAktarilaniTemizle, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre } from "./finance.js";
+import { bosVeri, kurallariUygula, tekrarlariUret, rozetleriHesapla, giderKategorileri, gelirKategorileri, hesapDelta, hesabaUygula, transferUygula, transferleriEslestir, iceAktarilaniTemizle, yillikOzet, butceDevri, etkinButce, hedefKatkilariUret, yaklasanOdemeler, donemAraligi, donemde, donemFiltre, reelDeger, panelBrifing, netGecmisGuncelle, kartOdemeler, butceOnerisi } from "./finance.js";
 
 describe("iceAktarilaniTemizle", () => {
   const f = {
@@ -286,5 +286,115 @@ describe("donemAraligi / donemde / donemFiltre", () => {
     expect(r.gelirler.length).toBe(1);
     expect(r.giderler.length).toBe(1);
     expect(donemFiltre(fd, "tum", "2026-06-24")).toBe(fd);
+  });
+});
+
+describe("reelDeger", () => {
+  it("enflasyon 0 veya tarih yoksa tutarı aynen döndürür", () => {
+    expect(reelDeger(1000, "2025-08-07", 0, "2026-08-07")).toBe(1000);
+    expect(reelDeger(1000, null, 50, "2026-08-07")).toBe(1000);
+  });
+  it("gelecek/bugün tarihte düzeltme yapmaz", () => {
+    expect(reelDeger(1000, "2026-08-07", 50, "2026-08-07")).toBe(1000);
+    expect(reelDeger(1000, "2027-01-01", 50, "2026-08-07")).toBe(1000);
+  });
+  it("bir yıl önce %50 enflasyonda ~1.5 katına şişer", () => {
+    const r = reelDeger(1000, "2025-08-07", 50, "2026-08-07");
+    expect(r).toBeGreaterThan(1480);
+    expect(r).toBeLessThan(1510);
+  });
+  it("eski tarih daha yüksek bugünkü karşılık verir (monotonluk)", () => {
+    const yakin = reelDeger(1000, "2025-08-07", 40, "2026-08-07");
+    const uzak = reelDeger(1000, "2023-08-07", 40, "2026-08-07");
+    expect(uzak).toBeGreaterThan(yakin);
+  });
+});
+
+describe("panelBrifing", () => {
+  it("boş veride 'ilk işlem' manşetini kurar, kırılmaz", () => {
+    const r = panelBrifing({}, "2026-08-15");
+    expect(r.manset.vurgu).toContain("ilk işlemini");
+    expect(Array.isArray(r.destek)).toBe(true);
+  });
+  it("ay-üstü gider artışını manşete taşır", () => {
+    const fd = {
+      giderler: [
+        { tarih: "2026-08-05", miktar: 1200, kategori: "Market" },
+        { tarih: "2026-07-05", miktar: 1000, kategori: "Market" },
+      ],
+    };
+    const r = panelBrifing(fd, "2026-08-15");
+    expect(r.manset.vurgu).toBe("%20 arttı");
+    expect(r.manset.sonrasi).toContain("Market");
+  });
+  it("gider yoksa ama gelir varsa tasarruf oranını gösterir", () => {
+    const fd = { gelirler: [{ tarih: "2026-08-03", miktar: 10000, kategori: "Maaş" }] };
+    const r = panelBrifing(fd, "2026-08-15");
+    expect(r.manset.vurgu).toContain("%100");
+    expect(r.destek.some((s) => s.etiket === "Tasarruf oranı")).toBe(true);
+  });
+});
+
+describe("netGecmisGuncelle", () => {
+  it("boş geçmişe bugünün noktasını ekler", () => {
+    const r = netGecmisGuncelle([], 1000, "2026-08-07");
+    expect(r).toEqual([{ tarih: "2026-08-07", deger: 1000 }]);
+  });
+  it("farklı günde yeni nokta ekler", () => {
+    const r = netGecmisGuncelle([{ tarih: "2026-08-06", deger: 900 }], 1000, "2026-08-07");
+    expect(r.length).toBe(2);
+    expect(r[1]).toEqual({ tarih: "2026-08-07", deger: 1000 });
+  });
+  it("aynı gün değişmemişse aynı diziyi (no-op) döndürür", () => {
+    const ng = [{ tarih: "2026-08-07", deger: 1000 }];
+    expect(netGecmisGuncelle(ng, 1000.4, "2026-08-07")).toBe(ng);
+  });
+  it("aynı gün değişmişse son noktayı günceller", () => {
+    const r = netGecmisGuncelle([{ tarih: "2026-08-07", deger: 1000 }], 1500, "2026-08-07");
+    expect(r).toEqual([{ tarih: "2026-08-07", deger: 1500 }]);
+  });
+  it("en çok 60 kayıt tutar", () => {
+    const uzun = Array.from({ length: 60 }, (_, i) => ({ tarih: `d${i}`, deger: i }));
+    const r = netGecmisGuncelle(uzun, 999, "2026-08-07");
+    expect(r.length).toBe(60);
+    expect(r[r.length - 1]).toEqual({ tarih: "2026-08-07", deger: 999 });
+  });
+});
+
+describe("kartOdemeler", () => {
+  const findata = { hesaplar: [
+    { id: 1, ad: "Axess ••7189", tip: "kart", bakiye: 5000, asgari: 750, sonOdeme: "2026-08-15" },
+    { id: 2, ad: "Enpara ••0457", tip: "banka", bakiye: 1000 },
+    { id: 3, ad: "Uzak kart", tip: "kart", bakiye: 200, sonOdeme: "2026-12-01" },
+  ]};
+  it("aralıktaki kart son ödemesini asgari tutarıyla döndürür", () => {
+    const r = kartOdemeler(findata, "2026-08-07", 15);
+    expect(r.length).toBe(1);
+    expect(r[0].tip).toBe("Kart");
+    expect(r[0].gun).toBe(8);
+    expect(r[0].miktar).toBe(750); // asgari öncelikli
+    expect(r[0].ad).toContain("Axess");
+  });
+  it("banka hesabını ve sonOdeme'si olmayanı katmaz, uzak tarihi eler", () => {
+    expect(kartOdemeler(findata, "2026-08-07", 15).some((x) => x.ad.includes("Uzak"))).toBe(false);
+    expect(kartOdemeler({ hesaplar: [{ tip: "banka", bakiye: 5 }] }, "2026-08-07").length).toBe(0);
+  });
+});
+
+describe("butceOnerisi", () => {
+  const findata = { giderler: [
+    { baslik: "Market A", miktar: 3000, kategori: "Market", tarih: "2026-08-05" },
+    { baslik: "Market B", miktar: 3000, kategori: "Market", tarih: "2026-07-05" },
+    { baslik: "Market C", miktar: 3000, kategori: "Market", tarih: "2026-06-05" },
+    { baslik: "N11 (taksit 2/9)", miktar: 2833, kategori: "Teknoloji", tarih: "2026-08-01" }, // taksit → hariç
+    { baslik: "Eski", miktar: 9999, kategori: "Konut", tarih: "2026-01-01" }, // aralık dışı
+  ]};
+  const o = butceOnerisi(findata, "2026-08-15", 3);
+  it("son 3 ay ortalamasından %10 pay + 100'e yuvarlama önerir", () => {
+    expect(o.Market).toBe(3300); // 3000 ort × 1.1 = 3300
+  });
+  it("taksitleri ve aralık dışını önermez", () => {
+    expect(o.Teknoloji).toBeUndefined();
+    expect(o.Konut).toBeUndefined();
   });
 });

@@ -40,18 +40,17 @@ npm test           # çekirdek mantık birim testleri (Vitest)
 
 ---
 
-## Docker ile çalıştırma
+## Docker / CasaOS ile çalıştırma (self-host)
+
+Frontend + PocketBase (DB + auth + senkron) + isteğe bağlı sunucu-taraflı AI proxy — tek portta (8080).
 
 ```bash
-docker compose up --build      # → http://localhost:8080
+cp .env.example .env            # ANTHROPIC_API_KEY (opsiyonel) + TZ
+docker compose up -d --build    # → http://localhost:8080
 ```
 
-veya elle:
-
-```bash
-docker build -t finansapp .
-docker run -p 8080:80 finansapp
-```
+PocketBase, nginx tarafından same-origin `/pb` altında proxy'lenir (CORS/IP ayarı yok).
+CasaOS kurulumu, ilk çalıştırma, AI proxy, Cloudflare Tunnel ve yedekleme için: **[DEPLOY.md](./DEPLOY.md)**.
 
 ---
 

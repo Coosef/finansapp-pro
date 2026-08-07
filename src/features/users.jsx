@@ -4,11 +4,12 @@
 import { useState } from "react";
 import { V, F } from "../lib/constants.js";
 import { storage } from "../lib/storage.js";
+import { sifreHashle } from "../lib/kripto.js";
 import { Field, Btn, DelBtn } from "../components/ui.jsx";
 
 export function Kullanicilar({ users, onChange, bildir, mevcut }) {
   const [yeni, setYeni] = useState({ username: "", sifre: "", ad: "", rol: "kullanici" });
-  function ekle() {
+  async function ekle() {
     if (!yeni.username || !yeni.sifre) {
       bildir("Kullanıcı adı ve şifre gerekli", "err");
       return;
@@ -17,7 +18,8 @@ export function Kullanicilar({ users, onChange, bildir, mevcut }) {
       bildir("Bu kullanıcı adı var", "err");
       return;
     }
-    onChange([...users, { ...yeni }]);
+    const sifre = await sifreHashle(yeni.sifre); // düz-metin saklama
+    onChange([...users, { ...yeni, sifre }]);
     setYeni({ username: "", sifre: "", ad: "", rol: "kullanici" });
     bildir("Kullanıcı eklendi");
   }

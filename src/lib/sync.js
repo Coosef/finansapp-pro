@@ -7,7 +7,12 @@
 // ============================================================
 
 const ANAHTAR = "finansapp:sync";
-const VARSAYILAN_ADRES = "http://localhost:8090";
+// Docker/CasaOS'ta PocketBase, nginx tarafından same-origin /pb altında proxy'lenir
+// → kullanıcı sunucu IP'si girmez. Dev/dosya modunda localhost:8090'a düşer.
+const VARSAYILAN_ADRES =
+  typeof location !== "undefined" && /^https?:/.test(location.origin || "")
+    ? `${location.origin.replace(/\/+$/, "")}/pb`
+    : "http://localhost:8090";
 
 let _url = "";
 let _token = "";

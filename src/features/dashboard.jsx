@@ -4,11 +4,15 @@
 // net varlık grafiği, harcama dağılımı, yaklaşan ödemeler, bütçe
 // ============================================================
 import { useRef, useState } from "react";
-import { V, PALET, GIDER_KAT } from "../lib/constants.js";
+import { V, PALET, GIDER_KAT, AY_ADI } from "../lib/constants.js";
 import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64 } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
-import { yaklasanOdemeler, etkinButce } from "../lib/finance.js";
-import { Card, Btn, Stat, ProgressBar, Bos } from "../components/ui.jsx";
+import { yaklasanOdemeler, etkinButce, panelBrifing, donemAraligi, kartOdemeler, butceOnerisi } from "../lib/finance.js";
+import { faturaKategori } from "../lib/fatura.js";
+import { taksitPlanlari, aylikTaksitYuku, kalanTaksitBorcu } from "../lib/taksit.js";
+import { nakitAkisProjeksiyon } from "../lib/nakitakis.js";
+import { sessizZamlar } from "../lib/anomali.js";
+import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
 function aiHata(e) {
@@ -16,6 +20,8 @@ function aiHata(e) {
 }
 
 const baslik = { fontSize: 16, fontWeight: 600, color: V.ink };
+const kisaAy = (ay) => AY_ADI[(parseInt((ay || "").slice(5, 7), 10) || 1) - 1] || "";
+const kisaTarih = (t) => (t ? `${parseInt(t.slice(8, 10), 10)} ${kisaAy(t)}` : "");
 
 export function Panel({
   findata, fd, donem, donemAdi, setFindata, bildir,
@@ -69,7 +75,7 @@ export function Panel({
       ]);
       const j = parseJSON(txt);
       const adi = j.magaza || "Fiş";
-      const kategori = j.kategori || "Market";
+      const kategori = faturaKategori(adi) || j.kategori || "Market";
       const miktar = Math.abs(parseFloat(j.toplam) || 0);
       onHizliEkle("gider", { baslik: adi, miktar, kategori, tarih: j.tarih || bugun(), hesapId: "" });
       kategoriOgren(adi, kategori);
@@ -130,7 +136,7 @@ export function Panel({
   });
 
   // ---- Yaklaşan ödemeler ----
-  const yaklasan = yaklasanOdemeler(findata, bugun(), 7).slice(0, 5);
+  const yaklasan = [...yaklasanOdemeler(findata, bugun(), 7), ...kartOdemeler(findata, bugun(), 10)].sort((a, b) => a.gun - b.gun).slice(0, 6);
 
   // ---- Bütçe durumu ----
   const ay = buAy();
@@ -146,8 +152,56 @@ export function Panel({
     .sort((a, b) => b.pct - a.pct)
     .slice(0, 4);
 
+  // ---- Editoryal brifing + enflasyon referans tarihi ----
+  const brifing = panelBrifing(findata, bugun());
+  const refTarih = donemAraligi(donem, bugun())?.start; // seçili dönemin başı → enflasyon-flip referansı
+  const enf = findata.ayarlar?.enflasyon;
+
+  // ---- Taksit takibi (gelecek taksit yükümlülükleri) ----
+  const taksitler = taksitPlanlari(findata, bugun());
+  const kalanBorc = kalanTaksitBorcu(findata, bugun());
+  const taksitYuku = aylikTaksitYuku(findata, bugun(), 4);
+
+  // ---- Nakit akış projeksiyonu (45 gün) ----
+  const projeksiyon = nakitAkisProjeksiyon(findata, bugun(), 45);
+
+  // ---- Sessiz zam tespiti ----
+  const zamlar = sessizZamlar(findata);
+
+  function butceOner() {
+    const oneri = butceOnerisi(findata, bugun());
+    const n = Object.keys(oneri).length;
+    if (!n) { bildir("Öneri için yeterli geçmiş gider yok", "err"); return; }
+    setFindata((d) => ({ ...d, butceler: { ...(d.butceler || {}), ...oneri } }));
+    bildir(`${n} kategori için başlangıç bütçesi önerildi`);
+  }
+
   return (
     <div>
+      {/* 0) Editoryal brifing (veriden üretilen manşet) */}
+      <Brifing manset={brifing.manset} destek={brifing.destek} />
+
+      {/* 0b) Sessiz zam uyarısı — tutarı sessizce artan tekrarlayan kalemler */}
+      {zamlar.length > 0 && (
+        <div style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}55`, borderRadius: 12, padding: "12px 16px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>🔔</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: V.ink }}>Sessiz zam uyarısı</span>
+            <span style={{ fontSize: 11, color: V.ink3 }}>sessizce artan {zamlar.length} kalem</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            {zamlar.slice(0, 3).map((z, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, color: V.ink2 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{z.baslik}</span>
+                <span className="num" style={{ flexShrink: 0 }}>
+                  {TL(z.eskiTutar)} → <span style={{ color: V.neg, fontWeight: 600 }}>{TL(z.yeniTutar)}</span> <span style={{ color: V.neg }}>(+%{z.artisPct})</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 1) Hızlı Ekle (zümrüt kart) */}
       <div style={{ background: V.emerald, borderRadius: 14, padding: "18px 20px", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
@@ -227,7 +281,7 @@ export function Panel({
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: V.ink2 }}>
                     <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, flex: "none" }} />
                     {d.cat}
-                    <span className="num" style={{ marginLeft: "auto", color: V.ink, fontWeight: 500 }}>{TL(d.amt)}</span>
+                    <Para tutar={d.amt} tarih={refTarih} enflasyon={enf} renk={V.ink} style={{ marginLeft: "auto", fontWeight: 500 }} />
                   </div>
                 ))}
               </div>
@@ -244,7 +298,7 @@ export function Panel({
           <div className="serif" style={{ ...baslik, marginBottom: 14 }}>Yaklaşan Ödemeler</div>
           {yaklasan.length ? (
             yaklasan.map((p, i) => {
-              const tagRenk = p.tip === "Abonelik" ? V.accent : V.pos;
+              const tagRenk = p.tip === "Abonelik" ? V.accent : p.tip === "Kart" ? V.neg : V.pos;
               return (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < yaklasan.length - 1 ? `1px solid ${V.line}` : "none" }}>
                   <span style={{ fontSize: 13, color: V.ink2 }}>
@@ -284,10 +338,85 @@ export function Panel({
               );
             })
           ) : (
-            <div style={{ fontSize: 13, color: V.ink3, padding: "10px 0" }}>Bütçe tanımlanmamış. Ayarlar'dan kategori limiti ekleyin.</div>
+            <div style={{ padding: "6px 0" }}>
+              <div style={{ fontSize: 13, color: V.ink3, marginBottom: 10 }}>Bütçe tanımlanmamış. Geçmiş harcamandan otomatik başlangıç limitleri önereyim mi?</div>
+              <Btn variant="soft" onClick={butceOner} style={{ width: "100%" }}>Otomatik bütçe öner</Btn>
+            </div>
           )}
         </Card>
       </div>
+
+      {/* 5) Taksit takibi — yalnızca aktif (gelecek) taksit varsa */}
+      {taksitler.length > 0 && (
+        <Card style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+            <div className="serif" style={baslik}>Taksit Takibi</div>
+            <div style={{ fontSize: 12, color: V.ink3 }}>
+              Kalan borç <span className="num" style={{ color: V.neg, fontWeight: 600 }}>{TL(kalanBorc)}</span>
+            </div>
+          </div>
+          {taksitYuku.length > 0 && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+              {taksitYuku.map((y) => (
+                <div key={y.ay} style={{ flex: 1, minWidth: 72, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ fontSize: 11, color: V.ink3 }}>{kisaAy(y.ay)}</div>
+                  <div className="num" style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, marginTop: 2 }}>{TL(y.tutar)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {taksitler.slice(0, 5).map((t, i) => {
+            const n = Math.min(taksitler.length, 5);
+            return (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: i < n - 1 ? `1px solid ${V.line}` : "none" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: V.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.baslik}</div>
+                  <div style={{ fontSize: 11, color: V.ink3, marginTop: 1 }}>{t.sonrakiNo}/{t.toplamTaksit} · {t.kalan} taksit kaldı · sonraki {kisaTarih(t.sonrakiTarih)}</div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div className="num" style={{ fontSize: 13, fontWeight: 600, color: V.ink }}>{TL(t.aylikTutar)}<span style={{ fontSize: 11, color: V.ink3, fontWeight: 400 }}>/ay</span></div>
+                  <div className="num" style={{ fontSize: 11, color: V.ink3 }}>kalan {TL(t.kalanTutar)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* 6) Nakit akış projeksiyonu — gelecek olay varsa */}
+      {projeksiyon.olaySayisi > 0 && (
+        <Card style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+            <div className="serif" style={baslik}>Nakit Akış Projeksiyonu</div>
+            <div style={{ fontSize: 11, color: V.ink3 }}>45 gün</div>
+          </div>
+          <div style={{ display: "flex", gap: 12, marginBottom: (projeksiyon.ilkEksi || projeksiyon.baslangic <= 0) ? 12 : 0, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 100 }}>
+              <div style={{ fontSize: 11, color: V.ink3 }}>Bugün likit</div>
+              <div className="num" style={{ fontSize: 18, fontWeight: 600, color: V.ink, marginTop: 2 }}>{TL(projeksiyon.baslangic)}</div>
+            </div>
+            <div style={{ fontSize: 16, color: V.ink3, alignSelf: "center" }}>→</div>
+            <div style={{ flex: 1, minWidth: 100 }}>
+              <div style={{ fontSize: 11, color: V.ink3 }}>45 gün sonra</div>
+              <div className="num" style={{ fontSize: 18, fontWeight: 600, color: projeksiyon.bitis < 0 ? V.neg : V.pos, marginTop: 2 }}>{TL(projeksiyon.bitis)}</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 120, textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: V.ink3 }}>Dönem gider / gelir</div>
+              <div className="num" style={{ fontSize: 12.5, marginTop: 4, color: V.ink2 }}>−{TL(projeksiyon.toplamGider)} / +{TL(projeksiyon.toplamGelir)}</div>
+            </div>
+          </div>
+          {projeksiyon.ilkEksi && (
+            <div style={{ background: "var(--chip-red)", border: `1px solid ${V.neg}44`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: V.neg }}>
+              ⚠ {kisaTarih(projeksiyon.ilkEksi.tarih)} — bakiye eksiye düşüyor: <span className="num" style={{ fontWeight: 600 }}>{TL(projeksiyon.ilkEksi.bakiye)}</span>
+            </div>
+          )}
+          {projeksiyon.baslangic <= 0 && (
+            <div style={{ fontSize: 11.5, color: V.ink3, marginTop: projeksiyon.ilkEksi ? 8 : 0 }}>
+              Likit hesap bakiyen 0 görünüyor — Hesaplar'dan güncel bakiyeni girersen projeksiyon anlamlı olur.
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
