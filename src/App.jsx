@@ -126,7 +126,7 @@ export default function FinansAppPro() {
 
   useEffect(() => {
     configureAI(findata?.ayarlar || {});
-  }, [findata?.ayarlar?.apiKey, findata?.ayarlar?.model, findata?.ayarlar?.aiSaglayici, findata?.ayarlar?.yerelAdres, findata?.ayarlar?.yerelModel]);
+  }, [findata?.ayarlar?.apiKey, findata?.ayarlar?.model, findata?.ayarlar?.aiSaglayici, findata?.ayarlar?.proxyMod, findata?.ayarlar?.yerelAdres, findata?.ayarlar?.yerelModel]);
 
   // tema değişince giriş ekranı ipucunu da güncelle
   useEffect(() => {

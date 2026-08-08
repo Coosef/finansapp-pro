@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from "react";
 import { V, F, SERIF, MONO, ACCENT_SECENEK } from "../lib/constants.js";
 import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
-import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele, anahtarKaydet } from "../lib/ai.js";
+import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele, anahtarKaydet, anahtarDurum } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
 import { syncYukle, syncDurum, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril, pbSifreDegistir } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
@@ -387,14 +387,31 @@ function AiKart({ findata, setFindata, bildir }) {
   const gemini = saglayici === "gemini";
   const openai = saglayici === "openai";
   const yerel = saglayici !== "anthropic" && saglayici !== "gemini" && saglayici !== "openai";
-  const [anahtar, setAnahtar] = useState(ay.apiKey || "");
+  // Write-only: kayıtlı anahtar alana GERİ BASILMAZ (güvenlik). Alan boş başlar;
+  // kayıtlı durum ayrı bir göstergeyle bilinir.
+  const [anahtar, setAnahtar] = useState("");
   const [adres, setAdres] = useState(ay.yerelAdres || "");
   const [yModel, setYModel] = useState(ay.yerelModel || "");
   const [test, setTest] = useState(null);
   const [modeller, setModeller] = useState([]);
   const [modelDurum, setModelDurum] = useState(""); // "yukleniyor" | hata metni | ""
+  const [srvDurum, setSrvDurum] = useState(null); // sunucuda kayıtlı sağlayıcılar { anthropic, gemini, openai }
 
   const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
+
+  // Bulut sağlayıcılarda proxy (sunucu-taraflı anahtar) varsayılan AÇIK — DB-only'de
+  // sunucu hep var ve anahtar cihazda tutulmaz. Kullanıcı açıkça kapatabilir.
+  const proxyAcik = ay.proxyMod ?? true;
+
+  // Sunucuda hangi sağlayıcıların anahtarı kayıtlı? (write-only göstergesi için)
+  useEffect(() => {
+    let iptal = false;
+    anahtarDurum().then((d) => { if (!iptal) setSrvDurum(d); });
+    return () => { iptal = true; };
+  }, []);
+  const srvKayitli = !!srvDurum?.[saglayici];
+  const cihazKayitli = !!ay.apiKey; // eski tarayıcı-modu anahtarı
+  const anahtarKayitli = srvKayitli || cihazKayitli;
 
   // Yerel sunucudaki yüklü modelleri çek
   async function modelleriGetir(ad = adres) {
@@ -438,13 +455,16 @@ function AiKart({ findata, setFindata, bildir }) {
   async function kaydet() {
     const key = anahtar.trim();
     try {
-      if (bulut && ay.proxyMod) {
-        // Anahtarı SUNUCUYA yaz, cihazda tutma
+      if (bulut && proxyAcik) {
+        // Anahtarı SUNUCUYA yaz, cihazda tutma. proxyMod'u kalıcı olarak açık işaretle.
         if (key) { await anahtarKaydet(saglayici, key); setAnahtar(""); }
-        setAyar({ apiKey: "", yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+        setAyar({ apiKey: "", proxyMod: true, yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+        setSrvDurum((d) => ({ ...(d || {}), [saglayici]: key ? true : !!d?.[saglayici] }));
         bildir(key ? "Anahtar sunucuya kaydedildi (cihazda saklanmadı)" : "AI ayarları kaydedildi");
       } else {
-        setAyar({ apiKey: key, yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+        // Tarayıcı modu (açıkça proxy kapalı): anahtar cihazda saklanır.
+        setAyar({ apiKey: key || ay.apiKey || "", proxyMod: false, yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+        setAnahtar("");
         bildir("AI ayarları kaydedildi");
       }
     } catch (e) {
@@ -452,8 +472,9 @@ function AiKart({ findata, setFindata, bildir }) {
     }
   }
   async function baglantiTest() {
-    configureAI({ ...ay, aiSaglayici: saglayici, apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
-    setAyar({ apiKey: anahtar.trim(), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
+    // Test için anahtarı yalnızca bellekte kullan (findata'ya YAZMA — sızıntı olmasın).
+    const key = anahtar.trim();
+    configureAI({ ...ay, aiSaglayici: saglayici, proxyMod: bulut ? proxyAcik : false, apiKey: bulut && proxyAcik ? "" : (key || ay.apiKey || ""), yerelAdres: adres.trim(), yerelModel: yModel.trim() });
     setTest({ durum: "bekle", mesaj: "Test ediliyor…" });
     try {
       await testAIBaglanti();
@@ -463,6 +484,9 @@ function AiKart({ findata, setFindata, bildir }) {
       const m = "✗ " + (e?.message || "Bağlantı başarısız");
       setTest({ durum: "err", mesaj: m });
       bildir(e?.message || "Bağlantı başarısız", "err");
+    } finally {
+      // Kalıcı ayarları geri uygula (test'in geçici configi kalmasın)
+      configureAI(ay);
     }
   }
 
@@ -476,7 +500,8 @@ function AiKart({ findata, setFindata, bildir }) {
     <Card style={{ padding: 20 }}>
       <div style={{ ...baslik, marginBottom: 6 }}>Yapay Zekâ</div>
       <p style={altYazi}>
-        Asistan, fiş okuma ve doğal dil girişi için. Anahtar yalnızca tarayıcında saklanır.
+        Asistan, fiş okuma ve doğal dil girişi için. Bulut sağlayıcılarda anahtar
+        varsayılan olarak <b>sunucunda</b> (write-only) tutulur; cihaza yazılmaz ve burada gösterilmez.
       </p>
       <div style={etiket}>Sağlayıcı</div>
       <div style={{ marginBottom: 16 }}>
@@ -592,10 +617,17 @@ function AiKart({ findata, setFindata, bildir }) {
 
       {bulut && (
         <div style={{ marginBottom: 14, padding: "10px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10 }}>
+          <div style={{ fontSize: 12, color: anahtarKayitli ? V.pos : V.ink3, marginBottom: 10 }}>
+            {srvKayitli
+              ? "✓ Bu sağlayıcı için sunucuda kayıtlı anahtar var (write-only)"
+              : cihazKayitli
+                ? "• Cihazda kayıtlı anahtar var — sunucuya taşımak için proxy açıkken kaydet"
+                : "Kayıtlı anahtar yok — yeni anahtar girip kaydet"}
+          </div>
           <Toggle
             label="Anahtarı sunucuda tut (proxy)"
             sub="Anahtar cihazda saklanmaz; sunucundaki PocketBase'de tutulur ve AI çağrısı sunucudan yapılır. (Giriş gerekir.)"
-            checked={!!ay.proxyMod}
+            checked={proxyAcik}
             onChange={(v) => setAyar({ proxyMod: v })}
           />
         </div>
@@ -617,29 +649,42 @@ function AiKart({ findata, setFindata, bildir }) {
 // ---------- Bildirimler ----------
 function BildirimKart({ ay, setAyar, bildir }) {
   const acik = !!ay.bildirimler;
+  // Tarayıcı bildirimleri yalnızca güvenli bağlamda (HTTPS veya localhost) çalışır.
+  // http://<LAN-IP> gibi güvensiz origin'de tarayıcı izni sessizce reddeder.
+  const guvenli = typeof window === "undefined" ? true : (window.isSecureContext !== false);
+  const desteklenir = typeof Notification !== "undefined";
   async function degis(on) {
     if (!on) {
       setAyar({ bildirimler: false });
       bildir("Bildirimler kapandı");
       return;
     }
-    if (typeof Notification === "undefined") {
+    if (!guvenli) {
+      bildir("Bildirimler yalnızca güvenli bağlantıda (HTTPS) çalışır — HTTP/LAN-IP'de tarayıcı izin vermez", "err");
+      return;
+    }
+    if (!desteklenir) {
       bildir("Tarayıcı bildirimi desteklemiyor", "err");
       return;
     }
     let p = Notification.permission;
-    if (p !== "granted") p = await Notification.requestPermission();
+    if (p !== "granted") { try { p = await Notification.requestPermission(); } catch { p = "denied"; } }
     if (p === "granted") {
       setAyar({ bildirimler: true });
       bildir("Bildirimler açıldı");
     } else {
-      bildir("Bildirim izni verilmedi", "err");
+      bildir("Bildirim izni verilmedi (tarayıcı ayarlarından da açabilirsin)", "err");
     }
   }
   return (
     <Card style={{ padding: 20 }}>
       <div style={baslik}>Bildirimler</div>
       <Toggle label="Yaklaşan ödemeler" sub="3 gün önce uyar" checked={acik} onChange={degis} />
+      {!guvenli && (
+        <p style={{ ...altYazi, margin: "12px 0 0" }}>
+          ⚠️ Bu sayfa güvensiz bağlantıda (HTTP). Tarayıcı bildirimlerini engeller. Sunucunu <b>HTTPS</b> (ör. Cloudflare Tunnel) ile açarsan bildirimler çalışır.
+        </p>
+      )}
     </Card>
   );
 }
