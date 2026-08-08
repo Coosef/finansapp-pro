@@ -60,8 +60,9 @@ Tüneli **tek origin** olarak `http://localhost:8080`'e yönlendir — hepsi (ar
 
 ## Veri & Yedek
 
-- Kalıcı veri: `pb_data` Docker volume'ü (SQLite). Konteyner silinse de kalır.
-- Yedek: (a) `pb_data` volume snapshot, (b) PocketBase admin → Backups,
+- Kalıcı veri: `/DATA/AppData/finansapp/pb_data` (SQLite, host bind mount). Konteyner
+  silinse de kalır. (Düz Docker'da bu yolu `./pb_data` yapabilirsin.)
+- Yedek: (a) `pb_data` klasörünü kopyala, (b) PocketBase admin → Backups,
   (c) uygulama içi **Veri → Rapor → JSON Yedek Al**.
 
 ## Güncelleme

@@ -13,7 +13,7 @@ services:
       - TZ=${TZ:-Europe/Istanbul}
     restart: unless-stopped
 
-  # DB + auth + senkron backend. Hook/migration imaja gömülü; veri pb_data volume'de.
+  # DB + auth + senkron backend. Hook/migration imaja gömülü; veri /pb_data'da kalıcı.
   # PocketBase dışarı port AÇMAZ — nginx same-origin /pb altında proxy'ler.
   pocketbase:
     build: ./pb
@@ -24,8 +24,10 @@ services:
       - TZ=${TZ:-Europe/Istanbul}
       # AI proxy için (opsiyonel). Boşsa AI çağrıları 503 döner; app yine çalışır.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    # CasaOS uyumu için bind mount (isimli volume CasaOS editöründe "[object Object]"
+    # hatası veriyor). Düz Docker'da istersen ./pb_data yapabilirsin.
     volumes:
-      - pb_data:/pb_data
+      - /DATA/AppData/finansapp/pb_data:/pb_data
     command:
       - serve
       - --http=0.0.0.0:8090
@@ -37,9 +39,6 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
-
-volumes:
-  pb_data:
 
 # ---- CasaOS App Store meta verisi ----
 x-casaos:
