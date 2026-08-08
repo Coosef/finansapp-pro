@@ -44,8 +44,7 @@ async function load() {
 describe("ekran render smoke", () => {
   it("tüm ekranlar render-anı çökmeden render olur", async () => {
     const fd = await load();
-    const user = { username: "mehmet", ad: "Mehmet Yılmaz", rol: "admin" };
-    const users = [user, { username: "ayse", ad: "Ayşe", rol: "kullanici" }];
+    const user = { username: "mehmet@ornek.com", ad: "mehmet", bulut: true };
 
     const { Panel } = await import("./features/dashboard.jsx");
     const { Islemler, IslemModal } = await import("./features/transactions.jsx");
@@ -61,7 +60,7 @@ describe("ekran render smoke", () => {
     const { Login, PinGate, Onboarding } = await import("./features/auth.jsx");
 
     const ekranlar = [
-      <Login onLogin={noop} />,
+      <Login onLogin={noop} onRegister={noop} />,
       <PinGate dogruPin="1234" onAc={noop} onCikis={noop} />,
       <Onboarding user={user} setFindata={noop} />,
       <Panel {...aktarmaProps({ findata: fd, fd, donem: "buAy", donemAdi: "Bu ay", toplamGelir: 58000, toplamGider: 1240, toplamAbonelik: 60, nakit: 56700, netDeger: 138700, yatirimDeger: 57000, yatirimKar: 8500, guncelDeger: (y) => y.adet * (y.guncelFiyat || y.alisFiyati), onHizliEkle: noop, kategoriOgren: noop, onGit: noop })} />,
@@ -74,9 +73,9 @@ describe("ekran render smoke", () => {
       <Analiz findata={fd} fd={fd} donem="buAy" donemAdi="Bu ay" toplamGelir={58000} />,
       <Takvim findata={fd} onDuzenle={noop} />,
       <Asistan findata={fd} guncelDeger={(y) => y.adet * (y.guncelFiyat || y.alisFiyati)} toplamGelir={58000} toplamGider={1240} toplamAbonelik={60} yatirimDeger={57000} netDeger={138700} bildir={noop} />,
-      <Hane users={users} findata={fd} />,
+      <Hane findata={fd} />,
       <Veri findata={fd} setFindata={noop} user={user} bildir={noop} ekle={noop} kategoriOgren={noop} toplamGelir={58000} toplamGider={1240} toplamAbonelik={60} yatirimDeger={57000} yatirimKar={8500} netDeger={138700} guncelDeger={(y) => y.adet * (y.guncelFiyat || y.alisFiyati)} />,
-      <Ayarlar findata={fd} setFindata={noop} bildir={noop} user={user} users={users} onUsersChange={noop} onLogout={noop} />,
+      <Ayarlar findata={fd} setFindata={noop} bildir={noop} user={user} onLogout={noop} />,
     ];
     for (const el of ekranlar) {
       expect(() => renderToString(el)).not.toThrow();

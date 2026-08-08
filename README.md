@@ -2,7 +2,8 @@
 
 Türkçe, çok özellikli **kişisel finans yönetim uygulaması** — React + Vite.
 Gelir/gider takibi, yatırım portföyü, bütçe & hedefler, analiz, raporlama ve
-(isteğe bağlı) yapay zekâ asistanı. Tüm veriler tarayıcında kalır.
+(isteğe bağlı) yapay zekâ asistanı. **DB-only:** giriş zorunludur; tüm veri kendi
+sunucundaki **PocketBase**'de tutulur (tarayıcıda finansal veri saklanmaz).
 
 > Tüm özelliklerin ve mimarinin detaylı dökümü: **[SPEC.md](./SPEC.md)**
 
@@ -10,17 +11,23 @@ Gelir/gider takibi, yatırım portföyü, bütçe & hedefler, analiz, raporlama 
 
 ## Hızlı Başlangıç (yerel — Windows / Mac / Linux)
 
-Gereksinim: **Node.js 18+** ([nodejs.org](https://nodejs.org))
+Gereksinim: **Node.js 18+** ([nodejs.org](https://nodejs.org)) ve çalışan bir **PocketBase**
+(uygulama DB-only'dir — kimlik ve veri PocketBase'den gelir).
 
 ```bash
 npm install        # bağımlılıkları kur (ilk seferde)
-npm run dev        # geliştirme sunucusu → http://localhost:5173
+
+# PocketBase'i :8090'da ayağa kaldır (ayrı terminal). En kolayı, repodaki pb imajı:
+docker build -t finansapp-pb ./pb
+docker run -d --name finansapp-pb -p 8090:8090 -v finansapp_pb:/pb_data finansapp-pb \
+  serve --http=0.0.0.0:8090 --dir=/pb_data --migrationsDir=/pb_migrations --hooksDir=/pb_hooks
+
+npm run dev        # geliştirme sunucusu → http://localhost:5173  (/pb → localhost:8090)
 ```
 
-Tarayıcıda `http://localhost:5173` adresini aç.
-
-**İlk giriş:** kullanıcı `admin` · şifre `admin123`
-(Ayarlar → Kullanıcılar'dan yeni kullanıcı ekleyebilir, şifreyi değiştirebilirsin.)
+1. `http://localhost:8090/_/` → PocketBase **superuser**'ı oluştur (ilk açılışta sorar).
+2. `http://localhost:5173` → giriş ekranında **Kayıt** ile ilk hesabını aç (e-posta + en az
+   8 karakter şifre), sonra giriş yap. Giriş zorunludur.
 
 ### Üretim derlemesi
 
@@ -75,9 +82,10 @@ kalır; uygulamanın geri kalanı (takip, bütçe, grafik, rapor, yedek) tam ça
 
 ## Veri & yedekleme
 
-- Tüm veriler tarayıcının **localStorage**'ında tutulur (`finansapp:` önekiyle).
+- Tüm finansal veri **PocketBase**'de (kendi sunucun) tutulur; tarayıcıda yalnızca oturum
+  token'ı ve tema tercihi kalır. Aynı hesapla girdiğin her cihazda veriler senkron.
 - **Rapor** sekmesinden JSON yedek alıp geri yükleyebilir, CSV/PDF dışa aktarabilirsin.
-- Tarayıcı verisini temizlemek tüm finans verisini siler — düzenli yedek al.
+- Sunucu yedeği: `pb_data` volume snapshot'ı veya PocketBase admin → Backups (bkz. DEPLOY.md).
 
 ---
 
@@ -85,7 +93,7 @@ kalır; uygulamanın geri kalanı (takip, bütçe, grafik, rapor, yedek) tam ça
 
 - **React 18** + **Vite 5** (bundler/dev server)
 - Harici UI/grafik kütüphanesi **yok** — tüm grafikler elle SVG
-- Depolama: localStorage (tek dosyada soyutlanmış — ileride backend'e geçirilebilir)
-- AI: Anthropic Claude Messages API
+- Backend: **PocketBase** (kimlik + veri + senkron); istemci `src/lib/sync.js` üzerinden konuşur
+- AI: Anthropic Claude Messages API (kendi anahtarın veya sunucu-taraflı proxy)
 
 Lisans: kişisel kullanım.

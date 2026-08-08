@@ -12,22 +12,46 @@ const ekran = {
   fontFamily: F, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
 };
 
-export function Login({ onLogin }) {
-  const [u, setU] = useState(""),
-    [p, setP] = useState(""),
-    [hata, setHata] = useState("");
+export function Login({ onLogin, onRegister }) {
+  const [mod, setMod] = useState("giris"); // "giris" | "kayit"
+  const [email, setEmail] = useState("");
+  const [p, setP] = useState("");
+  const [p2, setP2] = useState("");
+  const [hata, setHata] = useState("");
+  const [mesgul, setMesgul] = useState(false);
+  const kayit = mod === "kayit";
+
   async function dene() {
-    if (!(await onLogin(u.trim(), p))) setHata("Kullanıcı adı veya şifre hatalı");
+    setHata("");
+    const e = email.trim();
+    if (!e || !p) { setHata("E-posta ve şifre gerekli"); return; }
+    if (kayit) {
+      if (p.length < 8) { setHata("Şifre en az 8 karakter olmalı"); return; }
+      if (p !== p2) { setHata("Şifreler eşleşmiyor"); return; }
+    }
+    setMesgul(true);
+    try {
+      if (kayit) await onRegister(e, p);
+      else await onLogin(e, p);
+    } catch (err) {
+      // pbGiris/pbFetch mesajları bağlantı ile kimlik hatasını ayırır
+      setHata(err?.message || (kayit ? "Kayıt başarısız" : "Giriş başarısız"));
+    } finally {
+      setMesgul(false);
+    }
   }
   function onKey(e) {
-    if (e.key === "Enter") dene();
+    if (e.key === "Enter" && !mesgul) dene();
   }
+  function modDegis(m) { setMod(m); setHata(""); setP2(""); }
+
   const inp = {
     width: "100%", padding: "12px 14px", marginBottom: "14px", background: V.card2,
     border: `1px solid ${V.border}`, borderRadius: "11px", color: V.ink,
     fontSize: "14px", fontFamily: F, outline: "none", boxSizing: "border-box",
   };
   const lbl = { display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" };
+  const seg = (aktif) => ({ flex: 1, padding: "9px 0", borderRadius: "9px", border: "none", cursor: "pointer", fontFamily: F, fontSize: "13.5px", fontWeight: 600, background: aktif ? V.emerald2 : "transparent", color: aktif ? V.cream : V.ink3 });
   return (
     <div style={ekran}>
       <div style={{ width: "100%", maxWidth: 380, animation: "obfade .4s both" }}>
@@ -37,15 +61,28 @@ export function Login({ onLogin }) {
           <p style={{ margin: "5px 0 0", fontSize: "13px", color: V.sage }}>Kişisel finans yönetimi</p>
         </div>
         <div style={{ background: V.card, borderRadius: "18px", padding: "26px" }}>
-          <label style={lbl}>Kullanıcı adı / e-posta</label>
-          <input value={u} onChange={(e) => setU(e.target.value)} onKeyDown={onKey} placeholder="admin veya bulut e-postan" style={inp} />
+          <div style={{ display: "flex", gap: 6, padding: 4, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 12, marginBottom: 20 }}>
+            <button onClick={() => modDegis("giris")} style={seg(!kayit)}>Giriş</button>
+            <button onClick={() => modDegis("kayit")} style={seg(kayit)}>Kayıt</button>
+          </div>
+          <label style={lbl}>E-posta</label>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={onKey} type="email" placeholder="sen@ornek.com" style={inp} />
           <label style={lbl}>Şifre</label>
-          <input value={p} onChange={(e) => setP(e.target.value)} onKeyDown={onKey} type="password" placeholder="••••••" style={{ ...inp, marginBottom: "6px" }} />
+          <input value={p} onChange={(e) => setP(e.target.value)} onKeyDown={onKey} type="password" placeholder={kayit ? "en az 8 karakter" : "••••••"} style={{ ...inp, marginBottom: kayit ? "14px" : "6px" }} />
+          {kayit && (
+            <>
+              <label style={lbl}>Şifre (tekrar)</label>
+              <input value={p2} onChange={(e) => setP2(e.target.value)} onKeyDown={onKey} type="password" placeholder="••••••" style={{ ...inp, marginBottom: "6px" }} />
+            </>
+          )}
           {hata && <p style={{ margin: "2px 0 0", fontSize: "12px", color: V.neg }}>{hata}</p>}
-          <button onClick={dene} style={{ width: "100%", marginTop: "16px", padding: "14px", borderRadius: "12px", border: "none", background: V.emerald2, color: V.cream, fontSize: "14.5px", fontWeight: 600, fontFamily: F, cursor: "pointer" }}>Giriş Yap</button>
+          <button onClick={dene} disabled={mesgul} style={{ width: "100%", marginTop: "16px", padding: "14px", borderRadius: "12px", border: "none", background: V.emerald2, color: V.cream, fontSize: "14.5px", fontWeight: 600, fontFamily: F, cursor: mesgul ? "default" : "pointer", opacity: mesgul ? 0.7 : 1 }}>
+            {mesgul ? "…" : kayit ? "Kayıt Ol" : "Giriş Yap"}
+          </button>
           <p style={{ margin: "14px 0 0", fontSize: "11.5px", color: V.ink3, textAlign: "center", lineHeight: 1.6 }}>
-            İlk giriş: <b style={{ color: V.ink2 }}>admin</b> / <b style={{ color: V.ink2 }}>admin123</b>
-            <br />Bulut hesabın varsa <b style={{ color: V.ink2 }}>e-posta + şifre</b> ile de gir.
+            {kayit
+              ? "Hesabın sunucudaki PocketBase'de oluşturulur; verilerin cihazlar arası senkronlanır."
+              : "İlk kez mi? Yukarıdan \"Kayıt\" ile hesap oluştur."}
           </p>
         </div>
       </div>

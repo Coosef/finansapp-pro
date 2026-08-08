@@ -10,27 +10,24 @@ import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele, anahtarKaydet } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
-import { sifreDogrula, sifreHashle } from "../lib/kripto.js";
-import { syncYukle, syncDurum, pbKayit, pbGiris, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril } from "../lib/sync.js";
+import { syncYukle, syncDurum, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril, pbSifreDegistir } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
-import { Kullanicilar } from "./users.jsx";
 
 const baslik = { fontSize: "15px", fontWeight: 600, color: V.ink, fontFamily: SERIF, margin: "0 0 14px" };
 const altYazi = { margin: "0 0 14px", fontSize: "12px", color: V.ink3, lineHeight: 1.5 };
 const etiket = { display: "block", fontSize: "11.5px", color: V.ink3, marginBottom: 8 };
 
-export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChange, onLogout }) {
+export function Ayarlar({ findata, setFindata, bildir, user, onLogout }) {
   const ay = findata.ayarlar || {};
   const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
-  const isAdmin = user?.rol === "admin";
 
   return (
     <div>
       <h2 style={{ margin: "0 0 18px", fontSize: "1.2rem", fontWeight: 600, fontFamily: SERIF }}>Ayarlar</h2>
       <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 14 }}>
         <ProfilKart user={user} onLogout={onLogout} />
-        <SifreKart user={user} users={users} onUsersChange={onUsersChange} bildir={bildir} />
+        <SifreKart bildir={bildir} />
         <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <PwaKart bildir={bildir} />
         <GorunumKart ay={ay} setAyar={setAyar} />
@@ -42,12 +39,6 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
         </div>
         <KategoriKart findata={findata} setFindata={setFindata} bildir={bildir} />
         <KurallarKart findata={findata} setFindata={setFindata} bildir={bildir} />
-        {isAdmin && users && (
-          <Card style={{ padding: 20 }}>
-            <div style={baslik}>Kullanıcılar</div>
-            <Kullanicilar users={users} onChange={onUsersChange} bildir={bildir} mevcut={user} />
-          </Card>
-        )}
         <VeriKart findata={findata} setFindata={setFindata} user={user} bildir={bildir} />
       </div>
     </div>
@@ -58,34 +49,11 @@ export function Ayarlar({ findata, setFindata, bildir, user, users, onUsersChang
 // ---------- Bulut Senkron (PocketBase) ----------
 function BulutKart({ findata, setFindata, bildir }) {
   const [durum, setDurum] = useState(() => syncYukle());
-  const [adres, setAdres] = useState(durum.url);
-  const [email, setEmail] = useState(durum.email || "");
-  const [sifre, setSifre] = useState("");
   const [mesgul, setMesgul] = useState(false);
   const [haneAd, setHaneAd] = useState("");
   const [katilKod, setKatilKod] = useState("");
   const [haneForm, setHaneForm] = useState(""); // "" | "olustur" | "katil"
 
-  async function baglan(yeni) {
-    if (!email.trim() || !sifre) { bildir("E-posta ve şifre gerekli", "err"); return; }
-    setMesgul(true);
-    try {
-      const d = yeni ? await pbKayit(adres, email.trim(), sifre) : await pbGiris(adres, email.trim(), sifre);
-      // Üye olunan bir hane varsa hane moduna geç (veri oradan gelir)
-      try { await pbHaneBul(); } catch { /* kişisel devam */ }
-      setDurum(syncDurum());
-      setSifre("");
-      // Bağlandık → (hane veya kişisel) buluttan çek; veri varsa uygula, yoksa mevcudu yükle
-      const bulut = await pbFindataCek();
-      if (bulut?.data) { setFindata({ ...bosVeri(), ...bulut.data }); bildir("Bağlandı · bulut verisi yüklendi"); }
-      else { await pbFindataGonder(findata); bildir("Bağlandı · mevcut veri buluta yüklendi"); }
-    } catch (e) {
-      bildir(e?.message || "Bağlanılamadı", "err");
-    } finally {
-      setMesgul(false);
-    }
-  }
-  function cikis() { pbCikis(); setDurum(syncDurum()); bildir("Bulut bağlantısı kapatıldı (veri cihazda kalır)"); }
   async function simdiSenkronla() {
     setMesgul(true);
     try { await pbFindataGonder(findata); bildir("Buluta yüklendi"); }
@@ -137,10 +105,9 @@ function BulutKart({ findata, setFindata, bildir }) {
 
   return (
     <Card style={{ padding: 20 }}>
-      <div style={{ ...baslik, marginBottom: 6 }}>Bulut Senkron</div>
-      <p style={altYazi}>Verini kendi sunucunda (PocketBase) sakla; başka tarayıcı/cihazdan aynı hesapla gir, veriler gelsin. Veri sende kalır.</p>
-      {durum.bagli ? (
-        <div>
+      <div style={{ ...baslik, marginBottom: 6 }}>Hesap & Ortak Hane</div>
+      <p style={altYazi}>Verin sunucundaki PocketBase'de tutulur; aynı hesapla başka cihaz/tarayıcıdan girince veriler gelir. Oturumu kapatmak için üstteki profil kartından <b>Çıkış</b>.</p>
+      <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, borderRadius: 10, marginBottom: 12, flexWrap: "wrap" }}>
             <Icon d="check" size={16} stroke={V.pos} />
             <span style={{ fontSize: 13, color: V.ink }}>Bağlı: <b>{durum.email}</b></span>
@@ -148,7 +115,6 @@ function BulutKart({ findata, setFindata, bildir }) {
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <Btn onClick={simdiSenkronla} disabled={mesgul}>{mesgul ? "…" : "↻ Şimdi Senkronla"}</Btn>
-            <Btn variant="soft" onClick={cikis}>Bağlantıyı Kes</Btn>
           </div>
 
           {/* ---- Ortak Hane ---- */}
@@ -200,60 +166,41 @@ function BulutKart({ findata, setFindata, bildir }) {
             )}
           </div>
         </div>
-      ) : (
-        <div>
-          <Field label="Sunucu adresi" value={adres} onChange={setAdres} placeholder="http://localhost:8090" mono />
-          <Field label="E-posta" type="email" value={email} onChange={setEmail} placeholder="sen@ornek.com" />
-          <Field label="Şifre" type="password" value={sifre} onChange={setSifre} placeholder="en az 8 karakter" />
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Btn onClick={() => baglan(false)} disabled={mesgul}>{mesgul ? "…" : "Giriş Yap"}</Btn>
-            <Btn variant="soft" onClick={() => baglan(true)} disabled={mesgul}>Kayıt Ol</Btn>
-          </div>
-          <div style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, marginTop: 10 }}>
-            İlk kez mi? <b>"Kayıt Ol"</b> ile hesap oluştur. Sunucu, Docker'daki PocketBase'dir (varsayılan <span style={{ fontFamily: MONO }}>localhost:8090</span>). Başka cihazdan erişmek için adresi o cihazın görebileceği bir adres yap.
-          </div>
-        </div>
-      )}
     </Card>
   );
 }
 
-// ---------- Şifre Değiştir (yerel kullanıcı) ----------
-function SifreKart({ user, users, onUsersChange, bildir }) {
+// ---------- Şifre Değiştir (PocketBase hesabı) ----------
+function SifreKart({ bildir }) {
   const [eski, setEski] = useState("");
   const [yeni, setYeni] = useState("");
   const [tekrar, setTekrar] = useState("");
+  const [mesgul, setMesgul] = useState(false);
 
-  // Bulut hesabıyla girildiyse yerel şifre yok
-  if (user?.bulut) {
-    return (
-      <Card style={{ padding: 20 }}>
-        <div style={{ ...baslik, marginBottom: 6 }}>Şifre</div>
-        <p style={{ ...altYazi, marginBottom: 0 }}>Bulut hesabıyla giriş yaptın; şifren bulut hesabının şifresidir, yerelde değiştirilmez.</p>
-      </Card>
-    );
-  }
-
-  const mevcut = (users || []).find((x) => x.username === user?.username);
   async function degistir() {
-    if (!mevcut) { bildir("Kullanıcı bulunamadı", "err"); return; }
-    if (!(await sifreDogrula(eski, mevcut.sifre))) { bildir("Mevcut şifre yanlış", "err"); return; }
-    if (yeni.length < 4) { bildir("Yeni şifre en az 4 karakter olmalı", "err"); return; }
+    if (!eski) { bildir("Mevcut şifre gerekli", "err"); return; }
+    if (yeni.length < 8) { bildir("Yeni şifre en az 8 karakter olmalı", "err"); return; }
     if (yeni !== tekrar) { bildir("Yeni şifreler eşleşmiyor", "err"); return; }
-    const sifre = await sifreHashle(yeni); // düz-metin saklama
-    onUsersChange((users || []).map((x) => (x.username === user.username ? { ...x, sifre } : x)));
-    setEski(""); setYeni(""); setTekrar("");
-    bildir("Şifre güncellendi");
+    setMesgul(true);
+    try {
+      await pbSifreDegistir(eski, yeni);
+      setEski(""); setYeni(""); setTekrar("");
+      bildir("Şifre güncellendi");
+    } catch (e) {
+      bildir(e?.message || "Şifre değiştirilemedi", "err");
+    } finally {
+      setMesgul(false);
+    }
   }
 
   return (
     <Card style={{ padding: 20 }}>
       <div style={{ ...baslik, marginBottom: 6 }}>Şifre Değiştir</div>
-      <p style={altYazi}><b>{user?.ad || user?.username}</b> hesabının giriş şifresini değiştir.</p>
+      <p style={altYazi}>Hesabının (PocketBase) giriş şifresini değiştir.</p>
       <Field label="Mevcut şifre" type="password" value={eski} onChange={setEski} placeholder="••••••" />
-      <Field label="Yeni şifre" type="password" value={yeni} onChange={setYeni} placeholder="en az 4 karakter" />
+      <Field label="Yeni şifre" type="password" value={yeni} onChange={setYeni} placeholder="en az 8 karakter" />
       <Field label="Yeni şifre (tekrar)" type="password" value={tekrar} onChange={setTekrar} placeholder="••••••" />
-      <Btn onClick={degistir}>Şifreyi Güncelle</Btn>
+      <Btn onClick={degistir} disabled={mesgul}>{mesgul ? "…" : "Şifreyi Güncelle"}</Btn>
     </Card>
   );
 }
@@ -418,6 +365,17 @@ function GuvenlikKart({ ay, setAyar, bildir }) {
           )}
         </div>
       )}
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${V.line}` }}>
+        <label style={etiket}>Oturum zaman aşımı (hareketsizlik)</label>
+        <Seg
+          items={[{ id: 15, label: "15 dk" }, { id: 30, label: "30 dk" }, { id: 60, label: "60 dk" }, { id: 0, label: "Kapalı" }]}
+          value={ay.oturumIdleDk ?? 30}
+          onChange={(v) => setAyar({ oturumIdleDk: v })}
+        />
+        <p style={{ fontSize: 11, color: V.ink3, lineHeight: 1.5, margin: "8px 0 0" }}>
+          Bu süre boyunca işlem yapılmazsa oturum güvenlik için otomatik kapanır. Ayrıca en fazla 7 gün sonra (aktif olsan bile) yeniden giriş istenir.
+        </p>
+      </div>
     </Card>
   );
 }

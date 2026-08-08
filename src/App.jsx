@@ -5,11 +5,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { V } from "./lib/constants.js";
 import { uid, bugun, TL, sayiCevir } from "./lib/format.js";
-import { storage } from "./lib/storage.js";
-import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
+import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbKayit, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
+import { oturumBaslat, oturumSurdur, oturumDokun, oturumTemizle, oturumDurum, IDLE_VARSAYILAN_DK, UYARI_ESIK_MS } from "./lib/oturum.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
-import { sifreDogrula, sifreHashle, sifreHashliMi } from "./lib/kripto.js";
 import { tryeCevir } from "./lib/parabirimi.js";
 import { bildirimOzeti } from "./lib/bildirim.js";
 import { SURUM, sonSurumKontrol, SURUM_URL } from "./lib/surum.js";
@@ -39,66 +38,89 @@ function ThemeWrap({ dark, children }) {
   );
 }
 
+// Idle timeout: kapanmadan ~1 dk önce çıkan uyarı modalı.
+function OturumUyariModal({ onDevam, onCikis }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(8,14,11,0.6)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div className="fa-page" style={{ width: "100%", maxWidth: 380, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, padding: 26, textAlign: "center", boxShadow: "0 24px 60px rgba(0,0,0,0.4)" }}>
+        <Icon d="lock" size={30} stroke="var(--accent)" width={1.6} style={{ marginBottom: 12 }} />
+        <h3 className="serif" style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>Oturumun kapanmak üzere</h3>
+        <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "var(--ink3)", lineHeight: 1.6 }}>Güvenlik için hareketsizlik nedeniyle çok yakında çıkış yapılacak. Devam etmek ister misin?</p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCikis} className="fa-btn" style={{ flex: 1, padding: 12, borderRadius: 11, border: "1px solid var(--neg)", background: "transparent", color: "var(--neg)", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Çıkış Yap</button>
+          <button onClick={onDevam} className="fa-btn" style={{ flex: 1, padding: 12, borderRadius: 11, border: "none", background: "var(--emerald)", color: "#E9D9B4", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Devam Et</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Header senkron durum göstergesi (saf DB — verinin buluta gittiği güvencesi).
+function SenkronRozet({ durum }) {
+  const harita = {
+    kaydediliyor: { renk: "var(--ink3)", nokta: "var(--ink3)", metin: "Kaydediliyor…" },
+    kaydedildi: { renk: "var(--pos)", nokta: "var(--pos)", metin: "Kaydedildi" },
+    hata: { renk: "var(--neg)", nokta: "var(--neg)", metin: "Bağlantı yok" },
+  };
+  const s = harita[durum];
+  if (!s) return null; // "bekliyor" → gösterme
+  return (
+    <div className="fa-deskonly" title={durum === "hata" ? "Sunucuya ulaşılamıyor — yeniden deneniyor" : s.metin}
+      style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 11px", borderRadius: 9, border: "1px solid var(--border2)", background: "var(--card)", fontSize: 12, color: s.renk, whiteSpace: "nowrap" }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.nokta, flex: "none", animation: durum === "kaydediliyor" ? "obfade 1s infinite alternate" : "none" }} />
+      {s.metin}
+    </div>
+  );
+}
+
 export default function FinansAppPro() {
   const [yukleniyor, setYukleniyor] = useState(true);
-  const [kullanicilar, setKullanicilar] = useState(null);
   const [aktif, setAktif] = useState(null);
   const [findata, setFindataState] = useState(null);
   const [kilitli, setKilitli] = useState(false);
   const [tab, setTab] = useState("panel");
   const [temaHint, setTemaHint] = useState("acik"); // giriş ekranı için son bilinen tema
+  const [senkron, setSenkron] = useState("bekliyor"); // bekliyor|kaydediliyor|kaydedildi|hata
+  const [oturumUyari, setOturumUyari] = useState(false); // idle timeout uyarı modalı
 
+  // Idle süresi kullanıcı ayarından (yoksa varsayılan). Ayarlar → Güvenlik'ten değişir.
+  const idleDk = findata?.ayarlar?.oturumIdleDk ?? IDLE_VARSAYILAN_DK;
+
+  // ---- Açılış: eski local-mod kalıntılarını temizle + PB token'ından oturumu geri yükle ----
   useEffect(() => {
-    syncYukle(); // kayıtlı bulut oturumunu (varsa) yükle
+    // Temiz başlangıç: DB-only'de finansal veri cihazda tutulmaz. Eski yerel
+    // kullanıcı listesi, açık-oturum blob'u ve per-user findata önbelleği silinir.
+    try {
+      localStorage.removeItem("finansapp:users");
+      localStorage.removeItem("finansapp:aktif");
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("finansapp:findata:")) localStorage.removeItem(k);
+      }
+    } catch { /* yoksay */ }
+
+    syncYukle(); // kayıtlı PB oturumunu (token) yükle
     (async () => {
       try {
-        try {
-          const th = localStorage.getItem("finansapp:tema");
-          if (th) setTemaHint(th);
-        } catch { /* yoksay */ }
-        let users = null;
-        try {
-          const r = await storage.get("users");
-          users = r ? JSON.parse(r.value) : null;
-        } catch { /* yoksay */ }
-        if (!users) {
-          users = [{ username: "admin", sifre: "admin123", rol: "admin", ad: "Yönetici" }];
-          try { await storage.set("users", JSON.stringify(users)); } catch { /* yoksay */ }
-        }
-        setKullanicilar(users);
-        // Açık oturumu geri yükle: sayfa yenilense de oturum kapanmasın.
-        // (Şifre saklanmaz; kullanıcı adıyla yeniden açılır. PIN varsa yine sorulur.)
-        try {
-          const ham = localStorage.getItem("finansapp:aktif");
-          if (ham) {
-            const su = JSON.parse(ham);
-            let u = null;
-            let veri = bosVeri();
-            if (su.bulut) {
-              u = { username: su.username, ad: su.ad, rol: "kullanici", bulut: true };
-              let cevrimici = false;
-              if (syncBagliMi()) {
-                try { await pbHaneBul(); } catch { /* kişisel devam */ }
-                try { const b = await pbFindataCek(); if (b?.data) veri = { ...bosVeri(), ...b.data }; cevrimici = true; } catch { cevrimici = false; }
-              }
-              if (!cevrimici) { try { const r = await storage.get(`findata:${su.username}`); if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) }; } catch { /* yoksay */ } }
-            } else {
-              u = users.find((x) => x.username === su.username) || null;
-              if (u) {
-                let bulutVar = false;
-                if (syncBagliMi()) {
-                  try { await pbHaneBul(); } catch { /* kişisel devam */ }
-                  try { const b = await pbFindataCek(); if (b?.data) { veri = { ...bosVeri(), ...b.data }; bulutVar = true; } } catch { /* çevrimdışı */ }
-                }
-                if (!bulutVar) { try { const r = await storage.get(`findata:${su.username}`); if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) }; } catch { /* yoksay */ } }
-              }
-            }
-            if (u) girisTamamla(u, veri, false);
-          }
-        } catch { /* oturum geri yüklenemezse normal giriş ekranı gösterilir */ }
-      } finally {
-        setYukleniyor(false);
-      }
+        try { const th = localStorage.getItem("finansapp:tema"); if (th) setTemaHint(th); } catch { /* yoksay */ }
+        if (!syncBagliMi()) return; // token yok → giriş ekranı
+
+        // Kayıtlı idle tercihiyle süre kontrolü (findata henüz yüklenmedi)
+        const raw = (() => { try { return localStorage.getItem("finansapp:idleDk"); } catch { return null; } })();
+        const idleKayitli = raw == null ? IDLE_VARSAYILAN_DK : Number(raw);
+        const d = oturumDurum(idleKayitli);
+        if (d.sebep === "idle" || d.sebep === "mutlak") { pbCikis(); oturumTemizle(); return; }
+
+        // Token geçerli → veriyi DB'den çek, oturumu sürdür
+        try { await pbHaneBul(); } catch { /* kişisel devam */ }
+        const b = await pbFindataCek(); // 401 ise fırlatır → çıkışa düşülür
+        const veri = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+        const email = syncDurum().email || "";
+        const u = { username: email, ad: email.split("@")[0], bulut: true };
+        oturumSurdur();
+        girisTamamla(u, veri, !b?.data);
+      } catch { pbCikis(); oturumTemizle(); /* token geçersiz/expired → giriş ekranı */ }
+      finally { setYukleniyor(false); }
     })();
   }, []);
 
@@ -112,23 +134,23 @@ export default function FinansAppPro() {
     if (tm) { setTemaHint(tm); try { localStorage.setItem("finansapp:tema", tm); } catch { /* yoksay */ } }
   }, [findata?.ayarlar?.tema]);
 
-  // Açık oturumu kalıcı sakla (yenilemede kaybolmasın). Şifre saklanmaz.
-  function aktifKaydet(u) {
+  // Idle tercihini localStorage'a yansıt (yenilemede oturum-restore doğru süreyi bilsin).
+  useEffect(() => {
+    const v = findata?.ayarlar?.oturumIdleDk;
     try {
-      if (u) localStorage.setItem("finansapp:aktif", JSON.stringify({ username: u.username, ad: u.ad, rol: u.rol, bulut: !!u.bulut }));
-      else localStorage.removeItem("finansapp:aktif");
+      if (v == null) localStorage.removeItem("finansapp:idleDk");
+      else localStorage.setItem("finansapp:idleDk", String(v));
     } catch { /* yoksay */ }
-  }
+  }, [findata?.ayarlar?.oturumIdleDk]);
 
-  // Veriyi hazırla (tekrarlar + hedef katkıları) ve oturumu aç
+  // Veriyi hazırla (tekrarlar + hedef katkıları) ve oturumu aç. DB tek kaynak:
+  // türetilmiş değişiklik veya boş DB varsa buluta yazılır, yerele yazılmaz.
   function girisTamamla(u, veri, ilkBulutGonder) {
     let { data, degisti } = tekrarlariUret(veri);
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
-    if (degisti) storage.set(`findata:${u.username}`, JSON.stringify(data)).catch(() => {});
-    if (ilkBulutGonder) pbFindataGonder(data).catch(() => {}); // bulut boştuysa ilk senkron
-    aktifKaydet(u);
+    if (degisti || ilkBulutGonder) pbFindataGonder(data).catch(() => {});
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
@@ -136,69 +158,89 @@ export default function FinansAppPro() {
     return true;
   }
 
-  // Çıkış: oturumu kapat ve kalıcı kaydı sil (yenilemede de kapalı kalır)
+  // Gerçek çıkış: PB oturumunu (token) ve oturum sayaçlarını temizle.
   function cikisYap() {
-    aktifKaydet(null);
+    pbCikis();
+    oturumTemizle();
     setAktif(null);
     setFindataState(null);
+    setSenkron("bekliyor");
+    setOturumUyari(false);
   }
 
-  async function girisYap(username, sifre) {
-    // 1) Yerel kullanıcı (admin gibi) — hash veya (eski) düz-metin doğrulama
-    let u = null;
-    for (const x of kullanicilar) {
-      if (x.username === username && (await sifreDogrula(sifre, x.sifre))) { u = x; break; }
-    }
-    if (u) {
-      // Eski düz-metin şifreyi sessizce hash'e yükselt (kilitlenme riski yok: düz-metin de çalışır)
-      if (!sifreHashliMi(u.sifre)) {
-        try {
-          const yh = await sifreHashle(sifre);
-          kullanicilariKaydet(kullanicilar.map((x) => (x.username === u.username ? { ...x, sifre: yh } : x)));
-        } catch { /* yükseltme başarısızsa düz-metin doğrulama devam eder */ }
-      }
-      let veri = bosVeri();
-      let bulutVar = false;
-      if (syncBagliMi()) {
-        try { await pbHaneBul(); } catch { /* hane sorgusu başarısızsa kişisel devam */ }
-        try { const b = await pbFindataCek(); if (b?.data) { veri = { ...bosVeri(), ...b.data }; bulutVar = true; } } catch { /* çevrimdışı */ }
-      }
-      if (!bulutVar) {
-        try { const r = await storage.get(`findata:${username}`); if (r) veri = { ...bosVeri(), ...JSON.parse(r.value) }; } catch { /* yoksay */ }
-      }
-      return girisTamamla(u, veri, syncBagliMi() && !bulutVar);
-    }
-    // 2) Bulut hesabı (e-posta + şifre) — herhangi bir tarayıcı/cihazdan
-    if (username.includes("@")) {
-      try {
-        await pbGiris(syncDurum().url, username.trim(), sifre);
-        try { await pbHaneBul(); } catch { /* hane sorgusu başarısızsa kişisel devam */ }
-        let veri = bosVeri();
-        const b = await pbFindataCek();
-        const bulutBos = !b?.data;
-        if (b?.data) veri = { ...bosVeri(), ...b.data };
-        return girisTamamla({ username: username.trim(), ad: username.split("@")[0], rol: "kullanici", bulut: true }, veri, bulutBos);
-      } catch { /* bulut da olmadı */ }
-    }
-    return false;
+  // DB-only giriş/kayıt. Hata olursa fırlatır; Login mesajı gösterir (bağlantı
+  // hatası ile kimlik hatası pbGiris/pbFetch mesajlarıyla ayrışır).
+  async function oturumAc(email) {
+    const e = (email || "").trim();
+    try { await pbHaneBul(); } catch { /* kişisel devam */ }
+    let veri = bosVeri();
+    const b = await pbFindataCek();
+    const bulutBos = !b?.data;
+    if (b?.data) veri = { ...bosVeri(), ...b.data };
+    oturumBaslat();
+    return girisTamamla({ username: e, ad: e.split("@")[0], bulut: true }, veri, bulutBos);
+  }
+  async function girisYap(email, sifre) {
+    await pbGiris(syncDurum().url, (email || "").trim(), sifre);
+    return oturumAc(email);
+  }
+  async function kayitOl(email, sifre) {
+    await pbKayit(syncDurum().url, (email || "").trim(), sifre); // kayıt + otomatik giriş
+    return oturumAc(email);
   }
 
   const bulutTimer = useRef(null);
-  const setFindata = useCallback(
-    (updater) => {
-      setFindataState((prev) => {
-        const next = typeof updater === "function" ? updater(prev) : updater;
-        if (aktif) storage.set(`findata:${aktif.username}`, JSON.stringify(next)).catch(() => {});
-        // Bulut bağlıysa değişikliği gönder (debounce: hızlı ardışık değişiklikleri birleştir)
-        if (syncBagliMi()) {
-          if (bulutTimer.current) clearTimeout(bulutTimer.current);
-          bulutTimer.current = setTimeout(() => { pbFindataGonder(next).catch(() => {}); }, 1500);
-        }
-        return next;
-      });
-    },
-    [aktif]
-  );
+  const sonVeri = useRef(null); // en son gönderilecek anlık görüntü (retry için)
+  // Saf DB: değişiklik yalnız bellekte + debounce ile buluta yazılır (yerele değil).
+  const setFindata = useCallback((updater) => {
+    setFindataState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      sonVeri.current = next;
+      if (syncBagliMi()) {
+        setSenkron("kaydediliyor");
+        if (bulutTimer.current) clearTimeout(bulutTimer.current);
+        bulutTimer.current = setTimeout(async () => {
+          try { await pbFindataGonder(next); if (sonVeri.current === next) setSenkron("kaydedildi"); }
+          catch { setSenkron("hata"); }
+        }, 1200);
+      }
+      return next;
+    });
+  }, []);
+
+  // Gönderim hatasında son anlık görüntüyü pencere odağında + periyodik yeniden dene.
+  useEffect(() => {
+    if (!aktif) return undefined;
+    const retry = async () => {
+      if (senkron !== "hata" || !sonVeri.current || !syncBagliMi()) return;
+      setSenkron("kaydediliyor");
+      const v = sonVeri.current;
+      try { await pbFindataGonder(v); if (sonVeri.current === v) setSenkron("kaydedildi"); }
+      catch { setSenkron("hata"); }
+    };
+    window.addEventListener("focus", retry);
+    const iv = setInterval(retry, 20000);
+    return () => { window.removeEventListener("focus", retry); clearInterval(iv); };
+  }, [aktif, senkron]);
+
+  // Oturum zaman aşımı: etkileşim sayacı + periyodik kontrol + kapanış uyarısı.
+  useEffect(() => {
+    if (!aktif) return undefined;
+    let sonDokun = 0;
+    const dokun = () => {
+      const t = Date.now();
+      if (t - sonDokun > 15000) { sonDokun = t; oturumDokun(t); }
+      setOturumUyari(false); // etkileşim uyarıyı kapatır (zaten false ise no-op)
+    };
+    const olaylar = ["mousedown", "keydown", "touchstart"];
+    olaylar.forEach((ev) => window.addEventListener(ev, dokun));
+    const iv = setInterval(() => {
+      const durum = oturumDurum(idleDk);
+      if (!durum.gecerli) { cikisYap(); return; }
+      setOturumUyari(durum.kalanMs <= UYARI_ESIK_MS);
+    }, 15000);
+    return () => { olaylar.forEach((ev) => window.removeEventListener(ev, dokun)); clearInterval(iv); };
+  }, [aktif, idleDk]);
 
   // Ortak hane modunda, uygulamaya geri dönünce (pencere odağı) en güncel ortak
   // veriyi çek; böylece diğer üyelerin değişiklikleri görünür. Kişisel modda gerek
@@ -219,30 +261,31 @@ export default function FinansAppPro() {
     return () => { iptal = true; window.removeEventListener("focus", cek); document.removeEventListener("visibilitychange", cek); };
   }, [aktif]);
 
-  async function kullanicilariKaydet(yeni) {
-    setKullanicilar(yeni);
-    try { await storage.set("users", JSON.stringify(yeni)); } catch { /* yoksay */ }
-  }
-
   const dark = (findata?.ayarlar?.tema || temaHint) === "koyu";
+
+  const uyariModali = oturumUyari ? (
+    <OturumUyariModal onDevam={() => { oturumDokun(); setOturumUyari(false); }} onCikis={cikisYap} />
+  ) : null;
 
   if (yukleniyor)
     return <ThemeWrap dark={temaHint === "koyu"}><div style={{ minHeight: "100vh", background: "var(--emerald)", color: V.sage, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>Yükleniyor…</div></ThemeWrap>;
-  if (!aktif) return <ThemeWrap dark={temaHint === "koyu"}><Login onLogin={girisYap} /></ThemeWrap>;
-  if (kilitli) return <ThemeWrap dark={dark}><PinGate dogruPin={findata.ayarlar.pin} onAc={() => setKilitli(false)} onCikis={cikisYap} /></ThemeWrap>;
-  if (!findata.ayarlar?.kuruldu) return <ThemeWrap dark={dark}><Onboarding user={aktif} setFindata={setFindata} /></ThemeWrap>;
+  if (!aktif) return <ThemeWrap dark={temaHint === "koyu"}><Login onLogin={girisYap} onRegister={kayitOl} /></ThemeWrap>;
+  if (kilitli) return <ThemeWrap dark={dark}><PinGate dogruPin={findata.ayarlar.pin} onAc={() => setKilitli(false)} onCikis={cikisYap} />{uyariModali}</ThemeWrap>;
+  if (!findata.ayarlar?.kuruldu) return <ThemeWrap dark={dark}><Onboarding user={aktif} setFindata={setFindata} />{uyariModali}</ThemeWrap>;
   return (
-    <Uygulama
-      user={aktif}
-      users={kullanicilar}
-      onUsersChange={kullanicilariKaydet}
-      findata={findata}
-      setFindata={setFindata}
-      tab={tab}
-      setTab={setTab}
-      dark={dark}
-      onLogout={cikisYap}
-    />
+    <>
+      <Uygulama
+        user={aktif}
+        findata={findata}
+        setFindata={setFindata}
+        tab={tab}
+        setTab={setTab}
+        dark={dark}
+        onLogout={cikisYap}
+        senkron={senkron}
+      />
+      {uyariModali}
+    </>
   );
 }
 
@@ -277,7 +320,7 @@ function tarihUzun() {
   return `${d.getDate()} ${AY_UZUN[d.getMonth()]}`;
 }
 
-function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab, dark, onLogout }) {
+function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senkron }) {
   const [modal, setModal] = useState(null);
   const [guncelleme, setGuncelleme] = useState(null); // yeni sürüm bilgisi
   const [form, setForm] = useState({});
@@ -289,7 +332,6 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
   const [bildirimAcik, setBildirimAcik] = useState(false);
   const [paletAcik, setPaletAcik] = useState(false);
   const [paletQ, setPaletQ] = useState("");
-  const isAdmin = user.rol === "admin";
 
   const rawAccent = findata.ayarlar?.accent;
   const accent = !rawAccent || ACCENT_ESKI.includes(rawAccent) ? "#C79A4B" : rawAccent;
@@ -559,7 +601,7 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
           <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", color: "#143A2B", fontWeight: 800, fontSize: 19 }}>₺</div>
           <div>
             <div className="serif" style={{ fontSize: 16, fontWeight: 600, color: "#F4F1E9" }}>FinansApp</div>
-            <div style={{ fontSize: 11, color: "#8FAE9E" }}>{user.ad || user.username} · {isAdmin ? "Yönetici" : "Kullanıcı"}</div>
+            <div style={{ fontSize: 11, color: "#8FAE9E" }}>{user.username}</div>
           </div>
         </div>
         <nav className="fa-nav" style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, overflowY: "auto" }}>
@@ -589,12 +631,18 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
 
       {/* MAIN */}
       <main className="fa-main">
+        {senkron === "hata" && (
+          <div style={{ background: "var(--neg)", color: "#fff", fontSize: 12.5, fontWeight: 600, textAlign: "center", padding: "7px 12px" }}>
+            ⚠ Sunucuya ulaşılamıyor — değişiklikler kaydedilemedi, yeniden deneniyor…
+          </div>
+        )}
         <header className="fa-header">
           <div>
             <div style={{ fontSize: 12.5, color: "var(--ink3)" }}>{selamMetni()}, {user.ad?.split(" ")[0] || user.username} · {tarihUzun()}</div>
             <h1 className="serif" style={{ margin: "1px 0 0", fontSize: 24, fontWeight: 600, color: "var(--ink)", letterSpacing: "-0.01em" }}>{BASLIK[tab]}</h1>
           </div>
           <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
+            <SenkronRozet durum={senkron} />
             {/* Bildirimler */}
             <div style={{ position: "relative" }}>
               <button onClick={() => { setBildirimAcik((v) => !v); setDonemAcik(false); }} title="Bildirimler" className="fa-ibtn fa-btn">
@@ -659,9 +707,9 @@ function Uygulama({ user, users, onUsersChange, findata, setFindata, tab, setTab
             {tab === "planlama" && <Planlama findata={findata} setFindata={setFindata} bildir={bildir} />}
             {tab === "analiz" && <Analiz findata={findata} fd={fd} donem={donem} donemAdi={DONEMLER.find((d) => d.id === donem)?.ad} toplamGelir={toplamGelir} />}
             {tab === "takvim" && <Takvim findata={findata} onDuzenle={duzenleIslem} />}
-            {tab === "hane" && <Hane users={users} findata={findata} />}
+            {tab === "hane" && <Hane findata={findata} />}
             {tab === "veri" && <Veri findata={findata} setFindata={setFindata} user={user} bildir={bildir} ekle={ekle} kategoriOgren={kategoriOgren} toplamGelir={toplamGelirTum} toplamGider={toplamGiderTum} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} netDeger={netDeger} guncelDeger={guncelDeger} />}
-            {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} users={users} onUsersChange={onUsersChange} onLogout={onLogout} />}
+            {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} onLogout={onLogout} />}
           </div>
         </div>
       </main>

@@ -1,7 +1,8 @@
 # FinansApp Pro — Self-Host / CasaOS Dağıtımı
 
-Kendi sunucunda (CasaOS, Docker) çalıştırma rehberi. Veri **senin sunucunda** (PocketBase)
-kalır; cihazlar arası senkron, çok kullanıcı (hane) ve isteğe bağlı sunucu-taraflı AI.
+Kendi sunucunda (CasaOS, Docker) çalıştırma rehberi. Uygulama **yalnızca DB (PocketBase)**
+ile çalışır: giriş zorunludur, tüm veri **senin sunucunda** tutulur (tarayıcıda finansal
+veri saklanmaz). Cihazlar arası senkron, ortak hane ve isteğe bağlı sunucu-taraflı AI.
 
 ## Mimari
 
@@ -37,8 +38,13 @@ docker compose up -d --build
 
 1. **PocketBase admin** oluştur: `http://<sunucu>:8080/pb/_/` (ilk açılışta superuser sorar).
    Migration'lar (users/haneler) otomatik uygulanır.
-2. Uygulamayı aç (`:8080`) → **Kayıt ol / Giriş** → veri artık cihazlar arası PocketBase'de.
-   (Giriş yapılmazsa uygulama yine tam çalışır — veri yalnız o tarayıcıda.)
+2. Uygulamayı aç (`:8080`) → giriş ekranında **Kayıt** ile ilk hesabını oluştur (e-posta +
+   en az 8 karakter şifre), sonra **Giriş** yap. Giriş zorunludur; veri yalnızca PocketBase'de
+   tutulur ve tüm cihazlar arasında senkronlanır.
+
+> **Güvenlik:** Oturum, hareketsizlikte otomatik kapanır (varsayılan 30 dk; Ayarlar →
+> Güvenlik'ten değişir) ve en fazla 7 gün sonra yeniden giriş ister. "Çıkış" oturumu
+> (token'ı) tamamen kapatır.
 
 ## Yapay Zekâ (sunucu proxy)
 

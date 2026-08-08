@@ -117,6 +117,25 @@ export function pbCikis() {
   kaydet();
 }
 
+// Şifre değiştir (giriş yapılmışken). PB, şifre değişince eski token'ı geçersiz
+// kılar → başarıdan sonra yeni şifreyle yeniden giriş yapıp token'ı tazeliyoruz.
+export async function pbSifreDegistir(oldPassword, newPassword) {
+  if (!syncBagliMi()) throw new Error("Önce giriş yap.");
+  if (!newPassword || newPassword.length < 8) throw new Error("Yeni şifre en az 8 karakter olmalı.");
+  const res = await pbFetch(_url, `/api/collections/users/records/${_userId}`, {
+    method: "PATCH",
+    headers: { Authorization: _token, "Content-Type": "application/json" },
+    body: JSON.stringify({ oldPassword, password: newPassword, passwordConfirm: newPassword }),
+  });
+  if (res.status === 401) { pbCikis(); throw new Error("Oturum süresi doldu, tekrar giriş yap."); }
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(pbHataMesaji(e, res.status === 400 ? "Mevcut şifre yanlış olabilir." : `Şifre değiştirilemedi (${res.status}).`));
+  }
+  // Yeni şifreyle yeniden giriş → geçerli token (mevcut _email ve _url kullanılır)
+  await pbGiris(_url, _email, newPassword);
+}
+
 // Aktif veri kaydının yolu: ortak hane modundaysa haneler, değilse users
 function veriYolu() {
   return _haneId ? `/api/collections/haneler/records/${_haneId}` : `/api/collections/users/records/${_userId}`;

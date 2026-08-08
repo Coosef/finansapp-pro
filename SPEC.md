@@ -4,6 +4,13 @@ Bu belge, projenin **tüm özelliklerini, veri modelini ve teknik kararlarını*
 altına alır. Eski tek dosyalık prototip (`_referans/finans-app-pro-v4.jsx`) referans
 olarak saklanır; bu proje onun temiz, modüler ve gerçekten çalışan yeniden yazımıdır.
 
+> **⚠️ Güncel mimari (2026-08): DB-only + zorunlu giriş.** Uygulama artık yalnızca
+> **PocketBase** ile çalışır: kimlik ve tüm veri sunucudadır, tarayıcıda finansal veri
+> tutulmaz, giriş zorunludur (yerel `admin/admin123` ve tarayıcı-yalnız depolama kaldırıldı).
+> Oturum güvenliği: hareketsizlik + mutlak zaman aşımı ve gerçek çıkış. Aşağıdaki
+> "tarayıcıda/localStorage'da saklanır" ifadeleri bu değişiklikle geçersizdir; ayrıntı:
+> `docs/superpowers/specs/2026-08-08-db-only-zorunlu-giris-design.md`.
+
 ---
 
 ## 1. Genel Bakış

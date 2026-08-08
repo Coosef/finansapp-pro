@@ -43,9 +43,17 @@ export default defineConfig({
   server: {
     host: true, // Docker / LAN erişimi için
     port: 5173,
+    // DB-only: geliştirmede /pb → yerel PocketBase (prod'da nginx aynısını yapar).
+    // Dev için PocketBase'i :8090'da çalıştır (ör. `docker run -p 8090:8090 ...`).
+    proxy: {
+      "/pb": { target: "http://localhost:8090", changeOrigin: true, rewrite: (p) => p.replace(/^\/pb/, "") },
+    },
   },
   preview: {
     host: true,
     port: 4173,
+    proxy: {
+      "/pb": { target: "http://localhost:8090", changeOrigin: true, rewrite: (p) => p.replace(/^\/pb/, "") },
+    },
   },
 });
