@@ -82,9 +82,10 @@ const KATEGORI_DESEN = [
   [/trendyol|hepsiburada|amazon|\bn11\b|gittigidiyor|teknosa|\bvatan\b|mediamarkt|media ?markt|incehesap|itopya|microsoft|samsung|\bapple\b|yazılım|yazilim/, "Teknoloji"],
   [/sinema|cinemaximum|cineverse|tiyatro|konser|festival|bilet|biletix|passo|\boyun\b|steam|playstation|epic ?games|eğlence|eglence/, "Eğlence"],
   [/spor ?salon|gym\b|fitness|macfit|sporium|mac ?fit|hms\b/, "Spor"],
+  // Kira, Gönderim'den ÖNCE gelmeli: "Giden Transfer Ev kirası" → Gönderim değil Kira.
+  [/\bkira/, "Kira"],
   [/giden transfer|para ?gönder|para ?gonder|gönderim|gonderim|havale|\beft\b|\bfast\b/, "Gönderim"],
   [/faiz|temettü|temettu|kâr payı|kar payı|kar payi|getiri/, "Faiz/Yatırım"],
-  [/kira\b/, "Kira"],
   [/vergi|mtv|harç|harc|ceza|trafik ceza|sgk|bağkur|bagkur/, "Vergi/Resmi"],
 ];
 export function kategoriTahmin(aciklama, tip) {
@@ -102,8 +103,10 @@ function siniflandir(islem, aciklama, miktar, sahipTokens, ekstreTipi) {
   const hepsi = i + " " + a;
   // Kart ekstresi: çıkış (−) = ödeme/iade (borç azaltır) → odeme; giriş (+) = harcama → gider
   if (ekstreTipi === "kart") return miktar < 0 ? "odeme" : "gider";
-  // 1) Kredi kartı borç ödemesi → gelir/gider değil
+  // 1) Kredi kartı borç ödemesi → gelir/gider değil. Hesap ekstresinde "kredi
+  // kartı" geçen transfer/EFT/ödeme satırı kart borcu ödemesidir (harcama değil).
   if (/kredi kart.*öde|kart ödeme|kart borç|hesaptan ödeme|kredi kart.*tahsil/.test(hepsi)) return "odeme";
+  if (/kredi kart/.test(hepsi) && /(öde|borç|tahsil|transfer|eft|fast|virman|gönder|gonder)/.test(hepsi)) return "odeme";
   // 2) Maaş → gelir
   if (/maaş|maas/.test(a)) return "gelir";
   // 3) Vergi/komisyon kesintisi → gider; faiz/temettü geliri → gelir (sıra önemli)

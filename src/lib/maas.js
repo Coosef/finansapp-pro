@@ -137,6 +137,27 @@ export function maasEslestirUygula(findata, maasId, ay, tutar, kaynak = "ekstre"
   return maasGeliriUret(araData, `${ay}-31`).data; // ay içi türet (ödeme günü kesin geçmiş)
 }
 
+// Bir ekstre/işlem gelir kaydı tanımlı bir maaşa ait olabilir mi? → {maasId, ay} | null.
+// Çift-sayımı önlemek için import akışında raw gelir eklemek yerine eşleştirme önerilir.
+export function maasEslestirmeAdayi(findata, kayit) {
+  if (!kayit || kayit.tip !== "gelir") return null;
+  const salaryish = kayit.kategori === "Maaş" || /maaş|maas/i.test(kayit.baslik || "");
+  if (!salaryish) return null;
+  const ay = String(kayit.tarih || "").slice(0, 7);
+  if (!ay) return null;
+  const aktifler = (findata?.maaslar || []).filter((m) => m.aktif !== false);
+  if (!aktifler.length) return null;
+  const tutar = +kayit.miktar || 0;
+  // Beklenen tutara en yakın maaşı seç (tek maaşta doğrudan o)
+  let sec = aktifler[0], enIyi = Infinity;
+  aktifler.forEach((m) => {
+    const bek = beklenenMaas(m, maasAyari(findata, m.id, ay));
+    const uzaklik = Math.abs(bek - tutar);
+    if (uzaklik < enIyi) { enIyi = uzaklik; sec = m; }
+  });
+  return { maasId: sec.id, ay };
+}
+
 // Mevcut maaş verisinden (sablon/gelir) maaş adayı çıkar — kullanıcı-onaylı migrasyon.
 export function maasAdaylari(findata) {
   const d = findata || {};

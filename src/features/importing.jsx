@@ -10,6 +10,7 @@ import { xlsxToGrid } from "../lib/xlsx.js";
 import { pdfToRows } from "../lib/pdf.js";
 import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
+import { maasEslestirmeAdayi, maasEslestirUygula } from "../lib/maas.js";
 import { gibKareParse, faturaKategori, kalemDogrula, yinelenenFaturaMi } from "../lib/fatura.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -66,6 +67,16 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     ekstreRef = useRef();
   const eklemeRef = useRef(false); // çift "Seçilenleri Ekle" tıklamasını engelle
 
+  // Maaş tipli gelir kayıtlarını tanımlı maaşla eşleştirmek üzere işaretle.
+  // Eşleşen kayıt raw gelir olarak EKLENMEZ; onayda maaş gerçekleşeni güncellenir.
+  function maasIsaretle(kayitlar) {
+    return (kayitlar || []).map((k) => {
+      if (k.tip !== "gelir" || k._transfer) return k;
+      const aday = maasEslestirmeAdayi(findata, k);
+      return aday ? { ...k, _maas: aday } : k;
+    });
+  }
+
   function tekrarMi(yeni) {
     const aday = yeni.tip === "gelir" ? findata.gelirler : findata.giderler;
     return aday.some((x) => {
@@ -105,7 +116,8 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       const t = tekrarMi(temel);
       kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
     }
-    return { kayitlar, atlanan, ozet, dogrulama, transferSayisi: kayitlar.filter((k) => k._transfer).length, aboneSayisi: kayitlar.filter((k) => k._abonelik).length };
+    const isaretli = maasIsaretle(kayitlar);
+    return { kayitlar: isaretli, atlanan, ozet, dogrulama, transferSayisi: isaretli.filter((k) => k._transfer).length, aboneSayisi: isaretli.filter((k) => k._abonelik).length, maasSayisi: isaretli.filter((k) => k._maas).length };
   }
 
   async function fisYukle(e) {
@@ -183,8 +195,11 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       setFindata((d) => {
         let cur = d;
         for (const s of islenmis) {
-          const uyg = [...s.kayitlar.filter((k) => k._sec && !k._transfer), ...s.kayitlar.filter((k) => k._transfer)];
+          const maaslar = s.kayitlar.filter((k) => k._sec && !k._transfer && k._maas);
+          const secili = s.kayitlar.filter((k) => k._sec && !k._transfer && !k._maas);
+          const uyg = [...secili, ...s.kayitlar.filter((k) => k._transfer)];
           cur = ekstreUygula(cur, s.ozet, uyg).data;
+          for (const k of maaslar) cur = maasEslestirUygula(cur, k._maas.maasId, k._maas.ay, k.miktar, "ekstre");
         }
         return cur;
       });
@@ -348,7 +363,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
         bildir(okunamayan ? "Sayfalar okunamadı (model geçersiz yanıt verdi). Tekrar dene ya da farklı model/bulut kullan." : "İşlem bulunamadı", "err");
       } else {
         if (okunamayan) bildir(`${okunamayan} sayfa okunamadı, atlandı — sonuçlar eksik olabilir`, "err");
-        setSonuc({ kayitlar, atlanan, ozet, taksitSayisi });
+        const isaretli = maasIsaretle(kayitlar);
+        setSonuc({ kayitlar: isaretli, atlanan, ozet, taksitSayisi, maasSayisi: isaretli.filter((k) => k._maas).length });
       }
     } catch (err) {
       let m = aiHata(err) || "Ekstre işlenemedi";
@@ -410,21 +426,29 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
 
   function onayla() {
     if (!sonuc || eklemeRef.current) return; // çift tıklama / yeniden çalışma koruması
-    const secili = sonuc.kayitlar.filter((k) => k._sec && !k._transfer); // transfer sayılmaz
+    const seciliTum = sonuc.kayitlar.filter((k) => k._sec && !k._transfer); // transfer sayılmaz
+    const maaslar = seciliTum.filter((k) => k._maas); // maaş → raw gelir eklenmez, eşleşir
+    const secili = seciliTum.filter((k) => !k._maas);
     const oz = sonuc.ozet || {};
     const hc = hesapCoz();
     const hesapVar = !!(hc.son4 || hc.banka);
-    if (!secili.length && !hesapVar) { bildir("Seçili kayıt yok. Eklemek istediklerini işaretle (sarı 'olası tekrar'lar varsayılan kapalı).", "err"); return; }
+    if (!seciliTum.length && !hesapVar) { bildir("Seçili kayıt yok. Eklemek istediklerini işaretle (sarı 'olası tekrar'lar varsayılan kapalı).", "err"); return; }
     eklemeRef.current = true;
-    // Tek atomik güncelleme: seçili işlemler + tüm transfer bacakları → ekstreUygula
+    // Tek atomik güncelleme: seçili işlemler + transfer bacakları → ekstreUygula;
+    // ardından maaş kayıtları çift-saymadan eşleşir (raw gelir eklenmez).
     const uygulanacak = [...secili, ...sonuc.kayitlar.filter((k) => k._transfer)];
-    setFindata((d) => ekstreUygula(d, oz, uygulanacak).data);
+    setFindata((d) => {
+      let cur = ekstreUygula(d, oz, uygulanacak).data;
+      for (const k of maaslar) cur = maasEslestirUygula(cur, k._maas.maasId, k._maas.ay, k.miktar, "ekstre");
+      return cur;
+    });
     secili.forEach((k) => kategoriOgren(k.baslik, k.kategori)); // kategori hafızası
     const ay = buAy();
     const gecmis = secili.filter((k) => !(k.tarih || "").startsWith(ay)).length;
     const ekHesap = hesapVar ? ` → ${hc.ad}${hc.yeni ? " (yeni hesap)" : ""}` : "";
     const trNot = sonuc.transferSayisi ? ` · ${sonuc.transferSayisi} transfer sayılmadı` : "";
-    bildir(`${secili.length} kayıt eklendi${ekHesap}${trNot}` + (gecmis ? ` · görmek için üst sağdan dönemi "Tümü" yap` : ""));
+    const maasNot = maaslar.length ? ` · ${maaslar.length} maaş eşleşti (çift sayılmadı)` : "";
+    bildir(`${secili.length} kayıt eklendi${ekHesap}${trNot}${maasNot}` + (gecmis ? ` · görmek için üst sağdan dönemi "Tümü" yap` : ""));
     setSonuc(null);
   }
 
@@ -613,6 +637,11 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
               ⇄ {sonuc.transferSayisi} hesaplar-arası transfer tanındı — gelir/gider sayılmadı. Hesabın güncel bakiyesi ekstreden alınır; diğer hesabının ekstresini de yüklersen o taraf da çift sayılmaz.
             </p>
           )}
+          {sonuc.maasSayisi > 0 && (
+            <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              💼 {sonuc.maasSayisi} işlem tanımlı maaşınla eşleşti — yeni gelir olarak <b>eklenmez</b>, o ayın maaşı gerçekleşen tutara güncellenir (baz + ek ödeme ayrılır). Çift sayım olmaz.
+            </p>
+          )}
           {sonuc.taksitSayisi > 0 && (
             <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: V.card2, border: `1px solid ${V.border}`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               📅 {sonuc.taksitSayisi} gelecek taksit, sonraki aylara borç olarak hazırlandı (mavi etiketli). İstemezsen işaretini kaldır.
@@ -664,9 +693,12 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
                   {k._abonelik && (
                     <span style={{ background: "var(--chip-gold)", border: `1px solid ${V.accent}55`, color: V.accent, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>ABONELİK</span>
                   )}
+                  {k._maas && (
+                    <span style={{ background: "var(--chip-green)", border: `1px solid ${V.pos}55`, color: V.pos, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>MAAŞ EŞLEŞMESİ</span>
+                  )}
                   {k.kalemler?.length ? <span style={{ color: V.accent, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
                 </p>
-                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : k._abonelik ? "Abonelik · aylık" : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
+                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : k._abonelik ? "Abonelik · aylık" : k._maas ? "Maaş eşleşmesi · çift sayılmaz" : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
               </div>
               <p className="num" style={{ margin: 0, fontWeight: 700, color: k._transfer ? V.ink3 : k._abonelik ? V.accent : k.tip === "gelir" ? V.pos : V.neg }}>{k._transfer ? "⇄ " : k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
             </div>

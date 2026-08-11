@@ -30,6 +30,23 @@ describe("ekstreDogrula — bakiye zinciri", () => {
   });
 });
 
+describe("siniflandir (ekstreParse üzerinden) — transfer/EFT düzeltmeleri", () => {
+  const hesapRows = (aciklama, tutar) => [
+    ["Ad Soyad", "Ahmet Yılmaz"],
+    ["Tarih", "Açıklama", "Tutar", "Bakiye"],
+    ["05.08.2026", aciklama, tutar, "10.000,00"],
+  ];
+  it("EFT/transfer ile kredi kartı ödemesi → odeme (gider değil)", () => {
+    const { islemler } = ekstreParse(hesapRows("Giden Transfer Kredi kartı EFT", "-5.000,00"));
+    expect(islemler[0].tip).toBe("odeme");
+  });
+  it("kira amaçlı giden transfer → gider + Kira kategorisi (Gönderim değil)", () => {
+    const { islemler } = ekstreParse(hesapRows("Giden Transfer Ev kirası", "-8.000,00"));
+    expect(islemler[0].tip).toBe("gider");
+    expect(islemler[0].kategori).toBe("Kira");
+  });
+});
+
 describe("hesapBul — farklı son4 birleşmez", () => {
   const data = { hesaplar: [{ id: "a", ad: "Enpara ••8551", tip: "banka", son4: "8551" }] };
   it("aynı banka farklı son4 → yeni hesap", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   beklenenMaas, maasAyarHesapla, maasDurumu, maasGeliriUret,
-  maasEslestirUygula, maasAdaylari,
+  maasEslestirUygula, maasAdaylari, maasEslestirmeAdayi,
 } from "./maas.js";
 
 // Maaş modeli: base salary KALICI; aylık ek ödeme/override yalnız o ay; ekstre
@@ -130,5 +130,27 @@ describe("maasAdaylari — mevcut maaş verisinden aday çıkar (migrasyon)", ()
   });
   it("maaş verisi yoksa boş döner", () => {
     expect(maasAdaylari({ sablonlar: [], gelirler: [] })).toEqual([]);
+  });
+});
+
+describe("maasEslestirmeAdayi — ekstre gelirini tanımlı maaşla eşle", () => {
+  const d = () => ({ maaslar: [maas()], maasAyarlari: [] });
+  it("maaş kategorili ekstre gelirini o ayın maaşıyla eşler", () => {
+    const aday = maasEslestirmeAdayi(d(), { tip: "gelir", baslik: "XYZ ŞTİ MAAŞ ÖDEMESİ", miktar: 95000, kategori: "Maaş", tarih: "2026-08-05" });
+    expect(aday).toEqual({ maasId: "m1", ay: "2026-08" });
+  });
+  it("maaş sinyali yoksa null (normal gelir olarak kalır)", () => {
+    expect(maasEslestirmeAdayi(d(), { tip: "gelir", baslik: "Serbest iş", miktar: 5000, kategori: "Serbest", tarih: "2026-08-05" })).toBe(null);
+  });
+  it("tanımlı maaş yoksa null", () => {
+    expect(maasEslestirmeAdayi({ maaslar: [] }, { tip: "gelir", baslik: "Maaş", miktar: 80000, kategori: "Maaş", tarih: "2026-08-05" })).toBe(null);
+  });
+  it("gider satırı için null", () => {
+    expect(maasEslestirmeAdayi(d(), { tip: "gider", baslik: "Maaş avansı iadesi", miktar: 100, kategori: "Diğer", tarih: "2026-08-05" })).toBe(null);
+  });
+  it("birden çok maaş varsa beklenen tutara en yakını seçer", () => {
+    const dd = { maaslar: [{ ...maas(), id: "m1", tutar: 80000 }, { ...maas(), id: "m2", ad: "Eş maaş", tutar: 30000 }], maasAyarlari: [] };
+    const aday = maasEslestirmeAdayi(dd, { tip: "gelir", baslik: "Maaş", miktar: 31000, kategori: "Maaş", tarih: "2026-08-05" });
+    expect(aday.maasId).toBe("m2");
   });
 });
