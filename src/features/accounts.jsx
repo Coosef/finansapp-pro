@@ -5,7 +5,8 @@ import { useState } from "react";
 import { V, F, SERIF, MONO, HESAP_TIP } from "../lib/constants.js";
 import { uid, TL, bugun, sayiCevir } from "../lib/format.js";
 import { transferUygula, transferleriEslestir } from "../lib/finance.js";
-import { Card, Btn, Field, Modal, DelBtn, Bos } from "../components/ui.jsx";
+import { haneAdaylari, haneYenidenSinifla } from "../lib/kisi.js";
+import { Card, Btn, Field, Modal, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
 // ---- Hesaplar arası akış diyagramı (SVG Sankey: sol kaynak → sağ hedef) ----
@@ -124,6 +125,55 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   const net = varlik - borc;
   const akis = transferleriEslestir(findata); // hesaplar arası transfer korelasyonu
   const [acikYol, setAcikYol] = useState(null); // akış listesinde açık hesap-çifti
+  const [kisiDuzenle, setKisiDuzenle] = useState(null); // hane kişisi ekle/düzenle modalı
+
+  // ---- Hane kişileri (karşı hesaplar) ----
+  const kisiler = findata.kisiler || [];
+  const adaylar = haneAdaylari(findata); // veriden aday karşı taraflar
+  const kisiFlow = {};
+  (findata.transferAkis || []).filter((l) => l.kisiId).forEach((l) => {
+    const f = (kisiFlow[l.kisiId] = kisiFlow[l.kisiId] || { gonderilen: 0, gelen: 0, adet: 0 });
+    if ((+l.miktar || 0) < 0) f.gonderilen += Math.abs(+l.miktar || 0); else f.gelen += Math.abs(+l.miktar || 0);
+    f.adet++;
+  });
+
+  function kisiAc(k) {
+    setKisiDuzenle(k?.id
+      ? { id: k.id, ad: k.ad, hane: k.hane !== false, anahtarlar: (k.anahtarlar || []).join(", "), iban: k.iban || "", son4: k.son4 || "", not: k.not || "" }
+      : { ad: k?.ad || "", hane: true, anahtarlar: k?.anahtarlar || "", iban: "", son4: "", not: "" });
+  }
+  function kisiKaydet() {
+    const ad = (kisiDuzenle.ad || "").trim();
+    if (!ad) { bildir("Bir etiket/ad gir (ör. Kız arkadaşım)", "err"); return; }
+    const anahtarlar = String(kisiDuzenle.anahtarlar || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!anahtarlar.length && !kisiDuzenle.iban && !kisiDuzenle.son4) { bildir("En az bir tanıma kelimesi ya da IBAN/son4 gir", "err"); return; }
+    const rec = { ad, hane: kisiDuzenle.hane !== false, anahtarlar, iban: kisiDuzenle.iban || undefined, son4: (String(kisiDuzenle.son4 || "").replace(/\D/g, "").slice(-4)) || undefined, not: kisiDuzenle.not || undefined };
+    setFindata((d) => {
+      const list = [...(d.kisiler || [])];
+      if (kisiDuzenle.id) { const i = list.findIndex((x) => x.id === kisiDuzenle.id); if (i >= 0) list[i] = { ...list[i], ...rec }; }
+      else list.push({ id: uid(), ...rec });
+      return { ...d, kisiler: list };
+    });
+    bildir(kisiDuzenle.id ? "Kişi güncellendi" : `${ad} eklendi — ekstre yüklerken ona giden para transfer sayılır`);
+    setKisiDuzenle(null);
+  }
+  function kisiSil(id) {
+    setFindata((d) => ({
+      ...d,
+      kisiler: (d.kisiler || []).filter((k) => k.id !== id),
+      // Bu kişiye bağlı transfer bacaklarından kisiId'yi kaldır (yetim kalmasın)
+      transferAkis: (d.transferAkis || []).map((l) => (String(l.kisiId) === String(id) ? (({ kisiId, ...rest }) => rest)(l) : l)),
+    }));
+    bildir("Kişi silindi");
+    setKisiDuzenle(null);
+  }
+  function haneSinifla() {
+    const onceki = findata;
+    const { data, tasindi } = haneYenidenSinifla(findata);
+    if (!tasindi) { bildir("Taşınacak işlem yok — kişilerin tanıma kelimelerini kontrol et.", "ok"); return; }
+    setFindata(() => data);
+    bildir(`${tasindi} işlem hane transferine taşındı (harcama/gelirden çıktı)`, "ok", { label: "↩ Geri al", onClick: () => setFindata(() => onceki) });
+  }
 
   function modalKaydet(form) {
     if (!form.ad.trim()) {
@@ -232,6 +282,67 @@ export function Hesaplar({ findata, setFindata, bildir }) {
         </div>
       )}
 
+      {/* Hane Kişileri & Karşı Hesaplar */}
+      <Card style={{ marginTop: "14px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: "0.6rem", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon d="users" size={16} stroke={V.accent} />
+            <h3 style={{ margin: 0, fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Hane Kişileri & Karşı Hesaplar</h3>
+          </div>
+          <Btn variant="gold" onClick={() => kisiAc(null)} style={{ padding: "7px 12px", fontSize: "12.5px" }}><Icon d="plus" size={13} /> Kişi</Btn>
+        </div>
+        <p style={{ margin: "0 0 0.9rem", fontSize: "12px", color: V.ink3, lineHeight: 1.6 }}>
+          Kendi ve <b>hanendeki kişilerin</b> hesabına giden para <b>transfer</b> sayılır (harcama değil). Bir kişiyi ekle (ör. <i>"Kız arkadaşım"</i>); ekstre yüklerken ona giden/gelen para otomatik transfer olur ve akışı burada görünür.
+        </p>
+
+        {/* Veriden öneriler */}
+        {adaylar.length > 0 && (
+          <div style={{ marginBottom: "0.9rem", padding: "9px 11px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10 }}>
+            <div style={{ fontSize: "11.5px", color: V.ink3, marginBottom: 7 }}>Verinde sık transfer yaptığın karşı taraflar — birine tıkla, etiketle:</div>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+              {adaylar.slice(0, 6).map((a, i) => (
+                <button key={i} onClick={() => kisiAc({ ad: "", anahtarlar: a.anahtar })} className="fa-btn"
+                  style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${V.border2}`, background: V.card, color: V.ink2, fontSize: 12, cursor: "pointer", fontFamily: F }}>
+                  <b style={{ color: V.ink, textTransform: "capitalize" }}>{a.anahtar}</b> · {TL(a.toplam)} · {a.adet}×
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Kişi listesi */}
+        {!kisiler.length && <p style={{ margin: "0 0 0.4rem", fontSize: "12.5px", color: V.ink3 }}>Henüz hane kişisi yok.</p>}
+        {kisiler.map((k) => {
+          const f = kisiFlow[k.id] || { gonderilen: 0, gelen: 0, adet: 0 };
+          return (
+            <div key={k.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10, marginBottom: 8 }}>
+              <div onClick={() => kisiAc(k)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, display: "flex", alignItems: "center", gap: 6 }}>
+                  {k.ad}
+                  {k.hane
+                    ? <span style={{ background: "var(--chip-green)", color: V.pos, fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5 }}>HANE</span>
+                    : <span style={{ background: V.track, color: V.ink3, fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5 }}>DIŞ</span>}
+                  <Icon d="edit" size={12} stroke={V.ink3} />
+                </div>
+                <div style={{ fontSize: 11.5, color: V.ink3, marginTop: 2 }}>
+                  {f.adet > 0
+                    ? <>Gönderdiğin <b className="num" style={{ color: V.neg }}>{TL(f.gonderilen)}</b> · Gelen <b className="num" style={{ color: V.pos }}>{TL(f.gelen)}</b> · {f.adet} hareket</>
+                    : (k.anahtarlar || []).length ? `Tanıma: ${(k.anahtarlar || []).join(", ")}` : k.iban ? "IBAN ile tanınır" : "Henüz eşleşen hareket yok"}
+                </div>
+              </div>
+              <DelBtn onClick={() => kisiSil(k.id)} />
+            </div>
+          );
+        })}
+
+        {kisiler.some((k) => k.hane) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+            <Btn variant="ghost" onClick={haneSinifla} style={{ padding: "8px 13px", fontSize: 12.5 }}>↻ Mevcut işlemleri yeniden sınıfla</Btn>
+            <span style={{ fontSize: 11, color: V.ink3 }}>Geçmiş harcamalardan hane kişilerine gidenleri transfere taşır (geri alınabilir)</span>
+          </div>
+        )}
+      </Card>
+
       {/* Hesaplar arası para akışı (korelasyon haritası) */}
       {(akis.ozet.length > 0 || akis.eslesmeyen.length > 0) && (
         <Card style={{ marginTop: "14px" }}>
@@ -334,6 +445,29 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           onKaydet={modalKaydet}
           onClose={() => setDuzenle(null)}
         />
+      )}
+
+      {/* Hane kişisi ekle/düzenle modalı */}
+      {kisiDuzenle && (
+        <Modal title={kisiDuzenle.id ? "Kişiyi Düzenle" : "Hane Kişisi Ekle"} onClose={() => setKisiDuzenle(null)} maxWidth={420}>
+          <Field label="Etiket / Ad" value={kisiDuzenle.ad} onChange={(v) => setKisiDuzenle((k) => ({ ...k, ad: v }))} placeholder="Örn: Kız arkadaşım, Annem" />
+          <label style={{ display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Tanıma kelimeleri (virgülle)</label>
+          <input value={kisiDuzenle.anahtarlar} onChange={(e) => setKisiDuzenle((k) => ({ ...k, anahtarlar: e.target.value }))} placeholder="helin, ergüzel"
+            style={{ width: "100%", padding: "11px 13px", marginBottom: 4, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10, color: V.ink, fontSize: "13.5px", fontFamily: F, outline: "none", boxSizing: "border-box" }} />
+          <p style={{ margin: "0 0 12px", fontSize: 11, color: V.ink3, lineHeight: 1.5 }}>Ekstre açıklamasında bu kelimeler (genelde kişinin adı) geçince o işlem bu kişiye ait sayılır.</p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1.6 }}><Field label="IBAN (opsiyonel)" value={kisiDuzenle.iban} onChange={(v) => setKisiDuzenle((k) => ({ ...k, iban: v }))} placeholder="TR.." /></div>
+            <div style={{ flex: 1 }}><Field label="Son 4 hane" value={kisiDuzenle.son4} onChange={(v) => setKisiDuzenle((k) => ({ ...k, son4: v }))} placeholder="1234" /></div>
+          </div>
+          <Toggle label="Hane (transfer sayılsın)" sub="Kapalıysa dışarıya harcama olarak kalır" checked={kisiDuzenle.hane !== false} onChange={(v) => setKisiDuzenle((k) => ({ ...k, hane: v }))} />
+          <div style={{ marginTop: 14 }}>
+            <Field label="Not (opsiyonel)" value={kisiDuzenle.not} onChange={(v) => setKisiDuzenle((k) => ({ ...k, not: v }))} placeholder="Örn: ev kirası, harçlık…" />
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <Btn onClick={kisiKaydet} style={{ flex: 1, padding: "13px" }}>{kisiDuzenle.id ? "Kaydet" : "Ekle"}</Btn>
+            {kisiDuzenle.id && <Btn variant="danger" onClick={() => kisiSil(kisiDuzenle.id)} style={{ padding: "13px 16px" }}>Sil</Btn>}
+          </div>
+        </Modal>
       )}
 
       {/* Transfer modalı */}

@@ -237,7 +237,7 @@ export function ekstreUygula(data, ozet, kayitlar) {
     const anahtar = (l) => `${l.hesapId}|${l.tarih}|${Math.round(l.miktar)}|${(l.aciklama || "").slice(0, 14)}`;
     const mevcut = new Set(transferAkis.map(anahtar));
     (kayitlar || []).filter((k) => k._transfer).forEach((k, i) => {
-      const leg = { id: uid() + 7000 + i, hesapId, tarih: k.tarih, miktar: k._yon === "cikis" ? -k.miktar : k.miktar, aciklama: k.baslik };
+      const leg = { id: uid() + 7000 + i, hesapId, tarih: k.tarih, miktar: k._yon === "cikis" ? -k.miktar : k.miktar, aciklama: k.baslik, ...(k._kisiId ? { kisiId: k._kisiId } : {}) };
       if (!mevcut.has(anahtar(leg))) { mevcut.add(anahtar(leg)); transferAkis.push(leg); transferN++; }
     });
   }

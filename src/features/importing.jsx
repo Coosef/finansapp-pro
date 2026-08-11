@@ -11,6 +11,7 @@ import { pdfToRows } from "../lib/pdf.js";
 import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
 import { maasEslestirmeAdayi, maasEslestirUygula } from "../lib/maas.js";
+import { kisiBul } from "../lib/kisi.js";
 import { gibKareParse, faturaKategori, kalemDogrula, yinelenenFaturaMi } from "../lib/fatura.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -67,6 +68,18 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     ekstreRef = useRef();
   const eklemeRef = useRef(false); // çift "Seçilenleri Ekle" tıklamasını engelle
 
+  // Hane kişisine giden/gelen gelir/gider kayıtlarını TRANSFER'e çevir (harcama/gelir sayılmaz).
+  function haneIsaretle(kayitlar) {
+    const hane = (findata.kisiler || []).filter((k) => k.hane);
+    if (!hane.length) return kayitlar || [];
+    return (kayitlar || []).map((k) => {
+      if (k._transfer || k._abonelik || k._taksit || (k.tip !== "gelir" && k.tip !== "gider")) return k;
+      const kisi = kisiBul(hane, k.baslik, k.iban);
+      if (!kisi) return k;
+      return { baslik: k.baslik, miktar: k.miktar, kategori: "Transfer", tarih: k.tarih, kaynak: "ekstre", tip: "transfer", _transfer: true, _kisiId: kisi.id, _yon: k.tip === "gider" ? "cikis" : "giris", _sec: false, _haneAd: kisi.ad };
+    });
+  }
+
   // Maaş tipli gelir kayıtlarını tanımlı maaşla eşleştirmek üzere işaretle.
   // Eşleşen kayıt raw gelir olarak EKLENMEZ; onayda maaş gerçekleşeni güncellenir.
   function maasIsaretle(kayitlar) {
@@ -116,8 +129,8 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       const t = tekrarMi(temel);
       kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
     }
-    const isaretli = maasIsaretle(kayitlar);
-    return { kayitlar: isaretli, atlanan, ozet, dogrulama, transferSayisi: isaretli.filter((k) => k._transfer).length, aboneSayisi: isaretli.filter((k) => k._abonelik).length, maasSayisi: isaretli.filter((k) => k._maas).length };
+    const isaretli = maasIsaretle(haneIsaretle(kayitlar));
+    return { kayitlar: isaretli, atlanan, ozet, dogrulama, transferSayisi: isaretli.filter((k) => k._transfer).length, aboneSayisi: isaretli.filter((k) => k._abonelik).length, maasSayisi: isaretli.filter((k) => k._maas).length, haneSayisi: isaretli.filter((k) => k._kisiId).length };
   }
 
   async function fisYukle(e) {
@@ -363,8 +376,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
         bildir(okunamayan ? "Sayfalar okunamadı (model geçersiz yanıt verdi). Tekrar dene ya da farklı model/bulut kullan." : "İşlem bulunamadı", "err");
       } else {
         if (okunamayan) bildir(`${okunamayan} sayfa okunamadı, atlandı — sonuçlar eksik olabilir`, "err");
-        const isaretli = maasIsaretle(kayitlar);
-        setSonuc({ kayitlar: isaretli, atlanan, ozet, taksitSayisi, maasSayisi: isaretli.filter((k) => k._maas).length });
+        const isaretli = maasIsaretle(haneIsaretle(kayitlar));
+        setSonuc({ kayitlar: isaretli, atlanan, ozet, taksitSayisi, maasSayisi: isaretli.filter((k) => k._maas).length, haneSayisi: isaretli.filter((k) => k._kisiId).length });
       }
     } catch (err) {
       let m = aiHata(err) || "Ekstre işlenemedi";
@@ -640,6 +653,11 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           {sonuc.maasSayisi > 0 && (
             <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
               💼 {sonuc.maasSayisi} işlem tanımlı maaşınla eşleşti — yeni gelir olarak <b>eklenmez</b>, o ayın maaşı gerçekleşen tutara güncellenir (baz + ek ödeme ayrılır). Çift sayım olmaz.
+            </p>
+          )}
+          {sonuc.haneSayisi > 0 && (
+            <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
+              👨‍👩‍👧 {sonuc.haneSayisi} işlem <b>hane kişilerine</b> ait — transfer olarak işlenir, harcama/gelir sayılmaz (Hesaplar → Para Akışı'nda görünür).
             </p>
           )}
           {sonuc.taksitSayisi > 0 && (

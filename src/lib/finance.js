@@ -281,16 +281,24 @@ export function transferUygula(d, kaynakId, hedefId, miktar) {
 // hesaplarda eşler (aynı tutar, ±4 gün). Eşleşmeyenler "dış" sayılır.
 export function transferleriEslestir(findata) {
   const hesaplar = findata?.hesaplar || [];
+  const kisiler = findata?.kisiler || [];
   const ad = (id) => hesaplar.find((h) => String(h.id) === String(id))?.ad || "Bilinmeyen hesap";
+  const kisiAd = (id) => kisiler.find((k) => String(k.id) === String(id))?.ad || "Kişi";
   const eslesen = [];
   // Manuel transferler her zaman eşleşmiş kabul edilir
   (findata?.transferler || []).forEach((t) =>
     eslesen.push({ fromAd: ad(t.kaynakId), toAd: ad(t.hedefId), miktar: Math.abs(+t.miktar || 0), tarih: t.tarih, kaynak: "manuel", aciklama: "" })
   );
-  // İçe aktarılan bacaklar: çıkan (−) ile giren (+) eşle
   const legs = (findata?.transferAkis || []).map((l, i) => ({ ...l, _i: i }));
-  const cikan = legs.filter((l) => (+l.miktar || 0) < 0);
-  const giren = legs.filter((l) => (+l.miktar || 0) > 0);
+  // Hane kişisi bacakları (kisiId): karşı taraf hane kişisi → doğrudan akış (eşleştirmeye girmez)
+  legs.filter((l) => l.kisiId).forEach((l) => {
+    const cikis = (+l.miktar || 0) < 0;
+    eslesen.push({ fromAd: cikis ? ad(l.hesapId) : kisiAd(l.kisiId), toAd: cikis ? kisiAd(l.kisiId) : ad(l.hesapId), miktar: Math.abs(+l.miktar || 0), tarih: l.tarih, kaynak: "hane", kisiId: l.kisiId, aciklama: l.aciklama || "" });
+  });
+  // Kendi hesaplar arası bacaklar: çıkan (−) ile giren (+) eşle
+  const hesapLegs = legs.filter((l) => !l.kisiId);
+  const cikan = hesapLegs.filter((l) => (+l.miktar || 0) < 0);
+  const giren = hesapLegs.filter((l) => (+l.miktar || 0) > 0);
   const used = new Set();
   for (const c of cikan) {
     const g = giren.find(
@@ -306,14 +314,15 @@ export function transferleriEslestir(findata) {
       eslesen.push({ fromAd: ad(c.hesapId), toAd: ad(g.hesapId), miktar: Math.abs(+c.miktar), tarih: c.tarih, kaynak: "ekstre", aciklama: c.aciklama || g.aciklama || "" });
     }
   }
-  const eslesmeyen = legs
+  // Eşleşmeyen = kendi-hesap bacaklarından karşılığı bulunamayanlar (kişi bacakları hariç)
+  const eslesmeyen = hesapLegs
     .filter((l) => !used.has(l._i))
     .map((l) => ({ hesapAd: ad(l.hesapId), miktar: +l.miktar || 0, tarih: l.tarih, aciklama: l.aciklama }));
-  // Hesap çiftine göre özet (korelasyon haritası)
+  // Hesap/kişi çiftine göre özet (korelasyon haritası)
   const ozetMap = {};
   eslesen.forEach((e) => {
     const k = `${e.fromAd}→${e.toAd}`;
-    (ozetMap[k] = ozetMap[k] || { fromAd: e.fromAd, toAd: e.toAd, toplam: 0, adet: 0 }).toplam += e.miktar;
+    (ozetMap[k] = ozetMap[k] || { fromAd: e.fromAd, toAd: e.toAd, toplam: 0, adet: 0, kisiId: e.kisiId }).toplam += e.miktar;
     ozetMap[k].adet++;
   });
   const ozet = Object.values(ozetMap).sort((a, b) => b.toplam - a.toplam);
@@ -352,6 +361,7 @@ export const bosVeri = () => ({
   kategoriHafiza: {},
   kurlar: null,
   hesaplar: [],
+  kisiler: [], // hane kişileri / karşı hesaplar (bkz. lib/kisi.js)
   transferler: [],
   transferAkis: [], // ekstrelerden gelen tek-yönlü transfer bacakları (eşleştirme için)
   zarflar: {},

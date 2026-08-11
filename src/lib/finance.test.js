@@ -56,6 +56,26 @@ describe("transferleriEslestir", () => {
     expect(yol.toplam).toBe(51000); // 50000 ekstre + 1000 manuel
     expect(yol.adet).toBe(2);
   });
+
+  it("hane kişisi bacağını (kisiId) doğrudan akış olarak gösterir", () => {
+    const d = {
+      hesaplar: [{ id: "a", ad: "Garanti" }],
+      kisiler: [{ id: "k1", ad: "Kız arkadaşım", hane: true }],
+      transferAkis: [
+        { id: 9, hesapId: "a", tarih: "2026-08-05", miktar: -8000, aciklama: "Helin", kisiId: "k1" },
+        { id: 10, hesapId: "a", tarih: "2026-08-10", miktar: 2000, aciklama: "Helin", kisiId: "k1" },
+      ],
+    };
+    const rr = transferleriEslestir(d);
+    const giden = rr.eslesen.find((e) => e.kisiId === "k1" && e.fromAd === "Garanti");
+    expect(giden.toAd).toBe("Kız arkadaşım");
+    expect(giden.miktar).toBe(8000);
+    const gelen = rr.eslesen.find((e) => e.kisiId === "k1" && e.toAd === "Garanti");
+    expect(gelen.fromAd).toBe("Kız arkadaşım");
+    expect(gelen.miktar).toBe(2000);
+    // Kişi bacakları eşleşmeyen sayılmaz
+    expect(rr.eslesmeyen.length).toBe(0);
+  });
 });
 
 describe("bosVeri", () => {
