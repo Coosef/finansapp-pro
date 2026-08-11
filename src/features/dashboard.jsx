@@ -8,11 +8,13 @@ import { V, PALET, GIDER_KAT, AY_ADI } from "../lib/constants.js";
 import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64 } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { yaklasanOdemeler, etkinButce, panelBrifing, donemAraligi, kartOdemeler, butceOnerisi } from "../lib/finance.js";
+import { donemHesap, aylikKarsilastir } from "../lib/hesapla.js";
+import { maasDurumu } from "../lib/maas.js";
 import { faturaKategori } from "../lib/fatura.js";
 import { taksitPlanlari, aylikTaksitYuku, kalanTaksitBorcu } from "../lib/taksit.js";
 import { nakitAkisProjeksiyon } from "../lib/nakitakis.js";
 import { sessizZamlar } from "../lib/anomali.js";
-import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para } from "../components/ui.jsx";
+import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para, Modal } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
 function aiHata(e) {
@@ -88,17 +90,41 @@ export function Panel({
     }
   }
 
-  // ---- Özet figürleri ----
-  const giderToplam = toplamGider + toplamAbonelik;
-  const tasarrufOrani = toplamGelir > 0 ? Math.round(((toplamGelir - giderToplam) / toplamGelir) * 100) : 0;
+  // ---- Özet figürleri — TEK doğruluk kaynağı (hesapla.js) ----
+  const oz = donemHesap(findata, donem, bugun()); // gelir/giderToplam/tasarruf tutarlı
+  const giderToplam = oz.giderToplam; // abonelik kanonik dahil
+  const tasarrufOrani = Math.round(oz.tasarrufOrani);
   const nakitRenk = nakit >= 0 ? V.pos : V.neg;
+  // Geçen aya göre (her zaman içinde bulunulan takvim ayı üzerinden)
+  const mom = aylikKarsilastir(findata, buAy());
+  const yuzde = (d) => (d && d.pct != null ? `${d.pct > 0 ? "+" : ""}%${Math.round(d.pct)}` : "yeni");
+  const momRenk = (d, tersi) => { if (!d || d.pct == null || d.fark === 0) return V.ink3; const kotu = tersi ? d.fark < 0 : d.fark > 0; return kotu ? V.neg : V.pos; };
+
+  const [drill, setDrill] = useState(null); // { baslik, kayitlar, tip }
+  const drillAc = (baslik, kayitlar, tip) => setDrill({ baslik, kayitlar: [...(kayitlar || [])].sort((a, b) => String(b.tarih).localeCompare(String(a.tarih))), tip });
 
   const stats = [
-    { label: "Toplam Gelir", value: TL(toplamGelir), delta: donemAdi, deltaColor: V.ink3 },
-    { label: "Toplam Gider", value: TL(giderToplam), delta: `Abonelik dahil`, deltaColor: V.ink3 },
+    { label: "Toplam Gelir", value: TL(toplamGelir), delta: `${donemAdi} · geçen aya göre ${yuzde(mom.degisim.gelir)}`, deltaColor: momRenk(mom.degisim.gelir, true), onClick: () => drillAc("Gelirler — " + donemAdi, oz.gelirler, "gelir") },
+    { label: "Toplam Gider", value: TL(giderToplam), delta: `Abonelik dahil · ${yuzde(mom.degisim.giderToplam)}`, deltaColor: momRenk(mom.degisim.giderToplam, false), onClick: () => drillAc("Giderler — " + donemAdi, oz.giderler, "gider") },
     { label: "Net Nakit", value: TL(nakit), delta: `Tasarruf %${tasarrufOrani}`, deltaColor: nakitRenk },
-    { label: "Net Varlık", value: TL(netDeger), delta: `Yatırım ${TL(yatirimDeger)}`, deltaColor: V.ink3 },
+    { label: "Net Varlık", value: TL(netDeger), delta: `Yatırım ${TL(yatirimDeger)}`, deltaColor: V.ink3, onClick: () => onGit && onGit("hesap") },
   ];
+
+  // ---- Maaş durumu (tanımlı maaşlar için, içinde bulunulan ay) ----
+  const buAyStr = buAy();
+  const maasDurumlari = (findata.maaslar || []).filter((m) => m.aktif !== false).map((m) => maasDurumu(findata, m.id, buAyStr)).filter(Boolean);
+
+  // ---- Param nerede: hesap/varlık dağılımı ----
+  const hesaplar = findata.hesaplar || [];
+  const grupla = (tip) => hesaplar.filter((h) => h.tip === tip).reduce((s, h) => s + (+h.bakiye || 0), 0);
+  const dagilim = [
+    { ad: "Nakit", tutar: grupla("nakit"), renk: V.pos },
+    { ad: "Banka", tutar: grupla("banka"), renk: V.accent },
+    { ad: "Birikim", tutar: grupla("birikim"), renk: "#6B8E7B" },
+    { ad: "Yatırım", tutar: yatirimDeger, renk: "#8A7BB8" },
+  ].filter((x) => x.tutar > 0);
+  const kartBorc = hesaplar.filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
+  const dagilimToplam = dagilim.reduce((s, x) => s + x.tutar, 0);
 
   // ---- Net varlık gelişimi (SVG alan grafiği) ----
   const netGecmis = (findata.netGecmis || []).filter((p) => p && p.tarih).slice(-12);
@@ -232,12 +258,73 @@ export function Panel({
         </div>
       </div>
 
-      {/* 2) Özet kartları */}
+      {/* 2) Özet kartları (tıklanınca drill-down) */}
       <div className="fa-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
-        {stats.map((s) => (
-          <Stat key={s.label} label={s.label} value={s.value} delta={s.delta} deltaColor={s.deltaColor} />
-        ))}
+        {stats.map((s) =>
+          s.onClick ? (
+            <div key={s.label} onClick={s.onClick} className="fa-btn" style={{ cursor: "pointer" }} title="Ayrıntıyı gör">
+              <Stat label={s.label} value={s.value} delta={s.delta} deltaColor={s.deltaColor} />
+            </div>
+          ) : (
+            <Stat key={s.label} label={s.label} value={s.value} delta={s.delta} deltaColor={s.deltaColor} />
+          )
+        )}
       </div>
+
+      {/* 2b) Bu ay maaş + Param nerede */}
+      {(maasDurumlari.length > 0 || dagilim.length > 0) && (
+        <div className="fa-grid" style={{ display: "grid", gridTemplateColumns: maasDurumlari.length && dagilim.length ? "1fr 1fr" : "1fr", gap: 14, marginBottom: 16 }}>
+          {maasDurumlari.length > 0 && (
+            <Card>
+              <div className="serif" style={{ ...baslik, marginBottom: 12 }}>Bu Ay Maaş</div>
+              {maasDurumlari.map((s) => {
+                const gecti = s.odemeTarihi <= bugun();
+                const renk = s.geldiMi ? V.pos : gecti ? V.accent : V.ink3;
+                const metin = s.geldiMi ? "geldi" : gecti ? "beklenen (işlendi)" : `bekleniyor · her ayın ${s.odemeGunu}'i`;
+                return (
+                  <div key={s.maasId} style={{ padding: "9px 0", borderBottom: `1px solid ${V.line}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13, color: V.ink2, display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: renk, flex: "none" }} />
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.ad} · {metin}</span>
+                      </span>
+                      <span className="num" style={{ fontSize: 14, fontWeight: 700, color: V.ink, flexShrink: 0 }}>{TL(s.efektif)}</span>
+                    </div>
+                    {s.kalemler.length > 1 && (
+                      <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                        {s.kalemler.map((k, i) => <span key={i} className="num" style={{ fontSize: 11, color: V.ink3, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 6, padding: "2px 7px" }}>{k.etiket}: {TL(k.tutar)}</span>)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div onClick={() => onGit && onGit("planlama")} style={{ fontSize: 11.5, color: V.accent, cursor: "pointer", marginTop: 10 }}>Maaş ayarları →</div>
+            </Card>
+          )}
+          {dagilim.length > 0 && (
+            <Card>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div className="serif" style={baslik}>Param Nerede</div>
+                <span onClick={() => onGit && onGit("hesap")} style={{ fontSize: 11, color: V.accent, cursor: "pointer" }}>Hesaplar →</span>
+              </div>
+              <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", marginBottom: 12, background: V.track }}>
+                {dagilim.map((x, i) => <div key={i} style={{ width: `${(x.tutar / dagilimToplam) * 100}%`, background: x.renk }} title={`${x.ad} ${TL(x.tutar)}`} />)}
+              </div>
+              {dagilim.map((x, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, color: V.ink2, padding: "5px 0" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 7 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: x.renk }} />{x.ad}</span>
+                  <span className="num" style={{ color: V.ink }}>{TL(x.tutar)}</span>
+                </div>
+              ))}
+              {kartBorc > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, color: V.neg, padding: "8px 0 0", marginTop: 4, borderTop: `1px solid ${V.line}` }}>
+                  <span>Kart borcu</span><span className="num">−{TL(kartBorc)}</span>
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* 3) Net varlık gelişimi + harcama dağılımı */}
       <div className="fa-grid" style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 14, marginBottom: 16 }}>
@@ -277,13 +364,17 @@ export function Panel({
                 ))}
               </svg>
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 9 }}>
-                {donutSegments.map((d, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: V.ink2 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, flex: "none" }} />
-                    {d.cat}
-                    <Para tutar={d.amt} tarih={refTarih} enflasyon={enf} renk={V.ink} style={{ marginLeft: "auto", fontWeight: 500 }} />
-                  </div>
-                ))}
+                {donutSegments.map((d, i) => {
+                  const top5Cats = new Set(top5.map(([c]) => c));
+                  const kayitlar = d.cat === "Diğer" ? (fd.giderler || []).filter((g) => !top5Cats.has(g.kategori)) : (fd.giderler || []).filter((g) => g.kategori === d.cat);
+                  return (
+                    <div key={i} onClick={() => drillAc("Gider · " + d.cat, kayitlar, "gider")} className="fa-btn" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: V.ink2, cursor: "pointer", padding: "1px 0" }} title="İşlemleri gör">
+                      <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, flex: "none" }} />
+                      {d.cat}
+                      <Para tutar={d.amt} tarih={refTarih} enflasyon={enf} renk={V.ink} style={{ marginLeft: "auto", fontWeight: 500 }} />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -416,6 +507,33 @@ export function Panel({
             </div>
           )}
         </Card>
+      )}
+
+      {/* Drill-down: bir özet rakamının altındaki işlemler */}
+      {drill && (
+        <Modal title={drill.baslik} maxWidth={480} onClose={() => setDrill(null)}>
+          {!drill.kayitlar.length ? (
+            <Bos mesaj="Bu dönemde kayıt yok." icon="doc" />
+          ) : (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: V.ink3, marginBottom: 10 }}>
+                <span>{drill.kayitlar.length} işlem</span>
+                <span className="num">Toplam {TL(drill.kayitlar.reduce((s, k) => s + (+k.miktar || 0), 0))}</span>
+              </div>
+              <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+                {drill.kayitlar.map((k, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${V.line}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: V.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{k.baslik || "İşlem"}</div>
+                      <div style={{ fontSize: 11, color: V.ink3 }}>{k.tarih}{k.kategori ? " · " + k.kategori : ""}{k.beklenenMi ? " · beklenen" : ""}{k.kaynak === "maas" ? " · maaş" : ""}</div>
+                    </div>
+                    <div className="num" style={{ fontSize: 13, fontWeight: 600, color: drill.tip === "gelir" ? V.pos : V.neg, flexShrink: 0 }}>{drill.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Modal>
       )}
     </div>
   );
