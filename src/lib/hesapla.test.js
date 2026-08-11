@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { donemHesap, aylikHesap, oncekiAy, ayAraligi, aylikKarsilastir, kategoriDagilim } from "./hesapla.js";
+import { donemHesap, aylikHesap, oncekiAy, ayAraligi, aylikKarsilastir, kategoriDagilim, aylarGeri } from "./hesapla.js";
 
 // Ortak hesaplama katmanı — tüm ekranların TEK doğruluk kaynağı.
 // Kanon: giderToplam = giderKalem + aboneAylik*(dönemdeki ay sayısı).
@@ -80,6 +80,15 @@ describe("ay yardımcıları", () => {
   it("oncekiAy yıl sınırını aşar", () => {
     expect(oncekiAy("2026-08")).toBe("2026-07");
     expect(oncekiAy("2026-01")).toBe("2025-12");
+  });
+});
+
+describe("aylarGeri — son N ay (UTC kararlı, saat diliminden bağımsız)", () => {
+  it("verilen aydan geriye N ayı eskiden yeniye sıralı verir", () => {
+    expect(aylarGeri("2026-08", 6)).toEqual(["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]);
+  });
+  it("yıl sınırını doğru aşar", () => {
+    expect(aylarGeri("2026-02", 4)).toEqual(["2025-11", "2025-12", "2026-01", "2026-02"]);
   });
 });
 

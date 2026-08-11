@@ -67,6 +67,7 @@ function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
 export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelirEkle, onGiderEkle, onAbonelikEkle }) {
   const [filter, setFilter] = useState("tumu");
   const [q, setQ] = useState("");
+  const [kat, setKat] = useState(""); // kategori filtresi ("" = tümü)
 
   const hepsi = [
     ...(fd.gelirler || []).map((x) => ({ ...x, tip: "gelir" })),
@@ -75,10 +76,13 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
   ].sort((a, b) => String(b.tarih || "").localeCompare(String(a.tarih || "")));
 
   const hesapAdi = (id) => (findata.hesaplar || []).find((h) => String(h.id) === String(id))?.ad || "";
+  // Mevcut listedeki kategoriler (filtre açılır menüsü için)
+  const katSecenek = [...new Set(hepsi.map((t) => t.kategori).filter(Boolean))].sort((a, b) => a.localeCompare(b, "tr"));
 
   const aranan = q.trim().toLocaleLowerCase("tr");
   const liste = hepsi.filter((t) => {
     if (filter !== "tumu" && t.tip !== filter) return false;
+    if (kat && (t.kategori || "") !== kat) return false;
     if (!aranan) return true;
     const metin = `${t.baslik || ""} ${t.kategori || ""} ${hesapAdi(t.hesapId)}`.toLocaleLowerCase("tr");
     return metin.includes(aranan);
@@ -129,6 +133,17 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
             style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none", color: V.ink, fontSize: "13px", fontFamily: F }}
           />
         </div>
+        {katSecenek.length > 0 && (
+          <select
+            value={kat}
+            onChange={(e) => setKat(e.target.value)}
+            title="Kategoriye göre filtrele"
+            style={{ padding: "9px 11px", background: kat ? V.emerald : V.card2, color: kat ? "#F4F1E9" : V.ink2, border: `1px solid ${V.border}`, borderRadius: 11, fontSize: "13px", fontFamily: F, fontWeight: 600, cursor: "pointer", outline: "none", maxWidth: 170 }}
+          >
+            <option value="">Tüm kategoriler</option>
+            {katSecenek.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
         <div style={{ display: "flex", gap: "7px", flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={onGelirEkle} style={{ padding: "9px 13px" }}><Icon d="plus" size={15} /> Gelir</Btn>
           <Btn variant="ghost" onClick={onGiderEkle} style={{ padding: "9px 13px" }}><Icon d="plus" size={15} /> Gider</Btn>

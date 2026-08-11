@@ -13,12 +13,20 @@ import { Icon } from "../components/icons.jsx";
 // büyümez. Tutarlar diyagramda değil, alttaki legend'de (çakışmayı önler).
 function AkisDiyagram({ ozet }) {
   if (!ozet?.length) return null;
-  const kisalt = (s) => (s.length > 17 ? s.slice(0, 16) + "…" : s);
-  const sources = [...new Set(ozet.map((f) => f.fromAd))];
-  const targets = [...new Set(ozet.map((f) => f.toAd))];
-  const boxW = 150, boxH = 38, rowH = 54, W = 480;
+  const kisalt = (s) => (s.length > 16 ? s.slice(0, 15) + "…" : s);
+  // En büyük 10 akışı çiz (kalabalığı önle; tamamı alttaki listede zaten var).
+  const flows = [...ozet].sort((a, b) => b.toplam - a.toplam).slice(0, 10);
+  const kirpildi = ozet.length - flows.length;
+  const sources = [...new Set(flows.map((f) => f.fromAd))];
+  const srcIdx = Object.fromEntries(sources.map((s, i) => [s, i]));
+  // Hedefleri kaynak konumuna göre (baryzentr) sırala → çaprazlamaları azalt.
+  const targets = [...new Set(flows.map((f) => f.toAd))].sort((a, b) => {
+    const bary = (t) => { const r = flows.filter((f) => f.toAd === t); const w = r.reduce((s, f) => s + f.toplam, 0) || 1; return r.reduce((s, f) => s + srcIdx[f.fromAd] * f.toplam, 0) / w; };
+    return bary(a) - bary(b);
+  });
+  const boxW = 150, boxH = 40, rowH = 58, W = 480;
   const n = Math.max(sources.length, targets.length, 1);
-  const H = n * rowH + 8;
+  const H = n * rowH + 12;
   const leftX = 4, rightX = W - boxW - 4;
   const colY = (arr, name) => {
     const cnt = arr.length, i = arr.indexOf(name);
@@ -26,34 +34,40 @@ function AkisDiyagram({ ozet }) {
     const top = boxH / 2 + 6, bot = H - boxH / 2 - 6;
     return top + (bot - top) * (i / (cnt - 1));
   };
-  const maxAmt = Math.max(...ozet.map((f) => f.toplam), 1);
-  const sw = (amt) => 1.5 + (amt / maxAmt) * 7; // 1.5..8.5
+  const maxAmt = Math.max(...flows.map((f) => f.toplam), 1);
+  const sw = (amt) => 2 + (amt / maxAmt) * 9; // 2..11
   const dugum = (name, x, arr, key) => {
     const y = colY(arr, name);
     return (
       <g key={key}>
-        <rect x={x} y={y - boxH / 2} width={boxW} height={boxH} rx="9" fill={V.card2} stroke={V.border2} />
-        <text x={x + 12} y={y + 4} fontSize="11.5" fill={V.ink} fontWeight="600">{kisalt(name)}</text>
+        <rect x={x} y={y - boxH / 2} width={boxW} height={boxH} rx="10" fill={V.card2} stroke={V.border2} />
+        <text x={x + 12} y={y + 4.5} fontSize="12" fill={V.ink} fontWeight="600">{kisalt(name)}</text>
       </g>
     );
   };
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", marginBottom: 14, maxHeight: 260 }}>
-      <defs>
-        <marker id="akisOk" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" refX="7.5" refY="4.5" orient="auto">
-          <path d="M1,1 L8,4.5 L1,8 Z" fill={V.emerald2} />
-        </marker>
-      </defs>
-      {ozet.map((f, i) => {
-        const y1 = colY(sources, f.fromAd), y2 = colY(targets, f.toAd);
-        const x1 = leftX + boxW, x2 = rightX - 1, xm = (x1 + x2) / 2;
-        return (
-          <path key={i} d={`M${x1},${y1} C${xm},${y1} ${xm},${y2} ${x2 - 6},${y2}`} fill="none" stroke={V.emerald2} strokeOpacity="0.28" strokeWidth={sw(f.toplam)} strokeLinecap="round" markerEnd="url(#akisOk)" />
-        );
-      })}
-      {sources.map((s) => dugum(s, leftX, sources, "s" + s))}
-      {targets.map((t) => dugum(t, rightX, targets, "t" + t))}
-    </svg>
+    <div style={{ marginBottom: 14 }}>
+      {/* Yükseklik içeriğe göre büyür (eski maxHeight:260 kırpması düğümleri üst üste bindiriyordu) */}
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", height: "auto" }}>
+        <defs>
+          <marker id="akisOk" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" refX="7.5" refY="4.5" orient="auto">
+            <path d="M1,1 L8,4.5 L1,8 Z" fill={V.emerald2} />
+          </marker>
+        </defs>
+        {flows.map((f, i) => {
+          const y1 = colY(sources, f.fromAd), y2 = colY(targets, f.toAd);
+          const x1 = leftX + boxW, x2 = rightX - 1, xm = (x1 + x2) / 2;
+          return (
+            <path key={i} d={`M${x1},${y1} C${xm},${y1} ${xm},${y2} ${x2 - 6},${y2}`} fill="none" stroke={V.emerald2} strokeOpacity="0.3" strokeWidth={sw(f.toplam)} strokeLinecap="round" markerEnd="url(#akisOk)">
+              <title>{f.fromAd} → {f.toAd}: {TL(f.toplam)}</title>
+            </path>
+          );
+        })}
+        {sources.map((s) => dugum(s, leftX, sources, "s" + s))}
+        {targets.map((t) => dugum(t, rightX, targets, "t" + t))}
+      </svg>
+      {kirpildi > 0 && <p style={{ margin: "2px 0 0", fontSize: "11px", color: V.ink3, textAlign: "center" }}>+{kirpildi} akış daha (aşağıdaki listede)</p>}
+    </div>
   );
 }
 

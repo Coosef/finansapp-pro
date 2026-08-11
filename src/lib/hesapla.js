@@ -71,6 +71,20 @@ export function oncekiAy(ay) {
   return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
 }
 
+// sonAy'dan geriye N ayı eskiden yeniye ("YYYY-MM"[]). UTC kararlı — yerel
+// new Date(y,m,1).toISOString() saat diliminde (UTC+3) ayı kaydırır; bunu kullanma.
+export function aylarGeri(sonAy, n) {
+  const out = [];
+  let ay = sonAy;
+  for (let i = 0; i < n; i++) { out.unshift(ay); ay = oncekiAy(ay); }
+  return out;
+}
+
+// Yerel takvim ayını "YYYY-MM" olarak (toISOString KULLANMADAN → TZ kaymaz).
+export function buAyYerel(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 // Belirli bir ayın özeti (abone ×1). Karne/maaş durumu/MoM için.
 export function aylikHesap(findata, ay) {
   return araliktanOzet(findata, ayAraligi(ay), "ay");

@@ -5,16 +5,16 @@
 // ============================================================
 import { useRef, useState } from "react";
 import { V, PALET, GIDER_KAT, AY_ADI } from "../lib/constants.js";
-import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64, tarihNormalize } from "../lib/format.js";
+import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64, tarihNormalize, sayiCevir } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
-import { yaklasanOdemeler, etkinButce, panelBrifing, donemAraligi, donemde, kartOdemeler, butceOnerisi } from "../lib/finance.js";
+import { yaklasanOdemeler, etkinButce, panelBrifing, donemAraligi, donemde, kartOdemeler, butceOnerisi, giderKategorileri } from "../lib/finance.js";
 import { donemHesap, aylikKarsilastir } from "../lib/hesapla.js";
 import { maasDurumu } from "../lib/maas.js";
 import { faturaKategori } from "../lib/fatura.js";
 import { taksitPlanlari, aylikTaksitYuku, kalanTaksitBorcu } from "../lib/taksit.js";
 import { nakitAkisProjeksiyon } from "../lib/nakitakis.js";
 import { sessizZamlar } from "../lib/anomali.js";
-import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para, Modal } from "../components/ui.jsx";
+import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para, Modal, Field } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
 function aiHata(e) {
@@ -33,6 +33,7 @@ export function Panel({
   const [metin, setMetin] = useState("");
   const [bekle, setBekle] = useState(false);
   const [fisOku, setFisOku] = useState(false);
+  const [fisOnay, setFisOnay] = useState(null); // fiş önizleme/onay modalı
   const fisRef = useRef(null);
 
   // Hızlı eklenen kayıt seçili dönemin DIŞINDA kalırsa (ör. geçmiş tarihli fiş)
@@ -87,15 +88,27 @@ export function Panel({
       const kategori = faturaKategori(adi) || j.kategori || "Market";
       const miktar = Math.abs(parseFloat(j.toplam) || 0);
       const tarih = tarihNormalize(j.tarih, bugun());
-      onHizliEkle("gider", { baslik: adi, miktar, kategori, tarih, hesapId: "" });
-      kategoriOgren(adi, kategori);
-      bildir(`Fişten gider eklendi: ${adi} ${TL(miktar)}${donemNotu(tarih)}`);
+      // Doğrudan eklemek yerine ÖNİZLEME/ONAY: kullanıcı tutar/tarih/kategoriyi
+      // görüp düzeltebilsin (yanlış tarih → "eklendi ama görünmüyor"u önler).
+      setFisOnay({ baslik: adi, miktar: String(miktar), kategori, tarih });
     } catch (err) {
       bildir(aiHata(err) || "Fiş okunamadı", "err");
     } finally {
       setFisOku(false);
       if (fisRef.current) fisRef.current.value = "";
     }
+  }
+
+  // Fiş önizlemesini onayla → gider olarak ekle
+  function fisOnayla() {
+    const miktar = Math.abs(sayiCevir(fisOnay.miktar));
+    if (!String(fisOnay.baslik).trim() || !miktar) { bildir("Başlık ve tutar gerekli", "err"); return; }
+    const tarih = tarihNormalize(fisOnay.tarih, bugun());
+    const kategori = fisOnay.kategori || "Market";
+    onHizliEkle("gider", { baslik: fisOnay.baslik.trim(), miktar, kategori, tarih, hesapId: "" });
+    kategoriOgren(fisOnay.baslik, kategori);
+    bildir(`Gider eklendi: ${fisOnay.baslik.trim()} ${TL(miktar)}${donemNotu(tarih)}`);
+    setFisOnay(null);
   }
 
   // ---- Özet figürleri — TEK doğruluk kaynağı (hesapla.js) ----
@@ -541,6 +554,23 @@ export function Panel({
               </div>
             </div>
           )}
+        </Modal>
+      )}
+
+      {/* Fiş önizleme/onay — eklemeden önce tutar/tarih/kategoriyi düzelt */}
+      {fisOnay && (
+        <Modal title="Fişi Onayla" maxWidth={400} onClose={() => setFisOnay(null)}>
+          <p style={{ margin: "0 0 14px", fontSize: 12.5, color: V.ink3, lineHeight: 1.5 }}>Fiş okundu. Eklemeden önce kontrol et — özellikle <b style={{ color: V.ink2 }}>tarih</b> doğru mu?</p>
+          <Field label="Başlık / Mağaza" value={fisOnay.baslik} onChange={(v) => setFisOnay((f) => ({ ...f, baslik: v }))} placeholder="Örn: Migros" />
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}><Field label="Tutar (₺)" value={fisOnay.miktar} onChange={(v) => setFisOnay((f) => ({ ...f, miktar: v }))} mono /></div>
+            <div style={{ flex: 1 }}><Field label="Tarih" type="date" value={fisOnay.tarih} onChange={(v) => setFisOnay((f) => ({ ...f, tarih: v }))} /></div>
+          </div>
+          <Field label="Kategori" value={fisOnay.kategori} onChange={(v) => setFisOnay((f) => ({ ...f, kategori: v }))} options={giderKategorileri(findata)} />
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <Btn variant="ghost" onClick={() => setFisOnay(null)} style={{ padding: 13 }}>İptal</Btn>
+            <Btn variant="primary" onClick={fisOnayla} style={{ flex: 1, padding: 13 }}>Gider Olarak Ekle</Btn>
+          </div>
         </Modal>
       )}
     </div>

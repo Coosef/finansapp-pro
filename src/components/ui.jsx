@@ -128,6 +128,39 @@ export function Modal({ title, onClose, children, maxWidth = 420 }) {
   );
 }
 
+// Bir özet rakamının altındaki işlemleri gösteren ortak drill-down modalı.
+// Panel ve Analiz aynı bileşeni kullanır → "rakama tıkla, neye harcadığını gör".
+export function DrilldownModal({ baslik, kayitlar, tip = "gider", onClose }) {
+  const list = [...(kayitlar || [])].sort((a, b) => String(b.tarih || "").localeCompare(String(a.tarih || "")));
+  const toplam = list.reduce((s, k) => s + (+k.miktar || 0), 0);
+  const isoKisa = (iso) => { const p = String(iso || "").split("-"); return p.length === 3 ? `${+p[2]}.${p[1]}.${p[0]}` : String(iso || ""); };
+  return (
+    <Modal title={baslik} maxWidth={480} onClose={onClose}>
+      {!list.length ? (
+        <Bos mesaj="Bu dönemde kayıt yok." icon="doc" />
+      ) : (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: V.ink3, marginBottom: 10 }}>
+            <span>{list.length} işlem</span>
+            <span className="num" style={{ fontFamily: MONO, color: tip === "gelir" ? V.pos : V.neg, fontWeight: 600 }}>Toplam {tip === "gelir" ? "+" : "−"}{TL(toplam)}</span>
+          </div>
+          <div style={{ maxHeight: "56vh", overflowY: "auto" }}>
+            {list.map((k, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: i < list.length - 1 ? `1px solid ${V.line}` : "none" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: V.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{k.baslik || "İşlem"}</div>
+                  <div style={{ fontSize: 11, color: V.ink3 }}>{isoKisa(k.tarih)}{k.kategori ? " · " + k.kategori : ""}{k.beklenenMi ? " · beklenen" : ""}{k.kaynak === "maas" ? " · maaş" : k.kaynak === "ekstre" ? " · ekstre" : ""}</div>
+                </div>
+                <div className="num" style={{ fontSize: 13, fontWeight: 600, fontFamily: MONO, color: tip === "gelir" ? V.pos : V.neg, flexShrink: 0 }}>{tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export function ProgressBar({ value, max, color, height = 8 }) {
   const pct = Math.min(100, Math.max(0, (value / (max || 1)) * 100));
   const renk = color || (pct >= 100 ? V.neg : pct >= 85 ? V.accent : V.pos);
