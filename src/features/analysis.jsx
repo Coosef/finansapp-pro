@@ -4,11 +4,12 @@
 // ============================================================
 import { useState } from "react";
 import { V, SERIF, PALET, AY_ADI } from "../lib/constants.js";
-import { TL } from "../lib/format.js";
+import { TL, bugun } from "../lib/format.js";
 import { Card, Btn, Seg, ProgressBar, Bos } from "../components/ui.jsx";
 import { BarChart } from "../components/charts.jsx";
 import { Gorseller } from "./visuals.jsx";
 import { yillikOzet, etkinButce } from "../lib/finance.js";
+import { donemHesap } from "../lib/hesapla.js";
 
 const pageTitle = { margin: "0 0 1.1rem", fontSize: "1.3rem", fontWeight: 600, fontFamily: SERIF, color: V.ink };
 const cardTitle = { margin: 0, fontSize: "16px", fontWeight: 600, color: V.ink, fontFamily: SERIF };
@@ -46,7 +47,7 @@ export function Analiz({ findata, fd, donem, donemAdi, toplamGelir }) {
           ]}
         />
       </div>
-      {alt === "genel" && <Genel findata={findata} fd={fd} donemAdi={donemAdi} />}
+      {alt === "genel" && <Genel findata={findata} fd={fd} donem={donem} donemAdi={donemAdi} />}
       {alt === "karsilastir" && <Karsilastir findata={findata} />}
       {alt === "yillik" && <YillikOzet findata={findata} />}
       {alt === "gorsel" && <Gorseller findata={findata} toplamGelir={toplamGelir} />}
@@ -57,12 +58,14 @@ export function Analiz({ findata, fd, donem, donemAdi, toplamGelir }) {
 // ============================================================
 // GENEL: Kategori bazlı harcama + Gelir/Gider trendi + Akıllı İçgörüler
 // ============================================================
-function Genel({ findata, fd, donemAdi }) {
+function Genel({ findata, fd, donem, donemAdi }) {
   // (1) Kategori bazlı harcama (dönem filtreli)
   const katMap = {};
   (fd.giderler || []).forEach((g) => { katMap[g.kategori] = (katMap[g.kategori] || 0) + (g.miktar || 0); });
   const katlar = Object.entries(katMap).sort((a, b) => b[1] - a[1]);
   const maxKat = katlar.length ? katlar[0][1] : 1;
+  // Panel ile AYNI hesaplama: tasarruf/gider abonelik dahil, tek doğruluk kaynağı
+  const oz = donemHesap(findata, donem || "buAy", bugun());
 
   // (2) Son 6 ay gelir/gider (tüm veriden)
   const aylar6 = [];
@@ -77,7 +80,7 @@ function Genel({ findata, fd, donemAdi }) {
   }
   const max6 = Math.max(...aylar6.flatMap((m) => [m.gelir, m.gider]), 1);
 
-  const insights = icgoruler(findata, fd, katlar);
+  const insights = icgoruler(findata, fd, katlar, oz);
 
   return (
     <div>
@@ -140,24 +143,26 @@ function Genel({ findata, fd, donemAdi }) {
 }
 
 // İçgörü hesaplama — React span dizileri döner (dangerouslySetInnerHTML YOK)
-function icgoruler(findata, fd, katlar) {
+function icgoruler(findata, fd, katlar, oz) {
   const out = [];
   const vurgu = (txt) => <strong style={{ color: V.cream, fontWeight: 600 }}>{txt}</strong>;
   const altin = (txt) => <strong style={{ color: V.accent, fontWeight: 600 }}>{txt}</strong>;
 
-  const gelir = (fd.gelirler || []).reduce((s, g) => s + (g.miktar || 0), 0);
-  const gider = (fd.giderler || []).reduce((s, g) => s + (g.miktar || 0), 0);
+  // Panel ile tutarlı: gelir + giderToplam (abonelik dahil) tek doğruluk kaynağından
+  const gelir = oz ? oz.gelir : (fd.gelirler || []).reduce((s, g) => s + (g.miktar || 0), 0);
+  const giderKalem = oz ? oz.giderKalem : (fd.giderler || []).reduce((s, g) => s + (g.miktar || 0), 0);
+  const giderToplam = oz ? oz.giderToplam : giderKalem;
 
-  // 1) En yüksek harcama kategorisi
+  // 1) En yüksek harcama kategorisi (kategori payı kalem gidere göre)
   if (katlar.length) {
     const [ad, amt] = katlar[0];
-    const pay = gider > 0 ? (amt / gider) * 100 : 0;
+    const pay = giderKalem > 0 ? (amt / giderKalem) * 100 : 0;
     out.push(<>En çok harcama {vurgu(ad)} kategorisinde: {altin(TL(amt))} (giderin %{pay.toFixed(0)}'i).</>);
   }
 
-  // 2) Tasarruf oranı (net / gelir)
+  // 2) Tasarruf oranı (net / gelir) — abonelik dahil giderToplam ile
   if (gelir > 0) {
-    const net = gelir - gider;
+    const net = gelir - giderToplam;
     const oran = (net / gelir) * 100;
     out.push(
       <>

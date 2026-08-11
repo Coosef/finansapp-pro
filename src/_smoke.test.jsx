@@ -34,6 +34,8 @@ async function load() {
   fd.abonelikler = [{ id: 3, baslik: "Spotify", miktar: 60, kategori: "Eğlence", tarih: "2026-06-05" }];
   fd.yatirimlar = [{ id: 4, tip: "kripto", ad: "Bitcoin", sembol: "BTC", adet: 0.5, alisFiyati: 97000, guncelFiyat: 114000, gecmis: [{ tarih: "2026-06-01", deger: 48500 }] }];
   fd.hesaplar = [{ id: 9, ad: "Garanti", tip: "banka", bakiye: 25000 }, { id: 10, ad: "Kart", tip: "kart", bakiye: 4000 }];
+  fd.maaslar = [{ id: "m1", ad: "Ana Maaş", tutar: 58000, hesapId: 9, odemeGunu: 1, kategori: "Maaş", baslangic: "2026-06", aktif: true }];
+  fd.maasAyarlari = [{ id: "a1", maasId: "m1", ay: "2026-06", override: null, ekOdeme: 5000, ekEtiket: "Prim", gerceklesen: 63000 }];
   fd.hedefler = [{ id: 5, ad: "Tatil", tip: "birikim", hedefTutar: 80000, mevcutTutar: 38000, aylikKatki: 5000, otomatikKatki: true, sonKatki: "2026-06" }];
   fd.butceler = { Market: 9000 };
   fd.kurlar = { usd: 32, eur: 35 };
