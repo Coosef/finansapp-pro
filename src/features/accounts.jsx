@@ -126,6 +126,12 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   const akis = transferleriEslestir(findata); // hesaplar arası transfer korelasyonu
   const [acikYol, setAcikYol] = useState(null); // akış listesinde açık hesap-çifti
   const [kisiDuzenle, setKisiDuzenle] = useState(null); // hane kişisi ekle/düzenle modalı
+  const [kisiAkis, setKisiAkis] = useState(null); // bir kişinin para akışı detayı modalı
+  function kisiAkisAc(k) {
+    const legler = (findata.transferAkis || []).filter((l) => String(l.kisiId) === String(k.id))
+      .slice().sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)));
+    setKisiAkis({ ad: k.ad, legler });
+  }
 
   // ---- Hane kişileri (karşı hesaplar) ----
   const kisiler = findata.kisiler || [];
@@ -279,6 +285,36 @@ export function Hesaplar({ findata, setFindata, bildir }) {
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* Hane Hesapları — kişi bazlı akış, hesap kartı gibi (tıkla → hareketler) */}
+      {kisiler.filter((k) => k.hane).length > 0 && (
+        <div style={{ marginTop: "14px" }}>
+          <h3 style={{ margin: "0 0 0.6rem", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Hane Hesapları</h3>
+          <div className="fa-grid-2" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "14px" }}>
+            {kisiler.filter((k) => k.hane).map((k) => {
+              const f = kisiFlow[k.id] || { gonderilen: 0, gelen: 0, adet: 0 };
+              const net = f.gelen - f.gonderilen; // + sana net gelmiş, − sen net göndermişsin
+              return (
+                <Card key={k.id} onClick={() => kisiAkisAc(k)} style={{ display: "flex", alignItems: "center", gap: "15px", cursor: "pointer" }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--accent) 14%, transparent)", color: "var(--accent)" }}>
+                    <Icon d="users" size={20} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "14px", fontWeight: 600, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.ad}</div>
+                    <div style={{ fontSize: "11.5px", color: V.ink3 }}>
+                      {f.adet > 0 ? <>↑{TL(f.gonderilen)} · ↓{TL(f.gelen)} · {f.adet} hareket</> : "Henüz hareket yok"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div className="num" style={{ fontSize: "15px", fontWeight: 600, color: net >= 0 ? V.pos : V.neg, fontFamily: MONO, whiteSpace: "nowrap" }}>{net >= 0 ? "+" : "−"}{TL(Math.abs(net))}</div>
+                    <div style={{ fontSize: "10px", color: V.ink3 }}>{net >= 0 ? "net gelen" : "net gönderilen"}</div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -445,6 +481,30 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           onKaydet={modalKaydet}
           onClose={() => setDuzenle(null)}
         />
+      )}
+
+      {/* Bir kişinin para akışı (hareket listesi) */}
+      {kisiAkis && (
+        <Modal title={`${kisiAkis.ad} — Para Akışı`} onClose={() => setKisiAkis(null)} maxWidth={460}>
+          {!kisiAkis.legler.length ? (
+            <Bos mesaj="Bu kişiyle henüz hareket yok. Ekstre yükleyince ya da 'Yeniden sınıfla' ile burada görünür." icon="repeat" />
+          ) : (
+            <div style={{ maxHeight: "56vh", overflowY: "auto" }}>
+              {kisiAkis.legler.map((l, i) => {
+                const cikis = (+l.miktar || 0) < 0;
+                return (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: i < kisiAkis.legler.length - 1 ? `1px solid ${V.line}` : "none" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: V.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cikis ? "Gönderdin" : "Sana geldi"}{l.aciklama ? ` · ${l.aciklama}` : ""}</div>
+                      <div style={{ fontSize: 11, color: V.ink3 }}>{l.tarih}</div>
+                    </div>
+                    <div className="num" style={{ fontSize: 13.5, fontWeight: 600, fontFamily: MONO, color: cikis ? V.neg : V.pos, flexShrink: 0 }}>{cikis ? "−" : "+"}{TL(Math.abs(+l.miktar || 0))}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Modal>
       )}
 
       {/* Hane kişisi ekle/düzenle modalı */}
