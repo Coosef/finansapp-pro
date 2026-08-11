@@ -2,7 +2,7 @@
 // SVG tabanlı grafikler (harici kütüphane yok) — Zümrüt & Altın
 // Tüm renkler V belirteçleri / PALET üzerinden temalanır (açık/koyu)
 // ============================================================
-import { V, F, AY_ADI, VARLIK_TIPLERI } from "../lib/constants.js";
+import { V, F, AY_ADI, VARLIK_TIPLERI, PALET } from "../lib/constants.js";
 import { TL } from "../lib/format.js";
 import { ProgressBar, Btn } from "./ui.jsx";
 import { useState } from "react";
@@ -87,42 +87,51 @@ export function DonutDagilim({ yatirimlar, guncelDeger }) {
 }
 
 export function Sankey({ gelir, kalemler }) {
-  const W = 560,
-    pad = 10;
-  const sayi = kalemler.length || 1;
-  const H = Math.max(220, sayi * 42 + 30);
-  const toplamSag = kalemler.reduce((s, k) => s + k.deger, 0) || 1;
-  const taban = Math.max(gelir, toplamSag);
-  const olcek = (H - pad * 2) / taban;
-  const solH = gelir * olcek;
-  let sagY = pad;
-  const nodes = kalemler.map((k) => {
-    const h = Math.max(2, k.deger * olcek);
-    const o = { ...k, y: sagY, h };
-    sagY += h + 4;
+  // En büyük 7 kalem + "Diğer" — tek dev blok / kalabalık yerine dengeli.
+  const sirali = [...kalemler].sort((a, b) => b.deger - a.deger);
+  const nodes = sirali.slice(0, 7).map((k) => ({ ...k }));
+  const kuyruk = sirali.slice(7);
+  if (kuyruk.length) nodes.push({ ad: "Diğer", deger: kuyruk.reduce((s, k) => s + k.deger, 0), renk: PALET[7 % PALET.length] });
+  const totalRight = nodes.reduce((s, n) => s + n.deger, 0) || 1;
+  const pctOf = gelir > 0 ? gelir : totalRight;
+
+  // Sabit koordinat sistemi; YÜKSEKLİK KAPALI (ekranı doldurmasın). Üstte
+  // "Gelir" etiketi için ayrı satır (topPad) → kırpılmaz.
+  const W = 1000, pad = 8, gap = 6, topPad = 22;
+  const bodyH = Math.min(320, Math.max(150, nodes.length * 40 + 20));
+  const H = bodyH + topPad;
+  const drawH = bodyH - pad * 2 - gap * Math.max(0, nodes.length - 1);
+  const olcek = drawH / totalRight;
+  const barW = 15, leftX = 34, x1 = leftX + barW, x2 = W - 250;
+
+  let y = topPad + pad;
+  const drawn = nodes.map((n) => {
+    const h = Math.max(4, n.deger * olcek);
+    const o = { ...n, y, h };
+    y += h + gap;
     return o;
   });
-  const x1 = 56,
-    x2 = W - 72;
-  let linkSolY = pad;
+  const solTop = topPad + pad, solBot = y - gap, solH = solBot - solTop;
+  let linkSolY = solTop;
+  const cx = (x1 + x2) / 2;
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H + 20}`} style={{ display: "block" }} fontFamily={F}>
-      <rect x={40} y={pad} width={14} height={solH} rx={3} fill={V.emerald2} />
-      {nodes.map((n, i) => {
-        const h = Math.max(2, n.deger * olcek);
-        const sy = linkSolY + h / 2;
-        linkSolY += h;
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block" }} fontFamily={F}>
+      {/* Gelir (sol) */}
+      <text x={leftX} y={14} fill={V.emerald2} fontSize="13" fontWeight="700">Gelir · {TL(gelir)}</text>
+      <rect x={leftX} y={solTop} width={barW} height={solH} rx={4} fill={V.emerald2} />
+      {/* Akış bağlantıları */}
+      {drawn.map((n, i) => {
+        const sy = linkSolY + n.h / 2; linkSolY += n.h;
         const ty = n.y + n.h / 2;
-        const cx = (x1 + x2) / 2;
-        return <path key={i} d={`M${x1},${sy} C${cx},${sy} ${cx},${ty} ${x2},${ty}`} stroke={n.renk} strokeWidth={Math.max(1.5, n.h)} fill="none" opacity={0.32} />;
+        return <path key={"l" + i} d={`M${x1},${sy} C${cx},${sy} ${cx},${ty} ${x2},${ty}`} stroke={n.renk} strokeWidth={Math.max(2, n.h)} fill="none" opacity={0.34} />;
       })}
-      {nodes.map((n, i) => (
+      {/* Kategori düğümleri (sağ) + etiket (ad · tutar · %) */}
+      {drawn.map((n, i) => (
         <g key={"n" + i}>
-          <rect x={x2} y={n.y} width={14} height={n.h} rx={3} fill={n.renk} />
-          <text x={x2 + 20} y={n.y + n.h / 2 + 4} fill={V.ink2} fontSize="11">{n.ad} · {TL(n.deger)}</text>
+          <rect x={x2} y={n.y} width={barW} height={n.h} rx={4} fill={n.renk} />
+          <text x={x2 + barW + 9} y={n.y + n.h / 2 + 4} fill={V.ink2} fontSize="12.5">{n.ad} · {TL(n.deger)} · %{Math.round((n.deger / pctOf) * 100)}</text>
         </g>
       ))}
-      <text x={40} y={pad + solH + 15} fill={V.emerald2} fontSize="11" fontWeight="600">Gelir {TL(gelir)}</text>
     </svg>
   );
 }
