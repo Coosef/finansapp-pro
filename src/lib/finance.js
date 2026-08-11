@@ -345,6 +345,8 @@ export const bosVeri = () => ({
   kategoriler: { gider: [...GIDER_KAT], gelir: [...GELIR_KAT] },
   hedefler: [],
   sablonlar: [],
+  maaslar: [], // birinci-sınıf maaş tanımları (bkz. lib/maas.js)
+  maasAyarlari: [], // aylık ek ödeme/override/gerçekleşen kayıtları
   hedefDagilim: {},
   ayarlar: { enflasyon: 50, pin: null, tema: "acik", accent: "#C79A4B", kuruldu: false, apiKey: "", aiSaglayici: "anthropic", yerelAdres: "", yerelModel: "", butceDevri: false, bildirimler: false, bildirimGun: 3, paraBirimi: "TRY", sonBildirim: "" },
   kategoriHafiza: {},
@@ -400,6 +402,7 @@ export function tekrarlariUret(data) {
     sablonlar: [...(data.sablonlar || [])],
   };
   yeni.sablonlar = yeni.sablonlar.map((s) => {
+    if (s.pasif) return s; // maaşa dönüştürülmüş şablon → maas.js üretir, burada üretme
     let cursor = s.sonUretilen ? sonrakiTarih(s.sonUretilen, s.frekans) : s.baslangic;
     let guard = 0,
       son = s.sonUretilen;

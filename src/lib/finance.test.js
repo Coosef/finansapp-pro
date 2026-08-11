@@ -108,6 +108,12 @@ describe("tekrarlariUret", () => {
     // sonUretilen bugünden ileri olmamalı
     expect(data.sablonlar[0].sonUretilen <= new Date().toISOString().split("T")[0]).toBe(true);
   });
+  it("pasif şablon kayıt üretmez (maaşa dönüştürülmüş)", () => {
+    const d = { ...bosVeri(), sablonlar: [{ id: 1, tip: "gelir", baslik: "Maaş", miktar: 5000, kategori: "Maaş", frekans: "aylık", baslangic: "2020-01-01", sonUretilen: null, pasif: true }] };
+    const { data, degisti } = tekrarlariUret(d);
+    expect(degisti).toBe(false);
+    expect(data.gelirler.length).toBe(0);
+  });
 });
 
 describe("rozetleriHesapla", () => {

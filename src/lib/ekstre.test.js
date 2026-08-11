@@ -21,6 +21,30 @@ describe("ekstreDogrula — bakiye zinciri", () => {
     expect(d.bakiyeTutarli).toBe(false);
     expect(d.tamam).toBe(false);
   });
+  it("hiç işlem okunamadıysa sessizce 'tamam' demez", () => {
+    // Axess gibi bozuk-font PDF'lerde 0 işlem çıkar; bunu başarı sayma.
+    const d = ekstreDogrula({}, []);
+    expect(d.tamam).toBe(false);
+    expect(d.islemSayisi).toBe(0);
+    expect(d.uyarilar.length).toBeGreaterThan(0);
+  });
+});
+
+describe("siniflandir (ekstreParse üzerinden) — transfer/EFT düzeltmeleri", () => {
+  const hesapRows = (aciklama, tutar) => [
+    ["Ad Soyad", "Ahmet Yılmaz"],
+    ["Tarih", "Açıklama", "Tutar", "Bakiye"],
+    ["05.08.2026", aciklama, tutar, "10.000,00"],
+  ];
+  it("EFT/transfer ile kredi kartı ödemesi → odeme (gider değil)", () => {
+    const { islemler } = ekstreParse(hesapRows("Giden Transfer Kredi kartı EFT", "-5.000,00"));
+    expect(islemler[0].tip).toBe("odeme");
+  });
+  it("kira amaçlı giden transfer → gider + Kira kategorisi (Gönderim değil)", () => {
+    const { islemler } = ekstreParse(hesapRows("Giden Transfer Ev kirası", "-8.000,00"));
+    expect(islemler[0].tip).toBe("gider");
+    expect(islemler[0].kategori).toBe("Kira");
+  });
 });
 
 describe("hesapBul — farklı son4 birleşmez", () => {

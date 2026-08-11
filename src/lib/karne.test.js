@@ -32,6 +32,12 @@ describe("aylikKarne", () => {
     expect(k2.tasarrufOrani).toBe(null);
     expect(k2.not).toBe("—");
   });
+  it("aboneliği aylık gidere dahil eder (Panel ile tutarlı)", () => {
+    const d = { gelirler: [{ miktar: 10000, tarih: "2026-08-03", kategori: "Maaş" }], giderler: [{ miktar: 3000, tarih: "2026-08-05", kategori: "Market" }], abonelikler: [{ miktar: 200, tarih: "2026-08-01" }] };
+    const k = aylikKarne(d, "2026-08");
+    expect(k.toplamGider).toBe(3200);
+    expect(k.net).toBe(6800);
+  });
 });
 
 describe("runwayAy", () => {
