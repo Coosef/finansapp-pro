@@ -5,9 +5,9 @@
 // ============================================================
 import { useRef, useState } from "react";
 import { V, PALET, GIDER_KAT, AY_ADI } from "../lib/constants.js";
-import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64 } from "../lib/format.js";
+import { TL, bugun, buAy, kategoriAnahtar, parseJSON, fileToBase64, tarihNormalize } from "../lib/format.js";
 import { claudeCall, aiHazir } from "../lib/ai.js";
-import { yaklasanOdemeler, etkinButce, panelBrifing, donemAraligi, kartOdemeler, butceOnerisi } from "../lib/finance.js";
+import { yaklasanOdemeler, etkinButce, panelBrifing, donemAraligi, donemde, kartOdemeler, butceOnerisi } from "../lib/finance.js";
 import { donemHesap, aylikKarsilastir } from "../lib/hesapla.js";
 import { maasDurumu } from "../lib/maas.js";
 import { faturaKategori } from "../lib/fatura.js";
@@ -35,6 +35,11 @@ export function Panel({
   const [fisOku, setFisOku] = useState(false);
   const fisRef = useRef(null);
 
+  // Hızlı eklenen kayıt seçili dönemin DIŞINDA kalırsa (ör. geçmiş tarihli fiş)
+  // kullanıcıya nerede görüneceğini söyle — "eklendi ama görünmüyor" şaşkınlığını önler.
+  const donemNotu = (tarih) =>
+    donemde(tarih, donemAraligi(donem, bugun())) ? "" : ` · ${tarih} tarihli, "${donemAdi || "seçili dönem"}" dışında — görmek için üstten dönemi "Tümü" yap`;
+
   // ---- Hızlı Ekle: doğal dil ----
   async function isle() {
     if (!metin.trim() || bekle) return;
@@ -48,9 +53,11 @@ export function Panel({
       const k = kategoriAnahtar(j.baslik);
       const hatirla = (findata.kategoriHafiza || {})[k];
       const kategori = hatirla || j.kategori || (tip === "gelir" ? "Ek Gelir" : "Diğer");
-      onHizliEkle(tip, { baslik: j.baslik, miktar: Math.abs(parseFloat(j.miktar) || 0), kategori, tarih: j.tarih || bugun(), hesapId: "" });
+      const tarih = tarihNormalize(j.tarih, bugun());
+      const miktar = Math.abs(parseFloat(j.miktar) || 0);
+      onHizliEkle(tip, { baslik: j.baslik, miktar, kategori, tarih, hesapId: "" });
       kategoriOgren(j.baslik, kategori);
-      bildir(`${tip === "gelir" ? "Gelir" : "Gider"} eklendi: ${j.baslik} ${TL(j.miktar)}`);
+      bildir(`${tip === "gelir" ? "Gelir" : "Gider"} eklendi: ${j.baslik} ${TL(miktar)}${donemNotu(tarih)}`);
       setMetin("");
     } catch (e) {
       bildir(aiHata(e) || "Anlaşılamadı, tekrar dener misin?", "err");
@@ -79,9 +86,10 @@ export function Panel({
       const adi = j.magaza || "Fiş";
       const kategori = faturaKategori(adi) || j.kategori || "Market";
       const miktar = Math.abs(parseFloat(j.toplam) || 0);
-      onHizliEkle("gider", { baslik: adi, miktar, kategori, tarih: j.tarih || bugun(), hesapId: "" });
+      const tarih = tarihNormalize(j.tarih, bugun());
+      onHizliEkle("gider", { baslik: adi, miktar, kategori, tarih, hesapId: "" });
       kategoriOgren(adi, kategori);
-      bildir(`Fişten gider eklendi: ${adi} ${TL(miktar)}`);
+      bildir(`Fişten gider eklendi: ${adi} ${TL(miktar)}${donemNotu(tarih)}`);
     } catch (err) {
       bildir(aiHata(err) || "Fiş okunamadı", "err");
     } finally {

@@ -24,6 +24,30 @@ export function sonrakiTarih(dateStr, frekans) {
   return d.toISOString().split("T")[0];
 }
 
+// AI/fiş yanıtındaki tarihi güvenli ISO "YYYY-MM-DD"ye çevir. ISO, DD.MM.YYYY,
+// DD/MM/YY biçimlerini kabul eder; çözülemez/geçersiz takvim günü → fallback (bugün).
+// Neden: dashboard hızlı-fiş akışında bozuk tarih, dönem filtresini kırıp işlemi
+// "eklendi ama görünmüyor" hâline getiriyordu.
+export function tarihNormalize(raw, fallback = bugun()) {
+  const s = String(raw ?? "").trim();
+  if (!s) return fallback;
+  let y, mo, d;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); // ISO
+  if (m) { [, y, mo, d] = m; }
+  else {
+    m = s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/); // DD.MM.YYYY / DD/MM/YY
+    if (!m) return fallback;
+    [, d, mo, y] = m;
+    if (y.length === 2) y = "20" + y;
+  }
+  y = +y; mo = +mo; d = +d;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1970 || y > 3000) return fallback;
+  const iso = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const dt = new Date(iso + "T00:00:00Z"); // gerçek takvim günü mü (31 Şubat'ı reddet)
+  if (isNaN(+dt) || dt.getUTCMonth() + 1 !== mo || dt.getUTCDate() !== d) return fallback;
+  return iso;
+}
+
 export function aylikEsdeger(miktar, frekans) {
   return frekans === "haftalık" ? miktar * 4.33 : frekans === "yıllık" ? miktar / 12 : miktar;
 }

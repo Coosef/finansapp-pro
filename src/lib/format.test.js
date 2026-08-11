@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TL, TL2, bugun, buAy, sonrakiTarih, aylikEsdeger, kategoriAnahtar, sayiCikar, sayiCevir, parseJSON } from "./format.js";
+import { TL, TL2, bugun, buAy, sonrakiTarih, aylikEsdeger, kategoriAnahtar, sayiCikar, sayiCevir, parseJSON, tarihNormalize } from "./format.js";
 
 describe("para biçimleme", () => {
   it("TL binlik ayracı ve ₺ içerir, ondalık yok", () => {
@@ -32,6 +32,36 @@ describe("tarih yardımcıları", () => {
   });
   it("sonrakiTarih yıllık", () => {
     expect(sonrakiTarih("2026-01-15", "yıllık")).toBe("2027-01-15");
+  });
+});
+
+describe("tarihNormalize (AI/fiş tarihini güvenli ISO'ya çevir)", () => {
+  const bugunSabit = "2026-08-11";
+  it("geçerli ISO'yu aynen döndürür", () => {
+    expect(tarihNormalize("2026-06-05", bugunSabit)).toBe("2026-06-05");
+  });
+  it("ISO'da tek haneli ay/günü sıfırla doldurur", () => {
+    expect(tarihNormalize("2026-6-5", bugunSabit)).toBe("2026-06-05");
+  });
+  it("ISO'daki saat ekini kırpar", () => {
+    expect(tarihNormalize("2026-06-05T14:30:00", bugunSabit)).toBe("2026-06-05");
+  });
+  it("DD.MM.YYYY biçimini ISO'ya çevirir", () => {
+    expect(tarihNormalize("05.06.2026", bugunSabit)).toBe("2026-06-05");
+  });
+  it("DD/MM/YY (iki haneli yıl) → 20YY", () => {
+    expect(tarihNormalize("05/06/26", bugunSabit)).toBe("2026-06-05");
+  });
+  it("çözülemeyen/boş metinde bugüne düşer", () => {
+    expect(tarihNormalize("dün", bugunSabit)).toBe(bugunSabit);
+    expect(tarihNormalize("", bugunSabit)).toBe(bugunSabit);
+    expect(tarihNormalize(null, bugunSabit)).toBe(bugunSabit);
+  });
+  it("takvimde olmayan tarihi (31 Şubat) reddeder → bugüne düşer", () => {
+    expect(tarihNormalize("2026-02-31", bugunSabit)).toBe(bugunSabit);
+  });
+  it("fallback verilmezse bugünü kullanır", () => {
+    expect(tarihNormalize("saçma")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
 
