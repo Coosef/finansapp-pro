@@ -21,6 +21,13 @@ describe("ekstreDogrula — bakiye zinciri", () => {
     expect(d.bakiyeTutarli).toBe(false);
     expect(d.tamam).toBe(false);
   });
+  it("hiç işlem okunamadıysa sessizce 'tamam' demez", () => {
+    // Axess gibi bozuk-font PDF'lerde 0 işlem çıkar; bunu başarı sayma.
+    const d = ekstreDogrula({}, []);
+    expect(d.tamam).toBe(false);
+    expect(d.islemSayisi).toBe(0);
+    expect(d.uyarilar.length).toBeGreaterThan(0);
+  });
 });
 
 describe("hesapBul — farklı son4 birleşmez", () => {

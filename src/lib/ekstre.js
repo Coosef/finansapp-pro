@@ -126,6 +126,15 @@ function siniflandir(islem, aciklama, miktar, sahipTokens, ekstreTipi) {
 export function ekstreDogrula(ozet, islemler) {
   const uyarilar = [];
   const n = islemler.length;
+  // 0) Hiç işlem okunamadıysa: bunu ASLA "eksiksiz" sayma. Bozuk-font/taranmış
+  // PDF'lerde (ör. Axess) 0 işlem çıkar; sessiz "tamam:true" yanıltıcıdır.
+  if (n === 0) {
+    return {
+      tamam: false, bakiyeTutarli: null, adetTamam: null, toplamTamam: null,
+      kirilma: 0, islemSayisi: 0, beklenenSayisi: ozet?.beklenenSayisi ?? null,
+      uyarilar: ["Hiç işlem okunamadı — taranmış/görsel PDF ya da desteklenmeyen biçim olabilir. AI ile tekrar deneyin veya bankadan Excel (.xlsx) indirin."],
+    };
+  }
   // 1) İşlem adedi (özet belirtmişse)
   let adetTamam = null;
   if (ozet?.beklenenSayisi != null) {
