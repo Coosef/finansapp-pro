@@ -2,22 +2,21 @@
 // Aylık finans karnesi + runway (saf, test edilebilir)
 //   aylikKarne: bir ayın tasarruf oranı, notu, en büyük kategori, ay-üstü değişim
 //   runwayAy: likit bakiye ÷ son 3 ayın ortalama gideri → kaç ay dayanır
+// Panel/Analiz ile TUTARLI: toplam gider abonelik dahil (hesapla.js kanonu).
 // ============================================================
+import { aylikHesap, oncekiAy } from "./hesapla.js";
 
-function oncekiAy(ayStr) {
-  const [y, m] = String(ayStr).split("-").map(Number);
-  return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
-}
 const inAy = (arr, ay) => (arr || []).filter((x) => (x.tarih || "").startsWith(ay));
 
 export function aylikKarne(findata, ayStr) {
   const d = findata || {};
   const gid = inAy(d.giderler, ayStr);
   const gel = inAy(d.gelirler, ayStr);
-  const toplamGider = gid.reduce((s, x) => s + (x.miktar || 0), 0);
-  const toplamGelir = gel.reduce((s, x) => s + (x.miktar || 0), 0);
-  const net = toplamGelir - toplamGider;
-  const tasarrufOrani = toplamGelir > 0 ? Math.round((net / toplamGelir) * 100) : null;
+  const bu = aylikHesap(d, ayStr); // abonelik dahil gider, tek doğruluk kaynağı
+  const toplamGider = bu.giderToplam;
+  const toplamGelir = bu.gelir;
+  const net = bu.net;
+  const tasarrufOrani = toplamGelir > 0 ? Math.round(bu.tasarrufOrani) : null;
 
   const kat = {};
   gid.forEach((x) => { kat[x.kategori] = (kat[x.kategori] || 0) + (x.miktar || 0); });
@@ -26,7 +25,7 @@ export function aylikKarne(findata, ayStr) {
     ? { ad: sirali[0][0], tutar: sirali[0][1], oran: toplamGider > 0 ? Math.round((sirali[0][1] / toplamGider) * 100) : 0 }
     : null;
 
-  const oncekiGider = inAy(d.giderler, oncekiAy(ayStr)).reduce((s, x) => s + (x.miktar || 0), 0);
+  const oncekiGider = aylikHesap(d, oncekiAy(ayStr)).giderToplam;
   const degisimPct = oncekiGider > 0 ? Math.round(((toplamGider - oncekiGider) / oncekiGider) * 100) : null;
 
   const not = tasarrufOrani == null ? "—" : tasarrufOrani >= 30 ? "A" : tasarrufOrani >= 20 ? "B" : tasarrufOrani >= 10 ? "C" : tasarrufOrani >= 0 ? "D" : "F";
