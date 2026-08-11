@@ -7,6 +7,7 @@ import { V, F, SERIF, MONO, GIDER_KAT } from "../lib/constants.js";
 import { Icon } from "../components/icons.jsx";
 import { uid, TL, buAy, sayiCevir } from "../lib/format.js";
 import { etkinButce, butceDevri, rozetleriHesapla } from "../lib/finance.js";
+import { Maaslar } from "./salary.jsx";
 import { Card, Btn, Modal, Field, Toggle, Seg, ProgressBar, DelBtn, EditBtn, Bos } from "../components/ui.jsx";
 
 const lbl = { display: "block", fontSize: "11.5px", color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" };
@@ -18,6 +19,7 @@ const giderKat = (findata) => (findata?.kategoriler?.gider?.length ? findata.kat
 export function Planlama({ findata, setFindata, bildir }) {
   const [alt, setAlt] = useState("bh");
   const sekmeler = [
+    { id: "maas", label: "Maaş" },
     { id: "bh", label: "Bütçe & Hedef" },
     { id: "zarf", label: "Zarflar" },
     { id: "tekrar", label: "Tekrarlayanlar" },
@@ -29,6 +31,7 @@ export function Planlama({ findata, setFindata, bildir }) {
       <div style={{ marginBottom: "1.1rem" }}>
         <Seg items={sekmeler} value={alt} onChange={setAlt} />
       </div>
+      {alt === "maas" && <Maaslar findata={findata} setFindata={setFindata} bildir={bildir} />}
       {alt === "bh" && <ButceHedef findata={findata} setFindata={setFindata} bildir={bildir} />}
       {alt === "zarf" && <Zarflar findata={findata} setFindata={setFindata} />}
       {alt === "tekrar" && <Tekrarlayanlar findata={findata} setFindata={setFindata} bildir={bildir} />}

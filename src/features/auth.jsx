@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import { V, F, SERIF, MONO } from "../lib/constants.js";
 import { uid, bugun, sayiCevir } from "../lib/format.js";
+import { maasGeliriUret } from "../lib/maas.js";
 import { Icon } from "../components/icons.jsx";
 
 // Tüm ekranların ortak zemini: tam ekran zümrüt
@@ -166,12 +167,14 @@ export function Onboarding({ user, setFindata }) {
   function bitir() {
     const miktar = parseGelir();
     setFindata((d) => {
-      const yeni = { ...d, gelirler: [...d.gelirler], sablonlar: [...(d.sablonlar || [])], hesaplar: [...(d.hesaplar || [])] };
+      let yeni = { ...d, maaslar: [...(d.maaslar || [])] };
       yeni.ayarlar = { ...(d.ayarlar || {}), kuruldu: true };
+      // Maaş bir TANIM olarak eklenir; otomatik banka hesabı OLUŞTURULMAZ.
+      // (Kullanıcı hesabını sonra Bütçe & Maaş ekranından bağlayabilir.)
       if (miktar > 0) {
-        yeni.gelirler.push({ id: uid(), baslik: "Maaş", miktar, kategori: "Maaş", tarih: bugun() });
-        yeni.sablonlar.push({ id: uid(), tip: "gelir", baslik: "Maaş", miktar, kategori: "Maaş", frekans: "aylık", baslangic: bugun(), sonUretilen: bugun() });
-        yeni.hesaplar.push({ id: uid(), ad: "Banka Hesabım", tip: "banka", bakiye: miktar });
+        const gun = Number(String(bugun()).slice(8, 10)) || 1;
+        yeni.maaslar.push({ id: uid(), ad: "Maaş", tutar: miktar, hesapId: "", odemeGunu: gun, kategori: "Maaş", baslangic: String(bugun()).slice(0, 7), aktif: true });
+        yeni = maasGeliriUret(yeni, bugun()).data; // bu ayın maaş gelirini hemen türet
       }
       return yeni;
     });
@@ -202,8 +205,8 @@ export function Onboarding({ user, setFindata }) {
 
         {adim === 1 && (
           <div style={{ animation: "obfade .4s both" }}>
-            <h2 className="serif" style={{ margin: "0 0 12px", fontSize: "24px", fontWeight: 600, color: "#F4F1E9" }}>Aylık gelirin ne kadar?</h2>
-            <p style={{ margin: "0 0 26px", fontSize: "14px", color: "#A9C4B6", lineHeight: 1.6 }}>İlk kaydını oluşturalım. Bunu sonra değiştirebilirsin.</p>
+            <h2 className="serif" style={{ margin: "0 0 12px", fontSize: "24px", fontWeight: 600, color: "#F4F1E9" }}>Aylık maaşın ne kadar?</h2>
+            <p style={{ margin: "0 0 26px", fontSize: "14px", color: "#A9C4B6", lineHeight: 1.6 }}>Baz maaşını tanımlayalım — her ay tekrar eder. Prim/ek ödeme ve hangi banka hesabına yattığını sonra <b>Bütçe &amp; Maaş</b>'tan ekleyebilirsin.</p>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", padding: "6px 16px", marginBottom: "26px" }}>
               <span style={{ fontSize: "24px", color: V.accent, fontFamily: MONO }}>₺</span>
               <input value={gelir} onChange={(e) => setGelir(e.target.value)} inputMode="decimal" placeholder="58.000" style={{ flex: 1, padding: "14px 0", background: "transparent", border: "none", color: "#F4F1E9", fontSize: "24px", fontFamily: MONO, outline: "none", minWidth: 0 }} />

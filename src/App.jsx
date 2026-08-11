@@ -298,7 +298,7 @@ const TABS = [
   { id: "islemler", icon: "repeat", label: "İşlemler" },
   { id: "hesap", icon: "wallet", label: "Hesaplar" },
   { id: "yatirim", icon: "trending", label: "Yatırım" },
-  { id: "planlama", icon: "target", label: "Bütçe & Hedef" },
+  { id: "planlama", icon: "target", label: "Bütçe & Maaş" },
   { id: "analiz", icon: "bars", label: "Analiz" },
   { id: "takvim", icon: "calendar", label: "Takvim" },
   { id: "asistan", icon: "chat", label: "Asistan" },
