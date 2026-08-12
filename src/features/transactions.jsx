@@ -2,12 +2,59 @@
 // İşlemler — birleşik liste (gelir + gider + abonelik), Zümrüt & Altın
 // Pill filtre + arama + satır düzenleme/silme; tek İşlem/Abonelik modalı
 // ============================================================
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { V, F, SERIF, MONO, AY_ADI, inputStyle } from "../lib/constants.js";
 import { TL, sayiCevir } from "../lib/format.js";
 import { tryeCevir, pbSembol, PB_SECENEK } from "../lib/parabirimi.js";
+import { bekleyenInceleme, siniflananHane, turSecenekleri, turEtkiIpucu, turEtiket } from "../lib/incele.js";
 import { Icon } from "../components/icons.jsx";
 import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
+
+// KPI etki ipucu rengi (turEtkiIpucu.tip → renk)
+const ETKI_RENK = { gider: V.neg, gelir: V.pos, iade: V.pos, stopaj: V.neg, notr: V.ink3 };
+
+// İncelenecek işlem kartı: ham kaydı bozmadan finansal anlam seçtirir.
+// Ham başlık/tutar/yön/kişi gösterilir; her seçenek KPI etkisini canlı belirtir.
+function InceleSatir({ rec, kisiAd, son, onSinifla, aktifTur }) {
+  const cikis = rec._yon === "gider";
+  const secenekler = turSecenekleri(rec._yon);
+  const altMeta = [isoKisa(rec.tarih), cikis ? "giden" : "gelen", kisiAd || rec.incelemeNeden].filter(Boolean).join(" · ");
+  return (
+    <div style={{ padding: "13px 0", borderBottom: son ? "none" : `1px solid ${V.line}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 9 }}>
+        <div style={{ width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: cikis ? V.chipRed : V.chipGreen, color: cikis ? V.neg : V.pos, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon d={cikis ? "arrowDown" : "arrowUp"} size={16} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {rec.baslik}
+            {aktifTur && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: V.accent, background: V.chipGold, border: `1px solid ${V.accent}55`, padding: "1px 6px", borderRadius: 5 }}>{turEtiket(aktifTur)}</span>}
+          </div>
+          <div style={{ fontSize: 11.5, color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{altMeta}</div>
+        </div>
+        <span className="num" style={{ fontSize: 14, fontWeight: 700, color: cikis ? V.neg : V.pos, fontFamily: MONO, flexShrink: 0 }}>{cikis ? "−" : "+"}{TL(rec.miktar)}</span>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingLeft: 46 }}>
+        {secenekler.map((s) => {
+          const ip = turEtkiIpucu(s.tur, rec._yon);
+          const secili = aktifTur === s.tur;
+          return (
+            <button
+              key={s.tur}
+              onClick={() => onSinifla(rec, s.tur)}
+              className="fa-btn"
+              title={`${s.label} → ${ip.metin}`}
+              style={{ border: `1px solid ${secili ? V.accent : V.border2}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: F, background: secili ? V.chipGold : V.card2, color: secili ? V.accent : V.ink2, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+            >
+              {s.label}
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: ETKI_RENK[ip.tip], flexShrink: 0 }} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // ISO tarihi "23 Haz" gibi kısa biçimde göster
 const isoKisa = (iso) => {
@@ -46,6 +93,9 @@ function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
           {t.kaynak === "ekstre" && (
             <span title="Ekstreden içe aktarıldı" style={{ fontSize: "9.5px", color: V.ink3, border: `1px solid ${V.border2}`, padding: "1px 5px", borderRadius: 5, fontWeight: 600, flexShrink: 0, letterSpacing: "0.03em" }}>EKSTRE</span>
           )}
+          {t.tur === "needs_review" && (
+            <span title="Finansal anlamı bekliyor — İncele filtresinde sınıfla" style={{ fontSize: "9.5px", color: V.accent, background: V.chipGold, border: `1px solid ${V.accent}55`, padding: "1px 5px", borderRadius: 5, fontWeight: 700, flexShrink: 0, letterSpacing: "0.03em" }}>İNCELE</span>
+          )}
         </div>
         <div style={{ fontSize: "11.5px", color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {meta}
@@ -64,10 +114,26 @@ function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
   );
 }
 
-export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelirEkle, onGiderEkle, onAbonelikEkle }) {
-  const [filter, setFilter] = useState("tumu");
+export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFiltre, onFiltreTemizle, onSil, onDuzenle, onGelirEkle, onGiderEkle, onAbonelikEkle }) {
+  const [filter, setFilter] = useState(() => (baslangicFiltre === "incele" ? "incele" : "tumu"));
   const [q, setQ] = useState("");
   const [kat, setKat] = useState(""); // kategori filtresi ("" = tümü)
+  // Panel'den gelen tek-seferlik "İncele" odağını mount'ta tüket → sonraki
+  // ziyaretlerde normal aç (sticky olmasın).
+  useEffect(() => { if (baslangicFiltre && onFiltreTemizle) onFiltreTemizle(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // İncelenecek işlemler (needs_review) — global backlog, döneme bağlı değil.
+  const bekleyen = bekleyenInceleme(findata);
+  const kisiAdi = (id) => (findata.kisiler || []).find((k) => String(k.id) === String(id))?.ad || "";
+
+  // Bir kaydın finansal anlamını (tur) ayarla — ham başlık/tutar/tarih/kişi KORUNUR.
+  // Sınıf sonrası KPI/Analiz/Karne paylaşılan turEtkisi katmanından güncellenir.
+  function siniflaKayit(rec, yeniTur) {
+    if (!setFindata) return;
+    const list = rec._yon === "gelir" ? "gelirler" : "giderler";
+    setFindata((d) => ({ ...d, [list]: (d[list] || []).map((x) => (String(x.id) === String(rec.id) ? { ...x, tur: yeniTur } : x)) }));
+    bildir && bildir(`"${rec.baslik}" → ${turEtiket(yeniTur)} olarak sınıflandı`, "ok");
+  }
 
   const hepsi = [
     ...(fd.gelirler || []).map((x) => ({ ...x, tip: "gelir" })),
@@ -99,11 +165,13 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
   const ayBaslik = (ay) => { const [y, m] = ay.split("-"); return AY_ADI[+m - 1] ? `${AY_ADI[+m - 1]} ${y}` : ay; };
   const ayNet = (arr) => arr.reduce((s, t) => s + (t.tip === "gelir" ? +t.miktar : -t.miktar), 0);
 
+  const sinifliAdet = siniflananHane(findata).length; // yeniden sınıflanabilir (sınıflanmış hane)
   const FILTRELER = [
     { id: "tumu", label: "Tümü" },
     { id: "gelir", label: "Gelir" },
     { id: "gider", label: "Gider" },
     { id: "abonelik", label: "Abonelik" },
+    ...(bekleyen.adet || sinifliAdet ? [{ id: "incele", label: bekleyen.adet ? `İncele · ${bekleyen.adet}` : "İncele", uyari: bekleyen.adet > 0 }] : []),
   ];
 
   return (
@@ -112,12 +180,14 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
         <div style={{ display: "flex", gap: 4, padding: 4, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 11 }}>
           {FILTRELER.map((ff) => {
             const on = filter === ff.id;
+            const bg = on ? (ff.uyari ? V.accent : V.emerald) : "transparent";
+            const renk = on ? "#F4F1E9" : ff.uyari ? V.accent : V.ink2;
             return (
               <button
                 key={ff.id}
                 onClick={() => setFilter(ff.id)}
                 className="fa-btn"
-                style={{ border: "none", borderRadius: 8, padding: "8px 13px", fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: F, background: on ? V.emerald : "transparent", color: on ? "#F4F1E9" : V.ink2, whiteSpace: "nowrap" }}
+                style={{ border: "none", borderRadius: 8, padding: "8px 13px", fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: F, background: bg, color: renk, whiteSpace: "nowrap" }}
               >
                 {ff.label}
               </button>
@@ -151,7 +221,40 @@ export function Islemler({ findata, fd, donem, bildir, onSil, onDuzenle, onGelir
         </div>
       </div>
 
-      {liste.length === 0 ? (
+      {filter === "incele" ? (
+        (() => {
+          const ara = (r) => !aranan || `${r.baslik || ""} ${kisiAdi(r.kisiId)}`.toLocaleLowerCase("tr").includes(aranan);
+          const bekleyenListe = bekleyen.kayitlar.filter(ara);
+          const sinifliListe = siniflananHane(findata).filter(ara);
+          return bekleyenListe.length === 0 && sinifliListe.length === 0 ? (
+            <Bos baslik="İncelenecek işlem yok" mesaj="Sınıflandırılmayı bekleyen işlem yok. Hane kişilerine giden/gelen para burada listelenir." icon="doc" />
+          ) : (
+            <>
+              <div style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}55`, borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: V.ink, marginBottom: 3 }}>🔎 {bekleyen.adet} işlem · {TL(bekleyen.toplam)} sınıflandırılmayı bekliyor</div>
+                <div style={{ fontSize: 12, color: V.ink2, lineHeight: 1.5 }}>Ham işleme dokunulmaz — yalnızca <b>finansal anlamını</b> seçersin. Renkli nokta KPI etkisini gösterir: <span style={{ color: V.neg }}>● gider</span> · <span style={{ color: V.pos }}>● gelir/iade</span> · <span style={{ color: V.ink3 }}>● nötr</span>. İstediğin zaman değiştirebilirsin.</div>
+              </div>
+              {bekleyenListe.length > 0 && (
+                <Card style={{ padding: "4px 18px", marginBottom: sinifliListe.length ? 14 : 0 }}>
+                  {bekleyenListe.map((r, i) => (
+                    <InceleSatir key={`${r._yon}-${r.id}`} rec={r} kisiAd={kisiAdi(r.kisiId)} son={i === bekleyenListe.length - 1} onSinifla={siniflaKayit} />
+                  ))}
+                </Card>
+              )}
+              {sinifliListe.length > 0 && (
+                <>
+                  <div style={{ margin: "0 4px 7px", fontSize: 11.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Sınıflanmış · değiştirebilirsin</div>
+                  <Card style={{ padding: "4px 18px" }}>
+                    {sinifliListe.map((r, i) => (
+                      <InceleSatir key={`s-${r._yon}-${r.id}`} rec={r} kisiAd={kisiAdi(r.kisiId)} son={i === sinifliListe.length - 1} onSinifla={siniflaKayit} aktifTur={r.tur} />
+                    ))}
+                  </Card>
+                </>
+              )}
+            </>
+          );
+        })()
+      ) : liste.length === 0 ? (
         <Bos baslik="İşlem yok" mesaj="Bu dönemde işlem bulunmuyor." icon="doc" />
       ) : (
         <>

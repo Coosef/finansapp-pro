@@ -1,10 +1,13 @@
 // ============================================================
 // Hane kişileri / karşı hesaplar (saf, test edilebilir).
-// Kendi + hanedeki kişilerin hesaplarına giden para TRANSFER'dir (harcama değil).
+// KİM (kisiId), ham para YÖNÜ (gelir=gelen / gider=giden) ve finansal ANLAM
+// (tur) BAĞIMSIZ kavramlardır (item 6). Hane kişisine giden para OTOMATİK
+// harcama/transfer DEĞİLDİR — anlamı kullanıcı seçer (hediye/borç/transfer…).
 // Kişi = etiketli karşı taraf: { id, ad, hane, anahtarlar:[], iban?, son4?, not? }.
-// Eşleşen gelir/gider transferAkis leg'ine (kisiId ile) taşınır → gelir/gidere girmez.
+// Eşleşen gelir/gider yerinde KALIR; kisiId + tur:needs_review ile etiketlenir
+// (ham tutar/başlık/tarih dokunulmaz) → İşlemler'de incelemeye alınır.
 // ============================================================
-import { uid } from "./format.js";
+import { TUR } from "./siniftur.js";
 
 const kucuk = (s) => String(s ?? "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase();
 
@@ -65,28 +68,25 @@ export function haneAdaylari(findata) {
   return Object.values(grup).sort((a, b) => b.toplam - a.toplam);
 }
 
-// Var olan gelir/gideri hane kişilerine göre yeniden sınıfla → transferAkis leg'ine
-// taşı (kisiId ile). Bakiyeye dokunmaz (para zaten hesaptan çıkmış/girmiştir).
+// Var olan gelir/gideri hane kişilerine göre yeniden sınıfla → kaydı YERİNDE
+// bırakıp kisiId + tur:needs_review ile etiketle (ham yön/tutar korunur).
+// Zaten kisiId/tur taşıyan (etiketli ya da kullanıcı-sınıflı) kayda dokunmaz.
 // { data, tasindi } döner; çağıran geri-al için önceki durumu saklayabilir.
 export function haneYenidenSinifla(findata) {
   const d = findata || {};
   const hane = (d.kisiler || []).filter((k) => k.hane);
   if (!hane.length) return { data: findata, tasindi: 0 };
-  const gelirler = [], giderler = [];
-  const yeniLegs = [];
-  let tasindi = 0, i = 0;
-  const isle = (liste, yon) =>
-    (liste || []).forEach((x) => {
+  let tasindi = 0;
+  const etiketle = (liste) =>
+    (liste || []).map((x) => {
+      if (x.kisiId || x.tur) return x; // zaten etiketli/sınıflı → dokunma
       const k = kisiBul(hane, x.baslik, x.iban);
-      if (k) {
-        yeniLegs.push({ id: uid() + 5000 + i++, hesapId: x.hesapId || "", tarih: x.tarih, miktar: yon === "gider" ? -Math.abs(+x.miktar || 0) : Math.abs(+x.miktar || 0), aciklama: x.baslik, kisiId: k.id });
-        tasindi++;
-      } else {
-        (yon === "gider" ? giderler : gelirler).push(x);
-      }
+      if (!k) return x;
+      tasindi++;
+      return { ...x, kisiId: k.id, tur: TUR.INCELE, incelemeNeden: `Hane kişisi: ${k.ad} — finansal türünü seç` };
     });
-  isle(d.gelirler, "gelir");
-  isle(d.giderler, "gider");
+  const gelirler = etiketle(d.gelirler);
+  const giderler = etiketle(d.giderler);
   if (!tasindi) return { data: findata, tasindi: 0 };
-  return { data: { ...d, gelirler, giderler, transferAkis: [...(d.transferAkis || []), ...yeniLegs] }, tasindi };
+  return { data: { ...d, gelirler, giderler }, tasindi };
 }

@@ -71,6 +71,29 @@ describe("donemHesap — dönem özeti (tek doğruluk kaynağı)", () => {
   });
 });
 
+describe("donemHesap — finansal tür KPI netleme (audit item 2/5/7)", () => {
+  it("iade gideri netler (income değil), stopaj geliri netler, needs_review nötr", () => {
+    const d = {
+      gelirler: [
+        { miktar: 90000, tarih: "2026-08-05", kategori: "Maaş" },
+        { miktar: 5000, tarih: "2026-08-07", kategori: "Diğer", tur: "iade" },        // gideri azaltmalı
+        { miktar: 1000, tarih: "2026-08-08", kategori: "Faiz/Yatırım" },              // brüt faiz
+        { miktar: 78000, tarih: "2026-08-09", kategori: "Diğer", tur: "needs_review" }, // 3rd-party EFT → nötr
+      ],
+      giderler: [
+        { miktar: 5000, tarih: "2026-08-03", kategori: "Market" },
+        { miktar: 150, tarih: "2026-08-08", kategori: "Vergi/Resmi", tur: "stopaj" },  // geliri azaltmalı
+      ],
+      abonelikler: [],
+    };
+    const r = donemHesap(d, "buAy", "2026-08-15");
+    // gelir = 90000 + 1000(faiz) − 150(stopaj) = 90850 ; iade & needs_review income'a girmez
+    expect(r.gelir).toBe(90850);
+    // gider = 5000(market) − 5000(iade) = 0
+    expect(r.giderToplam).toBe(0);
+  });
+});
+
 describe("ay yardımcıları", () => {
   it("ayAraligi ayın ilk ve son gününü verir", () => {
     expect(ayAraligi("2026-08")).toEqual({ start: "2026-08-01", end: "2026-08-31" });
@@ -127,5 +150,20 @@ describe("kategoriDagilim", () => {
     expect(d[0]).toMatchObject({ kategori: "Market", toplam: 5000 });
     expect(Math.round(d[0].pct)).toBe(83); // 5000/6000
     expect(d[1]).toMatchObject({ kategori: "Restoran", toplam: 1000 });
+  });
+  it("needs_review / nötr türleri dışlar, sınıflı hediyeyi katar (turEtkisi tutarlı)", () => {
+    const giderler = [
+      { kategori: "Market", miktar: 1000 }, // düz gider → sayılır
+      { kategori: "Diğer", miktar: 9000, tur: "needs_review" }, // incelemede → KPI dışı → sayılmaz
+      { kategori: "Gönderim", miktar: 5000, tur: "household_transfer" }, // nötr → sayılmaz
+      { kategori: "Hediye", miktar: 2000, tur: "gift" }, // hediye (gider yönü) → sayılır
+    ];
+    const d = kategoriDagilim(giderler);
+    const kats = d.map((x) => x.kategori);
+    expect(kats).toEqual(expect.arrayContaining(["Market", "Hediye"]));
+    expect(kats).not.toContain("Diğer"); // needs_review dışlandı
+    expect(kats).not.toContain("Gönderim"); // hane transfer dışlandı
+    expect(d.find((x) => x.kategori === "Market").toplam).toBe(1000);
+    expect(d.find((x) => x.kategori === "Hediye").toplam).toBe(2000);
   });
 });

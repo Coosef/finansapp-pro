@@ -12,6 +12,7 @@
 //    (kaynak:"maas", maasId, ay). Ekstre maaşı bu satırı GÜNCELLER, yeni eklemez.
 // ============================================================
 import { uid } from "./format.js";
+import { TUR } from "./siniftur.js";
 
 const iki = (n) => String(n).padStart(2, "0");
 const ayParcala = (ay) => String(ay).split("-").map(Number); // [y, m]
@@ -156,6 +157,31 @@ export function maasEslestirmeAdayi(findata, kayit) {
     if (uzaklik < enIyi) { enIyi = uzaklik; sec = m; }
   });
   return { maasId: sec.id, ay };
+}
+
+// Çift-sayım guard'ı (audit item 3): tanımlı maaşla aynı ayda BENZER tutarlı ELLE
+// girilmiş "Maaş" gelirini needs_review'e alır (KPI'dan çıkar) — SİLMEZ, geri
+// alınabilir. Gerçek prim/farklı tutar (uzak) dokunulmaz. Idempotent (etiketliyi atlar).
+export function maasCiftGuard(findata) {
+  const d = findata || {};
+  const aktif = (d.maaslar || []).filter((m) => m.aktif !== false);
+  const maasGelir = (d.gelirler || []).filter((g) => g.kaynak === "maas");
+  if (!aktif.length || !maasGelir.length) return { data: findata, degisti: false };
+  const ayBeklenen = {};
+  maasGelir.forEach((g) => { ayBeklenen[g.ay] = (ayBeklenen[g.ay] || 0) + (+g.miktar || 0); });
+  let degisti = false;
+  const gelirler = (d.gelirler || []).map((g) => {
+    if (g.kaynak === "maas" || g.tur) return g; // maaş satırı ya da zaten sınıflı
+    const salaryish = g.kategori === "Maaş" || /maaş|maas/i.test(g.baslik || "");
+    if (!salaryish) return g;
+    const bek = ayBeklenen[String(g.tarih || "").slice(0, 7)];
+    if (bek && Math.abs((+g.miktar || 0) - bek) <= bek * 0.25) {
+      degisti = true;
+      return { ...g, tur: TUR.INCELE, incelemeNeden: "Tanımlı maaşla çakışıyor olabilir (çift gelir?)" };
+    }
+    return g;
+  });
+  return { data: degisti ? { ...d, gelirler } : findata, degisti };
 }
 
 // Mevcut maaş verisinden (sablon/gelir) maaş adayı çıkar — kullanıcı-onaylı migrasyon.

@@ -10,6 +10,7 @@
 //    gelirler/giderler listelerinde değildir; transferAkis'te tutulur).
 // ============================================================
 import { donemAraligi, donemde } from "./finance.js";
+import { turEtkisi } from "./siniftur.js";
 
 const topla = (liste) => (liste || []).reduce((s, x) => s + (+x.miktar || 0), 0);
 
@@ -18,12 +19,17 @@ function aboneCarpani(donem) {
   return donem === "buYil" ? 12 : 1;
 }
 
-// Kategori dağılımı: {kategori: toplam} → azalan sıralı [{kategori, toplam, pct}]
+// Kategori dağılımı: {kategori: toplam} → azalan sıralı [{kategori, toplam, pct}].
+// turEtkisi ile TUTARLI: yalnız gider KPI'sına katkı veren kayıtlar sayılır
+// (needs_review / iç+hane transfer / verilen borç = nötr → dışlanır). Etiketsiz
+// kayıt eski davranışla birebir (ham miktar) → geriye tam uyum.
 export function kategoriDagilim(giderler) {
   const kat = {};
   (giderler || []).forEach((g) => {
+    const m = turEtkisi(g, "gider").gider; // KPI'ya gider katkısı (nötr türlerde 0)
+    if (m <= 0) return; // incelemede/transfer/borç → harcama dağılımına girmez
     const k = g.kategori || "Diğer";
-    kat[k] = (kat[k] || 0) + (+g.miktar || 0);
+    kat[k] = (kat[k] || 0) + m;
   });
   const toplam = Object.values(kat).reduce((s, v) => s + v, 0);
   return Object.entries(kat)
@@ -36,8 +42,11 @@ function araliktanOzet(findata, aralik, donem) {
   const d = findata || {};
   const gelirler = (d.gelirler || []).filter((g) => donemde(g.tarih, aralik));
   const giderler = (d.giderler || []).filter((g) => donemde(g.tarih, aralik));
-  const gelir = topla(gelirler);
-  const giderKalem = topla(giderler);
+  // Finansal tür'e göre net: iade/reimbursement gideri azaltır, stopaj geliri azaltır,
+  // needs_review/transfer/borç türleri KPI dışı. Etiketsiz kayıt = eski davranış.
+  let gelir = 0, giderKalem = 0;
+  gelirler.forEach((g) => { const e = turEtkisi(g, "gelir"); gelir += e.gelir; giderKalem += e.gider; });
+  giderler.forEach((g) => { const e = turEtkisi(g, "gider"); gelir += e.gelir; giderKalem += e.gider; });
   const aboneAylik = topla(d.abonelikler);
   const abone = aboneAylik * aboneCarpani(donem);
   const giderToplam = giderKalem + abone;

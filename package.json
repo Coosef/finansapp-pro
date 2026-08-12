@@ -1,7 +1,7 @@
 {
   "name": "finansapp-pro",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.4.2",
   "type": "module",
   "description": "Türkçe çok özellikli kişisel finans yönetim uygulaması",
   "scripts": {

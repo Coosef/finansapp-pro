@@ -8,11 +8,19 @@ export const TL = (n) =>
 export const TL2 = (n) =>
   new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 2 }).format(n || 0);
 
-export const bugun = () => new Date().toISOString().split("T")[0];
-export const buAy = () => new Date().toISOString().slice(0, 7);
+// YEREL takvim tarihi — UTC toISOString() kullanma: UTC+3'te ayın ilk günü
+// gece yarısı önceki aya kayıyordu (P0). Test için opsiyonel `now` alır.
+const _p2 = (n) => String(n).padStart(2, "0");
+export const bugun = (now = new Date()) => `${now.getFullYear()}-${_p2(now.getMonth() + 1)}-${_p2(now.getDate())}`;
+export const buAy = (now = new Date()) => `${now.getFullYear()}-${_p2(now.getMonth() + 1)}`;
 
-// Çakışma riski düşük benzersiz id
-export const uid = () => Date.now() + Math.floor(Math.random() * 100000);
+// Benzersiz id. Uygun ortamda crypto.randomUUID (çakışmasız); yoksa zaman+sayaç
+// yedeği. Eski sayısal ID'ler değişmez — yalnız YENİ kayıtlar bu mekanizmayı kullanır.
+let _uidSayac = 0;
+export const uid = () =>
+  (typeof crypto !== "undefined" && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${(_uidSayac++).toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 
 export function sonrakiTarih(dateStr, frekans) {
   // UTC ile çalış: saat diliminden bağımsız, kararlı takvim aritmetiği

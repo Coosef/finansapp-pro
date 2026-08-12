@@ -8,7 +8,7 @@ import { uid, bugun, TL, sayiCevir } from "./lib/format.js";
 import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbKayit, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
 import { oturumBaslat, oturumSurdur, oturumDokun, oturumTemizle, oturumDurum, IDLE_VARSAYILAN_DK, UYARI_ESIK_MS } from "./lib/oturum.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
-import { maasGeliriUret } from "./lib/maas.js";
+import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { tryeCevir } from "./lib/parabirimi.js";
 import { bildirimOzeti } from "./lib/bildirim.js";
@@ -151,6 +151,9 @@ export default function FinansAppPro() {
     const mg = maasGeliriUret(data, bugun()); // aylık maaş gelir satırlarını türet
     data = mg.data;
     degisti = degisti || mg.degisti;
+    const cg = maasCiftGuard(data); // elle-gelir + maaş modeli çift-sayım guard'ı
+    data = cg.data;
+    degisti = degisti || cg.degisti;
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
@@ -332,6 +335,7 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
   const [bildirim, setBildirim] = useState(null);
   const [daha, setDaha] = useState(false);
   const [donem, setDonem] = useState("buAy");
+  const [islemFiltre, setIslemFiltre] = useState(null); // Panel→İşlemler tek-seferlik "İncele" odağı
   const [donemAcik, setDonemAcik] = useState(false);
   const [bildirimAcik, setBildirimAcik] = useState(false);
   const [paletAcik, setPaletAcik] = useState(false);
@@ -703,8 +707,8 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
 
         <div className="fa-scr">
           <div className="fa-page" key={tab} style={{ maxWidth: 1120, margin: "0 auto" }}>
-            {tab === "panel" && <Panel {...ekranOrtak} donemAdi={DONEMLER.find((d) => d.id === donem)?.ad} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} nakit={nakit} netDeger={netDeger} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} guncelDeger={guncelDeger} onHizliEkle={ekle} kategoriOgren={kategoriOgren} onGit={setTab} />}
-            {tab === "islemler" && <Islemler findata={findata} fd={fd} donem={donem} bildir={bildir} onSil={sil} onDuzenle={duzenleIslem} onGelirEkle={() => islemAc("gelir")} onGiderEkle={() => islemAc("gider")} onAbonelikEkle={abonelikAc} />}
+            {tab === "panel" && <Panel {...ekranOrtak} donemAdi={DONEMLER.find((d) => d.id === donem)?.ad} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} nakit={nakit} netDeger={netDeger} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} guncelDeger={guncelDeger} onHizliEkle={ekle} kategoriOgren={kategoriOgren} onGit={setTab} onIncele={() => { setIslemFiltre("incele"); setTab("islemler"); }} />}
+            {tab === "islemler" && <Islemler findata={findata} fd={fd} donem={donem} bildir={bildir} setFindata={setFindata} baslangicFiltre={islemFiltre} onFiltreTemizle={() => setIslemFiltre(null)} onSil={sil} onDuzenle={duzenleIslem} onGelirEkle={() => islemAc("gelir")} onGiderEkle={() => islemAc("gider")} onAbonelikEkle={abonelikAc} />}
             {tab === "hesap" && <Hesaplar findata={findata} setFindata={setFindata} bildir={bildir} />}
             {tab === "yatirim" && <Yatirimlar findata={findata} setFindata={setFindata} guncelDeger={guncelDeger} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} yatirimMaliyet={yatirimMaliyet} onEkle={yatirimAc} onSil={(id) => sil("yatirim", id)} onDuzenle={duzenleYatirim} onGuncelle={tumFiyatlariGuncelle} guncelleniyor={fiyatGuncelleniyor} />}
             {tab === "asistan" && <Asistan findata={findata} guncelDeger={guncelDeger} toplamGelir={toplamGelirTum} toplamGider={toplamGiderTum} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} netDeger={netDeger} bildir={bildir} />}

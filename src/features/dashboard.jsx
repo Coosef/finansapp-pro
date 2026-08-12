@@ -14,6 +14,7 @@ import { faturaKategori } from "../lib/fatura.js";
 import { taksitPlanlari, aylikTaksitYuku, kalanTaksitBorcu } from "../lib/taksit.js";
 import { nakitAkisProjeksiyon } from "../lib/nakitakis.js";
 import { sessizZamlar } from "../lib/anomali.js";
+import { bekleyenInceleme } from "../lib/incele.js";
 import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para, Modal, Field } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -28,8 +29,9 @@ const kisaTarih = (t) => (t ? `${parseInt(t.slice(8, 10), 10)} ${kisaAy(t)}` : "
 export function Panel({
   findata, fd, donem, donemAdi, setFindata, bildir,
   toplamGelir, toplamGider, toplamAbonelik, nakit, netDeger,
-  yatirimDeger, yatirimKar, guncelDeger, onHizliEkle, kategoriOgren, onGit,
+  yatirimDeger, yatirimKar, guncelDeger, onHizliEkle, kategoriOgren, onGit, onIncele,
 }) {
+  const bekleyenIncele = bekleyenInceleme(findata); // sınıflandırma bekleyen (needs_review)
   const [metin, setMetin] = useState("");
   const [bekle, setBekle] = useState(false);
   const [fisOku, setFisOku] = useState(false);
@@ -125,7 +127,7 @@ export function Panel({
   const drillAc = (baslik, kayitlar, tip) => setDrill({ baslik, kayitlar: [...(kayitlar || [])].sort((a, b) => String(b.tarih).localeCompare(String(a.tarih))), tip });
 
   const stats = [
-    { label: "Toplam Gelir", value: TL(toplamGelir), delta: `${donemAdi} · geçen aya göre ${yuzde(mom.degisim.gelir)}`, deltaColor: momRenk(mom.degisim.gelir, true), onClick: () => drillAc("Gelirler — " + donemAdi, oz.gelirler, "gelir") },
+    { label: "Toplam Gelir", value: TL(oz.gelir), delta: `${donemAdi} · geçen aya göre ${yuzde(mom.degisim.gelir)}`, deltaColor: momRenk(mom.degisim.gelir, true), onClick: () => drillAc("Gelirler — " + donemAdi, oz.gelirler, "gelir") },
     { label: "Toplam Gider", value: TL(giderToplam), delta: `Abonelik dahil · ${yuzde(mom.degisim.giderToplam)}`, deltaColor: momRenk(mom.degisim.giderToplam, false), onClick: () => drillAc("Giderler — " + donemAdi, oz.giderler, "gider") },
     { label: "Net Nakit", value: TL(nakit), delta: `Tasarruf %${tasarrufOrani}`, deltaColor: nakitRenk },
     { label: "Net Varlık", value: TL(netDeger), delta: `Yatırım ${TL(yatirimDeger)}`, deltaColor: V.ink3, onClick: () => onGit && onGit("hesap") },
@@ -165,10 +167,9 @@ export function Panel({
     sonNokta = pts[pts.length - 1];
   }
 
-  // ---- Harcama dağılımı (donut) ----
-  const katToplam = {};
-  (fd.giderler || []).forEach((g) => { katToplam[g.kategori] = (katToplam[g.kategori] || 0) + g.miktar; });
-  const katSirali = Object.entries(katToplam).sort((a, b) => b[1] - a[1]);
+  // ---- Harcama dağılımı (donut) — oz.kategoriler ile TUTARLI (turEtkisi: needs_review
+  // / transfer / borç dışı). Kendi ham toplamı yerine tek doğruluk kaynağını kullan.
+  const katSirali = oz.kategoriler.map((k) => [k.kategori, k.toplam]);
   const top5 = katSirali.slice(0, 5);
   const digerTutar = katSirali.slice(5).reduce((s, [, v]) => s + v, 0);
   const donutData = [...top5.map(([cat, amt], i) => ({ cat, amt, color: PALET[i % PALET.length] }))];
@@ -227,6 +228,23 @@ export function Panel({
     <div>
       {/* 0) Editoryal brifing (veriden üretilen manşet) */}
       <Brifing manset={brifing.manset} destek={brifing.destek} />
+
+      {/* 0a) İnceleme uyarısı — finansal anlamı bekleyen (needs_review) işlemler.
+          Tıkla → İşlemler'in İncele görünümü. KPI'a girmezler; sınıflanınca yansır. */}
+      {bekleyenIncele.adet > 0 && (
+        <div
+          onClick={() => (onIncele ? onIncele() : onGit && onGit("islemler"))}
+          role="button"
+          style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}77`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+        >
+          <span style={{ fontSize: 18 }}>🔎</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink }}>{bekleyenIncele.adet} işlem · {TL(bekleyenIncele.toplam)} sınıflandırılmayı bekliyor</div>
+            <div style={{ fontSize: 11.5, color: V.ink2 }}>Hane kişilerine giden/gelen para — KPI'a girmez. Finansal türünü seçmek için dokun.</div>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 600, color: V.accent, flexShrink: 0 }}>İncele →</span>
+        </div>
+      )}
 
       {/* 0b) Sessiz zam uyarısı — tutarı sessizce artan tekrarlayan kalemler */}
       {zamlar.length > 0 && (
