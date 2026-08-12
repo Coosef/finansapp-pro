@@ -25,7 +25,13 @@ export function turEtkisi(kayit, tabanTip) {
       return { gelir: 0, gider: -m }; // gideri azaltır, income değil
     case TUR.STOPAJ:
       return { gelir: -m, gider: 0 }; // faiz stopajı → net faizi düşürür, tüketim gideri değil
-    // needs_review + ilişki/transfer türleri + hediye/varlık satışı → KPI DIŞI (nötr)
+    case TUR.HEDIYE:
+      // Hediye ekonomik olay; ham yönü izler: verdiğin (gider) → harcama,
+      // aldığın (gelir) → gelir.
+      return tabanTip === "gelir" ? { gelir: m, gider: 0 } : { gelir: 0, gider: m };
+    case TUR.VARLIK_SATIS:
+      return { gelir: m, gider: 0 }; // varlık satışı → ekonomik gelir (para girişi)
+    // needs_review + iç/hane transfer + verilen borç / borç geri ödemesi → KPI DIŞI (nötr)
     default:
       return { gelir: 0, gider: 0 };
   }
