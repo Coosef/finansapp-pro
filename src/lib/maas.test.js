@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   beklenenMaas, maasAyarHesapla, maasDurumu, maasGeliriUret,
-  maasEslestirUygula, maasAdaylari, maasEslestirmeAdayi,
+  maasEslestirUygula, maasAdaylari, maasEslestirmeAdayi, maasCiftGuard,
 } from "./maas.js";
+import { donemHesap } from "./hesapla.js";
 
 // Maaş modeli: base salary KALICI; aylık ek ödeme/override yalnız o ay; ekstre
 // maaşı çift-sayım yapmadan eşleşir.
@@ -115,6 +116,28 @@ describe("maasEslestirUygula — ekstre maaşını çift-saymadan eşle", () => 
     d = maasEslestirUygula(d, "m1", "2026-08", 95000, "ekstre");
     // Eylül için beklenen hâlâ 80000
     expect(maasDurumu(d, "m1", "2026-09").beklenen).toBe(80000);
+  });
+});
+
+describe("maasCiftGuard — maaş modeli + elle gelir çift-sayım (item 3)", () => {
+  it("aynı ay benzer tutarlı ELLE maaş → needs_review; income 80k (160k değil)", () => {
+    let d = { maaslar: [maas()], maasAyarlari: [], gelirler: [{ id: "man", baslik: "Maaş", miktar: 80000, kategori: "Maaş", tarih: "2026-08-05", kaynak: "manuel" }], sablonlar: [] };
+    d = maasGeliriUret(d, "2026-08-11").data;
+    const r = maasCiftGuard(d);
+    expect(r.degisti).toBe(true);
+    expect(r.data.gelirler.find((g) => g.id === "man").tur).toBe("needs_review");
+    expect(donemHesap(r.data, "buAy", "2026-08-11").gelir).toBe(80000);
+  });
+  it("gerçek prim (uzak tutar) flag'lenmez", () => {
+    let d = { maaslar: [maas()], maasAyarlari: [], gelirler: [{ id: "prim", baslik: "Maaş farkı", miktar: 15000, kategori: "Maaş", tarih: "2026-08-20", kaynak: "manuel" }], sablonlar: [] };
+    d = maasGeliriUret(d, "2026-08-11").data;
+    expect(maasCiftGuard(d).data.gelirler.find((g) => g.id === "prim").tur).toBeUndefined();
+  });
+  it("idempotent — ikinci çağrıda değişiklik yok", () => {
+    let d = { maaslar: [maas()], maasAyarlari: [], gelirler: [{ id: "man", baslik: "Maaş", miktar: 80000, kategori: "Maaş", tarih: "2026-08-05", kaynak: "manuel" }], sablonlar: [] };
+    d = maasGeliriUret(d, "2026-08-11").data;
+    const bir = maasCiftGuard(d).data;
+    expect(maasCiftGuard(bir).degisti).toBe(false);
   });
 });
 

@@ -8,7 +8,7 @@ import { uid, bugun, TL, sayiCevir } from "./lib/format.js";
 import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbKayit, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
 import { oturumBaslat, oturumSurdur, oturumDokun, oturumTemizle, oturumDurum, IDLE_VARSAYILAN_DK, UYARI_ESIK_MS } from "./lib/oturum.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
-import { maasGeliriUret } from "./lib/maas.js";
+import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { tryeCevir } from "./lib/parabirimi.js";
 import { bildirimOzeti } from "./lib/bildirim.js";
@@ -151,6 +151,9 @@ export default function FinansAppPro() {
     const mg = maasGeliriUret(data, bugun()); // aylık maaş gelir satırlarını türet
     data = mg.data;
     degisti = degisti || mg.degisti;
+    const cg = maasCiftGuard(data); // elle-gelir + maaş modeli çift-sayım guard'ı
+    data = cg.data;
+    degisti = degisti || cg.degisti;
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
