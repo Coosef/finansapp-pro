@@ -69,15 +69,18 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     ekstreRef = useRef();
   const eklemeRef = useRef(false); // çift "Seçilenleri Ekle" tıklamasını engelle
 
-  // Hane kişisine giden/gelen gelir/gider kayıtlarını TRANSFER'e çevir (harcama/gelir sayılmaz).
+  // Hane kişisine giden/gelen kaydı İNCELEMEYE al (item 6): ham yön (gelir/gider),
+  // tutar, başlık, tarih KORUNUR; yalnızca kisiId + tur:needs_review meta eklenir.
+  // Finansal anlamı (harcama/hediye/borç/transfer…) kullanıcı İşlemler'de seçer;
+  // KPI'a girmez (needs_review → nötr). _sec/tekrar provenance korunur.
   function haneIsaretle(kayitlar) {
     const hane = (findata.kisiler || []).filter((k) => k.hane);
     if (!hane.length) return kayitlar || [];
     return (kayitlar || []).map((k) => {
-      if (k._transfer || k._abonelik || k._taksit || (k.tip !== "gelir" && k.tip !== "gider")) return k;
+      if (k._transfer || k._abonelik || k._taksit || k.tur || (k.tip !== "gelir" && k.tip !== "gider")) return k;
       const kisi = kisiBul(hane, k.baslik, k.iban);
       if (!kisi) return k;
-      return { baslik: k.baslik, miktar: k.miktar, kategori: "Transfer", tarih: k.tarih, kaynak: "ekstre", tip: "transfer", _transfer: true, _kisiId: kisi.id, _yon: k.tip === "gider" ? "cikis" : "giris", _sec: false, _haneAd: kisi.ad };
+      return { ...k, kisiId: kisi.id, tur: "needs_review", incelemeNeden: `Hane kişisi: ${kisi.ad} — finansal türünü seç`, _haneAd: kisi.ad };
     });
   }
 
@@ -132,7 +135,7 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
       kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
     }
     const isaretli = maasIsaretle(haneIsaretle(kayitlar));
-    return { kayitlar: isaretli, atlanan, ozet, dogrulama, transferSayisi: isaretli.filter((k) => k._transfer).length, aboneSayisi: isaretli.filter((k) => k._abonelik).length, maasSayisi: isaretli.filter((k) => k._maas).length, haneSayisi: isaretli.filter((k) => k._kisiId).length };
+    return { kayitlar: isaretli, atlanan, ozet, dogrulama, transferSayisi: isaretli.filter((k) => k._transfer).length, aboneSayisi: isaretli.filter((k) => k._abonelik).length, maasSayisi: isaretli.filter((k) => k._maas).length, haneSayisi: isaretli.filter((k) => k._haneAd).length };
   }
 
   async function fisYukle(e) {
@@ -392,7 +395,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       } else {
         if (okunamayan) bildir(`${okunamayan} sayfa okunamadı, atlandı — sonuçlar eksik olabilir`, "err");
         const isaretli = maasIsaretle(haneIsaretle(kayitlar));
-        setSonuc({ kayitlar: isaretli, atlanan, ozet, taksitSayisi, maasSayisi: isaretli.filter((k) => k._maas).length, haneSayisi: isaretli.filter((k) => k._kisiId).length });
+        setSonuc({ kayitlar: isaretli, atlanan, ozet, taksitSayisi, maasSayisi: isaretli.filter((k) => k._maas).length, haneSayisi: isaretli.filter((k) => k._haneAd).length });
       }
     } catch (err) {
       let m = aiHata(err) || "Ekstre işlenemedi";
@@ -672,7 +675,7 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
           )}
           {sonuc.haneSayisi > 0 && (
             <p style={{ color: V.ink2, fontSize: "0.78rem", margin: "0 0 0.75rem", background: "var(--chip-green)", border: `1px solid ${V.pos}44`, padding: "0.5rem 0.75rem", borderRadius: "0.6rem" }}>
-              👨‍👩‍👧 {sonuc.haneSayisi} işlem <b>hane kişilerine</b> ait — transfer olarak işlenir, harcama/gelir sayılmaz (Hesaplar → Para Akışı'nda görünür).
+              👨‍👩‍👧 {sonuc.haneSayisi} işlem <b>hane kişilerine</b> ait — <b>incelemeye alınır</b>: KPI'a girmez, İşlemler'de finansal türünü (harcama / hediye / borç / transfer) sen seçersin.
             </p>
           )}
           {sonuc.taksitSayisi > 0 && (
@@ -729,9 +732,12 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
                   {k._maas && (
                     <span style={{ background: "var(--chip-green)", border: `1px solid ${V.pos}55`, color: V.pos, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>MAAŞ EŞLEŞMESİ</span>
                   )}
+                  {k._haneAd && (
+                    <span title="Hane kişisi — incelemeye alınır, türünü İşlemler'de seç" style={{ background: "var(--chip-gold)", border: `1px solid ${V.accent}55`, color: V.accent, fontSize: "0.62rem", padding: "0.1rem 0.4rem", borderRadius: "0.35rem", marginLeft: "0.4rem", fontWeight: 700, letterSpacing: "0.03em", verticalAlign: "middle" }}>İNCELEMEYE · {k._haneAd}</span>
+                  )}
                   {k.kalemler?.length ? <span style={{ color: V.accent, fontSize: "0.7rem", marginLeft: 6 }}>{k.kalemler.length} kalem</span> : null}
                 </p>
-                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : k._abonelik ? "Abonelik · aylık" : k._maas ? "Maaş eşleşmesi · çift sayılmaz" : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
+                <p style={{ margin: 0, color: V.ink3, fontSize: "0.72rem" }}>{k.tarih} · {k._transfer ? (k._yon === "cikis" ? "Giden transfer" : "Gelen transfer") : k._abonelik ? "Abonelik · aylık" : k._maas ? "Maaş eşleşmesi · çift sayılmaz" : k._haneAd ? `Hane · ${k.tip === "gelir" ? "gelen" : "giden"} · incelemeye alınır` : `${k.kategori} · ${k.tip === "gelir" ? "Gelir" : "Gider"}`}</p>
               </div>
               <p className="num" style={{ margin: 0, fontWeight: 700, color: k._transfer ? V.ink3 : k._abonelik ? V.accent : k.tip === "gelir" ? V.pos : V.neg }}>{k._transfer ? "⇄ " : k.tip === "gelir" ? "+" : "−"}{TL(k.miktar)}</p>
             </div>

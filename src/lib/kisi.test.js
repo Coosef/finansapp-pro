@@ -62,8 +62,11 @@ describe("haneAdaylari — mevcut transfer benzeri gelir/giderden kişi adayı �
   });
 });
 
-describe("haneYenidenSinifla — eşleşen gelir/gideri transfere taşı", () => {
-  it("hane kişisine giden gideri transferAkis leg'ine çevirir (gider listesinden çıkar)", () => {
+// Item 6: KİM (kisiId) / ham YÖN (gelir/gider) / finansal ANLAM (tur) bağımsız.
+// Yeniden sınıflama artık kaydı transfere TAŞIMAZ; yerinde bırakıp kisiId +
+// tur:needs_review ile etiketler (ham tutar/başlık/tarih dokunulmaz).
+describe("haneYenidenSinifla — eşleşen gelir/gideri incelemeye etiketle", () => {
+  it("hane kişisine giden gider listede kalır ama kisiId + tur:needs_review ile etiketlenir", () => {
     const d = {
       kisiler: kisiler(),
       giderler: [
@@ -75,16 +78,28 @@ describe("haneYenidenSinifla — eşleşen gelir/gideri transfere taşı", () =>
     };
     const { data, tasindi } = haneYenidenSinifla(d);
     expect(tasindi).toBe(2);
-    // Gider listesinde artık sadece Migros
-    expect(data.giderler.map((g) => g.id)).toEqual(["g2"]);
-    expect(data.gelirler.length).toBe(0);
-    // İki yeni leg (biri çıkış −, biri giriş +) kisiId ile
-    const legler = data.transferAkis.filter((l) => l.kisiId === "k1");
-    expect(legler.length).toBe(2);
-    expect(legler.find((l) => l.miktar < 0).miktar).toBe(-8000);
-    expect(legler.find((l) => l.miktar > 0).miktar).toBe(2000);
+    // Ham kayıtlar listede KALIR — taşınmaz, çoğalmaz
+    expect(data.giderler.map((g) => g.id)).toEqual(["g1", "g2"]);
+    expect(data.gelirler.map((g) => g.id)).toEqual(["gel1"]);
+    // Eşleşen gider etiketlendi; ham tutar/başlık/tarih değişmedi
+    const g1 = data.giderler.find((g) => g.id === "g1");
+    expect(g1.kisiId).toBe("k1");
+    expect(g1.tur).toBe("needs_review");
+    expect(g1.incelemeNeden).toContain("Kız arkadaşım");
+    expect(g1.miktar).toBe(8000);
+    expect(g1.baslik).toBe("Giden Transfer Helin Ergüzel");
+    // Eşleşen gelir de etiketlendi (ham yön: gelir listesinde kaldı)
+    const gel1 = data.gelirler.find((g) => g.id === "gel1");
+    expect(gel1.kisiId).toBe("k1");
+    expect(gel1.tur).toBe("needs_review");
+    // Eşleşmeyen Migros'a dokunulmadı
+    const g2 = data.giderler.find((g) => g.id === "g2");
+    expect(g2.kisiId).toBeUndefined();
+    expect(g2.tur).toBeUndefined();
+    // Leg üretilmez (eski davranış terk edildi)
+    expect((data.transferAkis || []).length).toBe(0);
   });
-  it("hane olmayan kişi (k2) taşınmaz — dış harcama gider kalır", () => {
+  it("hane olmayan kişi (k2) etiketlenmez — dış harcama sade gider kalır", () => {
     const d = {
       kisiler: kisiler(),
       giderler: [{ id: "g1", baslik: "Kirala ödemesi", miktar: 1000, tarih: "2026-08-05", kategori: "Gönderim", hesapId: "h1" }],
@@ -93,5 +108,16 @@ describe("haneYenidenSinifla — eşleşen gelir/gideri transfere taşı", () =>
     const { data, tasindi } = haneYenidenSinifla(d);
     expect(tasindi).toBe(0);
     expect(data.giderler.length).toBe(1);
+    expect(data.giderler[0].kisiId).toBeUndefined();
+  });
+  it("zaten sınıflı/etiketli kayda ikinci kez dokunmaz (idempotent)", () => {
+    const d = {
+      kisiler: kisiler(),
+      giderler: [{ id: "g1", baslik: "Giden Transfer Helin Ergüzel", miktar: 8000, tarih: "2026-08-05", kategori: "Gönderim", hesapId: "h1", kisiId: "k1", tur: "gift" }],
+      gelirler: [], transferAkis: [],
+    };
+    const { data, tasindi } = haneYenidenSinifla(d);
+    expect(tasindi).toBe(0);
+    expect(data.giderler[0].tur).toBe("gift"); // kullanıcı seçimi korunur
   });
 });

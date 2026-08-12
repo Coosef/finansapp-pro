@@ -127,20 +127,36 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   const [acikYol, setAcikYol] = useState(null); // akış listesinde açık hesap-çifti
   const [kisiDuzenle, setKisiDuzenle] = useState(null); // hane kişisi ekle/düzenle modalı
   const [kisiAkis, setKisiAkis] = useState(null); // bir kişinin para akışı detayı modalı
+  // Bir kişinin para akışı: yeni model (kisiId'li gelir/gider — ham yön: gider=giden,
+  // gelir=gelen) + eski transferAkis bacakları (geriye dönük uyum). İşaretli miktar.
   function kisiAkisAc(k) {
-    const legler = (findata.transferAkis || []).filter((l) => String(l.kisiId) === String(k.id))
-      .slice().sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)));
-    setKisiAkis({ ad: k.ad, legler });
+    const id = String(k.id);
+    const kayittan = (arr, yon) =>
+      (arr || []).filter((x) => String(x.kisiId) === id)
+        .map((x) => ({ tarih: x.tarih, miktar: yon === "gider" ? -Math.abs(+x.miktar || 0) : Math.abs(+x.miktar || 0), aciklama: x.baslik }));
+    const legler = (findata.transferAkis || []).filter((l) => String(l.kisiId) === id)
+      .map((l) => ({ tarih: l.tarih, miktar: +l.miktar || 0, aciklama: l.aciklama }));
+    const hepsi = [...kayittan(findata.giderler, "gider"), ...kayittan(findata.gelirler, "gelir"), ...legler]
+      .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)));
+    setKisiAkis({ ad: k.ad, legler: hepsi });
   }
 
   // ---- Hane kişileri (karşı hesaplar) ----
   const kisiler = findata.kisiler || [];
   const adaylar = haneAdaylari(findata); // veriden aday karşı taraflar
+  // Kişi bazlı nakit akışı — YALNIZ ham para yönünden (gider=gönderilen, gelir=gelen).
+  // Bu bir nakit akışıdır, finansal anlam (harcama/hediye/borç) DEĞİL; KPI'a girmez.
   const kisiFlow = {};
+  const akisEkle = (kisiId, gonderilen, gelen) => {
+    const f = (kisiFlow[kisiId] = kisiFlow[kisiId] || { gonderilen: 0, gelen: 0, adet: 0 });
+    f.gonderilen += gonderilen; f.gelen += gelen; f.adet++;
+  };
+  (findata.giderler || []).filter((g) => g.kisiId).forEach((g) => akisEkle(g.kisiId, Math.abs(+g.miktar || 0), 0));
+  (findata.gelirler || []).filter((g) => g.kisiId).forEach((g) => akisEkle(g.kisiId, 0, Math.abs(+g.miktar || 0)));
+  // Legacy: eski transferAkis bacakları (kisiId ile) — geriye dönük uyum
   (findata.transferAkis || []).filter((l) => l.kisiId).forEach((l) => {
-    const f = (kisiFlow[l.kisiId] = kisiFlow[l.kisiId] || { gonderilen: 0, gelen: 0, adet: 0 });
-    if ((+l.miktar || 0) < 0) f.gonderilen += Math.abs(+l.miktar || 0); else f.gelen += Math.abs(+l.miktar || 0);
-    f.adet++;
+    if ((+l.miktar || 0) < 0) akisEkle(l.kisiId, Math.abs(+l.miktar || 0), 0);
+    else akisEkle(l.kisiId, 0, Math.abs(+l.miktar || 0));
   });
 
   function kisiAc(k) {
@@ -160,7 +176,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
       else list.push({ id: uid(), ...rec });
       return { ...d, kisiler: list };
     });
-    bildir(kisiDuzenle.id ? "Kişi güncellendi" : `${ad} eklendi — ekstre yüklerken ona giden para transfer sayılır`);
+    bildir(kisiDuzenle.id ? "Kişi güncellendi" : `${ad} eklendi — ekstre yüklerken ona giden/gelen para incelemeye alınır`);
     setKisiDuzenle(null);
   }
   function kisiSil(id) {
@@ -176,9 +192,9 @@ export function Hesaplar({ findata, setFindata, bildir }) {
   function haneSinifla() {
     const onceki = findata;
     const { data, tasindi } = haneYenidenSinifla(findata);
-    if (!tasindi) { bildir("Taşınacak işlem yok — kişilerin tanıma kelimelerini kontrol et.", "ok"); return; }
+    if (!tasindi) { bildir("Etiketlenecek işlem yok — kişilerin tanıma kelimelerini kontrol et.", "ok"); return; }
     setFindata(() => data);
-    bildir(`${tasindi} işlem hane transferine taşındı (harcama/gelirden çıktı)`, "ok", { label: "↩ Geri al", onClick: () => setFindata(() => onceki) });
+    bildir(`${tasindi} işlem incelemeye alındı — İşlemler'de finansal türünü seç (şimdilik KPI'a girmez)`, "ok", { label: "↩ Geri al", onClick: () => setFindata(() => onceki) });
   }
 
   function modalKaydet(form) {
@@ -328,7 +344,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
           <Btn variant="gold" onClick={() => kisiAc(null)} style={{ padding: "7px 12px", fontSize: "12.5px" }}><Icon d="plus" size={13} /> Kişi</Btn>
         </div>
         <p style={{ margin: "0 0 0.9rem", fontSize: "12px", color: V.ink3, lineHeight: 1.6 }}>
-          Kendi ve <b>hanendeki kişilerin</b> hesabına giden para <b>transfer</b> sayılır (harcama değil). Bir kişiyi ekle (ör. <i>"Kız arkadaşım"</i>); ekstre yüklerken ona giden/gelen para otomatik transfer olur ve akışı burada görünür.
+          Kendi ve <b>hanendeki kişilerin</b> hesabına giden/gelen para otomatik harcama/gelir sayılmaz — <b>incelemeye alınır</b>. Bir kişiyi ekle (ör. <i>"Kız arkadaşım"</i>); ham para akışı burada görünür, finansal anlamını (harcama / hediye / borç / transfer) İşlemler'de sen seçersin.
         </p>
 
         {/* Veriden öneriler */}
@@ -374,7 +390,7 @@ export function Hesaplar({ findata, setFindata, bildir }) {
         {kisiler.some((k) => k.hane) && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
             <Btn variant="ghost" onClick={haneSinifla} style={{ padding: "8px 13px", fontSize: 12.5 }}>↻ Mevcut işlemleri yeniden sınıfla</Btn>
-            <span style={{ fontSize: 11, color: V.ink3 }}>Geçmiş harcamalardan hane kişilerine gidenleri transfere taşır (geri alınabilir)</span>
+            <span style={{ fontSize: 11, color: V.ink3 }}>Geçmiş gelir/giderlerden hane kişilerine gidenleri incelemeye alır — türünü İşlemler'de seçersin (geri alınabilir)</span>
           </div>
         )}
       </Card>

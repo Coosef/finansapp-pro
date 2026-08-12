@@ -242,7 +242,7 @@ export function ekstreUygula(data, ozet, kayitlar) {
       if (ad && !aboSet.has(ad)) { aboSet.add(ad); abonelikler.push({ id: uid() + 8000 + i, baslik: k.baslik, miktar: k.miktar, kategori: "Abonelik", tarih: k.tarih }); aboEklenen++; }
       return;
     }
-    const { _tekrar, _sec, _taksit, _yon, _abonelik, kalemler, tip: t, ...kayit } = k;
+    const { _tekrar, _sec, _taksit, _yon, _abonelik, _haneAd, _kesinTekrar, kalemler, tip: t, ...kayit } = k;
     const rec = { id: uid() + i, ...kayit, ...(kalemler ? { kalemler } : {}), hesapId: t === "gelir" || t === "gider" ? hesapId || "" : "" };
     if (t === "gelir") { gelirler.push(rec); if (rec.kategori && !gelSet.has(rec.kategori)) { gelSet.add(rec.kategori); gelirKat.push(rec.kategori); } }
     else { giderler.push(rec); if (rec.kategori && !gidSet.has(rec.kategori)) { gidSet.add(rec.kategori); giderKat.push(rec.kategori); } }
