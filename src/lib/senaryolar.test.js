@@ -6,15 +6,16 @@ import { haneYenidenSinifla } from "./kisi.js";
 import { mevcutParmakSeti, hesapAnahtar, batchDedup } from "./parmakizi.js";
 
 // ============================================================
-// E2E senaryoları (headless) — gerçek fonksiyon zinciriyle uçtan uca akış.
-// Tarayıcı/login/production yok; import → dedup → sınıflama → turEtkisi → KPI
-// zincirinin finansal doğruluğunu regresyona karşı kilitler.
-// Dönem "tum" → tarih penceresinden bağımsız, deterministik.
+// ENTEGRASYON/SENARYO testleri (headless — tarayıcı DEĞİL).
+// Gerçek fonksiyon zinciriyle uçtan uca akış: import → dedup → sınıflama →
+// turEtkisi → KPI finansal doğruluğunu regresyona karşı kilitler.
+// NOT: Bu dosya browser E2E DEĞİLDİR (tarayıcı/login/production yok). Gerçek
+// Chrome smoke ayrı yürütülür. Dönem "tum" → tarih-bağımsız, deterministik.
 // ============================================================
 const BUGUN = "2026-08-12";
 const bosData = () => ({ gelirler: [], giderler: [], abonelikler: [], hesaplar: [], kategoriler: { gelir: [], gider: [] } });
 
-describe("E2E-A — normal import → işlem → dashboard → drill-down", () => {
+describe("Senaryo A (entegrasyon) — normal import → işlem → dashboard → drill-down", () => {
   it("ekstre kayıtları eklenir, KPI ve kategori drill-down tutarlı", () => {
     const kayitlar = [
       { tip: "gelir", baslik: "Maaş", miktar: 50000, kategori: "Maaş", tarih: "2026-08-01", kaynak: "ekstre" },
@@ -39,7 +40,7 @@ describe("E2E-A — normal import → işlem → dashboard → drill-down", () =
   });
 });
 
-describe("E2E-B — belirsiz EFT → needs_review → KPI dışı → Gider seç → KPI değişir", () => {
+describe("Senaryo B (entegrasyon) — belirsiz EFT → needs_review → KPI dışı → Gider seç → KPI değişir", () => {
   it("needs_review gider KPI'a girmez; Gider sınıflanınca girer", () => {
     let data = {
       ...bosData(),
@@ -58,7 +59,7 @@ describe("E2E-B — belirsiz EFT → needs_review → KPI dışı → Gider seç
   });
 });
 
-describe("E2E-C — gider + tam/kısmi iade → net gider doğru", () => {
+describe("Senaryo C (entegrasyon) — gider + tam/kısmi iade → net gider doğru", () => {
   it("kısmi iade gideri azaltır, tam iade sıfırlar (iade gelir sayılmaz)", () => {
     const kismi = {
       ...bosData(),
@@ -77,7 +78,7 @@ describe("E2E-C — gider + tam/kısmi iade → net gider doğru", () => {
   });
 });
 
-describe("E2E-D — maaş modeli + ekstre maaşı → tek ekonomik gelir; elle çift → guard", () => {
+describe("Senaryo D (entegrasyon) — maaş modeli + ekstre maaşı → tek ekonomik gelir; elle çift → guard", () => {
   it("ekstre maaşı çift saymaz; elle girilen ikinci maaş needs_review'e alınır", () => {
     const base = {
       ...bosData(),
@@ -106,7 +107,7 @@ describe("E2E-D — maaş modeli + ekstre maaşı → tek ekonomik gelir; elle �
   });
 });
 
-describe("E2E-E — tekrar/örtüşen import → işlem çoğalmaz", () => {
+describe("Senaryo E (entegrasyon) — tekrar/örtüşen import → işlem çoğalmaz", () => {
   it("aynı ekstre ikinci kez içe aktarılınca kesin tekrarlar uygulanmaz", () => {
     const base = { ...bosData(), hesaplar: [{ id: "h1", ad: "Banka", son4: "1234" }] };
     const kayitlar = [
@@ -129,7 +130,7 @@ describe("E2E-E — tekrar/örtüşen import → işlem çoğalmaz", () => {
   });
 });
 
-describe("E2E-F — hane EFT → needs_review → Hediye (gider KPI) → Hane transferi (nötr)", () => {
+describe("Senaryo F (entegrasyon) — hane EFT → needs_review → Hediye (gider KPI) → Hane transferi (nötr)", () => {
   it("sınıflama KPI'ı değiştirir; ham kayıt hiç bozulmaz", () => {
     let data = {
       ...bosData(),
