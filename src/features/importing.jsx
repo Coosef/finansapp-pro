@@ -8,7 +8,7 @@ import { TL, bugun, buAy, uid, fileToBase64, parseJSON, sonrakiTarih } from "../
 import { claudeCall, aiHazir } from "../lib/ai.js";
 import { xlsxToGrid } from "../lib/xlsx.js";
 import { pdfToRows } from "../lib/pdf.js";
-import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula } from "../lib/ekstre.js";
+import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula, finansalTur } from "../lib/ekstre.js";
 import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
 import { maasEslestirmeAdayi, maasEslestirUygula } from "../lib/maas.js";
 import { kisiBul } from "../lib/kisi.js";
@@ -125,7 +125,8 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
         continue;
       }
       const tip = x.tip === "gelir" ? "gelir" : "gider";
-      const temel = { baslik: x.aciklama, miktar, kategori: x.kategori || "Diğer", tarih: x.tarih, kaynak: "ekstre", tip };
+      const ftur = finansalTur(x.aciklama || x.islem, tip, x.kategori);
+      const temel = { baslik: x.aciklama, miktar, kategori: x.kategori || "Diğer", tarih: x.tarih, kaynak: "ekstre", tip, ...(ftur ? { tur: ftur } : {}) };
       const t = tekrarMi(temel);
       kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
     }
@@ -355,7 +356,8 @@ Birden çok görsel verilirse bunlar AYNI ekstrenin sayfalarıdır; TÜM sayfala
       ham.filter((x) => x.tip !== "odeme" && !atlaDesen.test(x.aciklama || "")).forEach((x) => {
         const tip = x.tip === "gelir" ? "gelir" : "gider";
         const miktar = Math.abs(parseFloat(x.miktar) || 0);
-        const temel = { baslik: x.aciklama || "İşlem", miktar, kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip };
+        const ftur = finansalTur(x.aciklama || "", tip, x.kategori);
+        const temel = { baslik: x.aciklama || "İşlem", miktar, kategori: x.kategori || "Diğer", tarih: x.tarih || bugun(), kaynak: "ekstre", tip, ...(ftur ? { tur: ftur } : {}) };
         const t = tekrarMi(temel);
         kayitlar.push({ ...temel, _tekrar: t, _sec: !t });
         // Taksit: kalan taksitleri gelecek aylara borç (gider) olarak ekle

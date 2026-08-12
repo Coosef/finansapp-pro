@@ -94,6 +94,24 @@ export function kategoriTahmin(aciklama, tip) {
   return tip === "gelir" ? "Diğer Gelir" : "Diğer";
 }
 
+// Ekstre işleminden FİNANSAL TÜR tahmini (KPI'yı şişirmeyi önler; siniftur.js).
+// İade → gideri netler; stopaj → geliri netler; kişiyle EFT (generic) → needs_review.
+// null → normal gelir/gider (etiketsiz).
+export function finansalTur(aciklama, tip, kategori) {
+  const a = kucuk(aciklama);
+  if (tip === "gider") {
+    if (/stopaj|bsmv|vergi kesint/.test(a)) return "stopaj";
+    if (kategori === "Gönderim") return "needs_review"; // kişiye generic gönderim → incelensin
+    return null;
+  }
+  if (tip === "gelir") {
+    if (/[iı]ade|geri öde|geri ode|ters kay|refund/.test(a)) return "iade";
+    if (/transfer|havale|\beft\b|\bfast\b|gönderim|gonderim/.test(a)) return "needs_review"; // kişiden gelen belirsiz
+    return null;
+  }
+  return null;
+}
+
 // Bir işlemi sınıfla: "odeme" (kart borcu) | "transfer" | "gelir" | "gider"
 // sahipTokens: hesap sahibinin ad parçaları (kendine transferi yakalamak için)
 // ekstreTipi: "kart" ise işaret bazlı (çıkış=ödeme, giriş=harcama)

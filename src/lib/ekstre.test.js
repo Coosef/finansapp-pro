@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit, yenidenSiniflandir, ekstreDogrula, hesapBul, ekstreUygula } from "./ekstre.js";
+import { ekstreParse, ibanBanka, tarihCevir, kategoriTahmin, aboneTespit, yenidenSiniflandir, ekstreDogrula, hesapBul, ekstreUygula, finansalTur } from "./ekstre.js";
 
 const bosData = () => ({ gelirler: [], giderler: [], abonelikler: [], hesaplar: [], transferAkis: [], kategoriler: { gider: [], gelir: [] } });
 
@@ -44,6 +44,26 @@ describe("siniflandir (ekstreParse üzerinden) — transfer/EFT düzeltmeleri", 
     const { islemler } = ekstreParse(hesapRows("Giden Transfer Ev kirası", "-8.000,00"));
     expect(islemler[0].tip).toBe("gider");
     expect(islemler[0].kategori).toBe("Kira");
+  });
+});
+
+describe("finansalTur — KPI şişmesini önleyen tür tahmini", () => {
+  it("iade geliri → 'iade' (income değil)", () => {
+    expect(finansalTur("MARKET IADE bedeli", "gelir", "Diğer")).toBe("iade");
+  });
+  it("faiz stopajı gideri → 'stopaj' (tüketim gideri değil)", () => {
+    expect(finansalTur("Faiz geliri vergi kesintisi stopaj", "gider", "Vergi/Resmi")).toBe("stopaj");
+  });
+  it("kişiden gelen transfer → needs_review", () => {
+    expect(finansalTur("Gelen Transfer, Ahmet, araba için", "gelir", "Diğer Gelir")).toBe("needs_review");
+  });
+  it("generic Gönderim gideri → needs_review", () => {
+    expect(finansalTur("Giden Transfer, Mehmet", "gider", "Gönderim")).toBe("needs_review");
+  });
+  it("normal maaş/market → null (etiketsiz, eski davranış)", () => {
+    expect(finansalTur("XYZ MAAŞ ÖDEMESİ", "gelir", "Maaş")).toBe(null);
+    expect(finansalTur("Migros market", "gider", "Market")).toBe(null);
+    expect(finansalTur("Ev kirası ödemesi", "gider", "Kira")).toBe(null); // gerçek gider, kategori Gönderim değil
   });
 });
 

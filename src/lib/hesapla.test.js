@@ -71,6 +71,29 @@ describe("donemHesap — dönem özeti (tek doğruluk kaynağı)", () => {
   });
 });
 
+describe("donemHesap — finansal tür KPI netleme (audit item 2/5/7)", () => {
+  it("iade gideri netler (income değil), stopaj geliri netler, needs_review nötr", () => {
+    const d = {
+      gelirler: [
+        { miktar: 90000, tarih: "2026-08-05", kategori: "Maaş" },
+        { miktar: 5000, tarih: "2026-08-07", kategori: "Diğer", tur: "iade" },        // gideri azaltmalı
+        { miktar: 1000, tarih: "2026-08-08", kategori: "Faiz/Yatırım" },              // brüt faiz
+        { miktar: 78000, tarih: "2026-08-09", kategori: "Diğer", tur: "needs_review" }, // 3rd-party EFT → nötr
+      ],
+      giderler: [
+        { miktar: 5000, tarih: "2026-08-03", kategori: "Market" },
+        { miktar: 150, tarih: "2026-08-08", kategori: "Vergi/Resmi", tur: "stopaj" },  // geliri azaltmalı
+      ],
+      abonelikler: [],
+    };
+    const r = donemHesap(d, "buAy", "2026-08-15");
+    // gelir = 90000 + 1000(faiz) − 150(stopaj) = 90850 ; iade & needs_review income'a girmez
+    expect(r.gelir).toBe(90850);
+    // gider = 5000(market) − 5000(iade) = 0
+    expect(r.giderToplam).toBe(0);
+  });
+});
+
 describe("ay yardımcıları", () => {
   it("ayAraligi ayın ilk ve son gününü verir", () => {
     expect(ayAraligi("2026-08")).toEqual({ start: "2026-08-01", end: "2026-08-31" });

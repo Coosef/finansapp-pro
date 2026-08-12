@@ -10,6 +10,7 @@
 //    gelirler/giderler listelerinde değildir; transferAkis'te tutulur).
 // ============================================================
 import { donemAraligi, donemde } from "./finance.js";
+import { turEtkisi } from "./siniftur.js";
 
 const topla = (liste) => (liste || []).reduce((s, x) => s + (+x.miktar || 0), 0);
 
@@ -36,8 +37,11 @@ function araliktanOzet(findata, aralik, donem) {
   const d = findata || {};
   const gelirler = (d.gelirler || []).filter((g) => donemde(g.tarih, aralik));
   const giderler = (d.giderler || []).filter((g) => donemde(g.tarih, aralik));
-  const gelir = topla(gelirler);
-  const giderKalem = topla(giderler);
+  // Finansal tür'e göre net: iade/reimbursement gideri azaltır, stopaj geliri azaltır,
+  // needs_review/transfer/borç türleri KPI dışı. Etiketsiz kayıt = eski davranış.
+  let gelir = 0, giderKalem = 0;
+  gelirler.forEach((g) => { const e = turEtkisi(g, "gelir"); gelir += e.gelir; giderKalem += e.gider; });
+  giderler.forEach((g) => { const e = turEtkisi(g, "gider"); gelir += e.gelir; giderKalem += e.gider; });
   const aboneAylik = topla(d.abonelikler);
   const abone = aboneAylik * aboneCarpani(donem);
   const giderToplam = giderKalem + abone;
