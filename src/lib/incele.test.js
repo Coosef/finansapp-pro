@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bekleyenInceleme, turSecenekleri, turEtkiIpucu, turEtiket } from "./incele.js";
+import { bekleyenInceleme, siniflananHane, turSecenekleri, turEtkiIpucu, turEtiket } from "./incele.js";
 import { TUR } from "./siniftur.js";
 
 // İncelenecek işlemler katmanı (item 6 UI): needs_review backlog + yön-uygun
@@ -29,6 +29,30 @@ describe("bekleyenInceleme — needs_review backlog", () => {
   it("needs_review yoksa boş backlog", () => {
     expect(bekleyenInceleme({ gelirler: [{ id: "a", tur: TUR.GELIR }], giderler: [] })).toEqual({ adet: 0, toplam: 0, kayitlar: [] });
     expect(bekleyenInceleme({})).toEqual({ adet: 0, toplam: 0, kayitlar: [] });
+  });
+});
+
+describe("siniflananHane — sınıflanmış ama yeniden sınıflanabilir hane kayıtları", () => {
+  it("kisiId/incelemeNeden taşıyan, needs_review OLMAYAN kayıtları döner; ham needs_review'ı ve etiketsizi dışlar", () => {
+    const d = {
+      gelirler: [
+        { id: "gel1", baslik: "Gelen", miktar: 2000, tarih: "2026-08-10", kisiId: "k1", tur: TUR.HEDIYE }, // sınıflı hane → dahil
+        { id: "gel2", baslik: "Maaş", miktar: 50000, tarih: "2026-08-01" }, // etiketsiz → hariç
+      ],
+      giderler: [
+        { id: "g1", baslik: "Giden", miktar: 9000, tarih: "2026-08-05", kisiId: "k1", tur: TUR.INCELE }, // hâlâ incelemede → hariç
+        { id: "g2", baslik: "Hediye", miktar: 500, tarih: "2026-08-06", incelemeNeden: "x", tur: TUR.GIDER }, // sınıflı → dahil
+      ],
+    };
+    const r = siniflananHane(d);
+    const ids = r.map((x) => x.id);
+    expect(ids).toEqual(expect.arrayContaining(["gel1", "g2"]));
+    expect(ids).not.toContain("gel2"); // etiketsiz
+    expect(ids).not.toContain("g1"); // hâlâ needs_review
+    expect(r.find((x) => x.id === "gel1")._yon).toBe("gelir");
+  });
+  it("hane kaydı yoksa boş", () => {
+    expect(siniflananHane({ gelirler: [], giderler: [] })).toEqual([]);
   });
 });
 

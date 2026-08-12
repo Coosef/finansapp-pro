@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { V, F, SERIF, MONO, AY_ADI, inputStyle } from "../lib/constants.js";
 import { TL, sayiCevir } from "../lib/format.js";
 import { tryeCevir, pbSembol, PB_SECENEK } from "../lib/parabirimi.js";
-import { bekleyenInceleme, turSecenekleri, turEtkiIpucu, turEtiket } from "../lib/incele.js";
+import { bekleyenInceleme, siniflananHane, turSecenekleri, turEtkiIpucu, turEtiket } from "../lib/incele.js";
 import { Icon } from "../components/icons.jsx";
 import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 
@@ -15,9 +15,10 @@ const ETKI_RENK = { gider: V.neg, gelir: V.pos, iade: V.pos, stopaj: V.neg, notr
 
 // İncelenecek işlem kartı: ham kaydı bozmadan finansal anlam seçtirir.
 // Ham başlık/tutar/yön/kişi gösterilir; her seçenek KPI etkisini canlı belirtir.
-function InceleSatir({ rec, kisiAd, son, onSinifla }) {
+function InceleSatir({ rec, kisiAd, son, onSinifla, aktifTur }) {
   const cikis = rec._yon === "gider";
   const secenekler = turSecenekleri(rec._yon);
+  const altMeta = [isoKisa(rec.tarih), cikis ? "giden" : "gelen", kisiAd || rec.incelemeNeden].filter(Boolean).join(" · ");
   return (
     <div style={{ padding: "13px 0", borderBottom: son ? "none" : `1px solid ${V.line}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 9 }}>
@@ -25,23 +26,25 @@ function InceleSatir({ rec, kisiAd, son, onSinifla }) {
           <Icon d={cikis ? "arrowDown" : "arrowUp"} size={16} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rec.baslik}</div>
-          <div style={{ fontSize: 11.5, color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {[isoKisa(rec.tarih), cikis ? "giden" : "gelen", kisiAd || rec.incelemeNeden].filter(Boolean).join(" · ")}
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {rec.baslik}
+            {aktifTur && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: V.accent, background: V.chipGold, border: `1px solid ${V.accent}55`, padding: "1px 6px", borderRadius: 5 }}>{turEtiket(aktifTur)}</span>}
           </div>
+          <div style={{ fontSize: 11.5, color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{altMeta}</div>
         </div>
         <span className="num" style={{ fontSize: 14, fontWeight: 700, color: cikis ? V.neg : V.pos, fontFamily: MONO, flexShrink: 0 }}>{cikis ? "−" : "+"}{TL(rec.miktar)}</span>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingLeft: 46 }}>
         {secenekler.map((s) => {
           const ip = turEtkiIpucu(s.tur, rec._yon);
+          const secili = aktifTur === s.tur;
           return (
             <button
               key={s.tur}
               onClick={() => onSinifla(rec, s.tur)}
               className="fa-btn"
               title={`${s.label} → ${ip.metin}`}
-              style={{ border: `1px solid ${V.border2}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: F, background: V.card2, color: V.ink2, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+              style={{ border: `1px solid ${secili ? V.accent : V.border2}`, borderRadius: 8, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: F, background: secili ? V.chipGold : V.card2, color: secili ? V.accent : V.ink2, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
             >
               {s.label}
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: ETKI_RENK[ip.tip], flexShrink: 0 }} />
@@ -162,12 +165,13 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
   const ayBaslik = (ay) => { const [y, m] = ay.split("-"); return AY_ADI[+m - 1] ? `${AY_ADI[+m - 1]} ${y}` : ay; };
   const ayNet = (arr) => arr.reduce((s, t) => s + (t.tip === "gelir" ? +t.miktar : -t.miktar), 0);
 
+  const sinifliAdet = siniflananHane(findata).length; // yeniden sınıflanabilir (sınıflanmış hane)
   const FILTRELER = [
     { id: "tumu", label: "Tümü" },
     { id: "gelir", label: "Gelir" },
     { id: "gider", label: "Gider" },
     { id: "abonelik", label: "Abonelik" },
-    ...(bekleyen.adet ? [{ id: "incele", label: `İncele · ${bekleyen.adet}`, uyari: true }] : []),
+    ...(bekleyen.adet || sinifliAdet ? [{ id: "incele", label: bekleyen.adet ? `İncele · ${bekleyen.adet}` : "İncele", uyari: bekleyen.adet > 0 }] : []),
   ];
 
   return (
@@ -219,8 +223,10 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
 
       {filter === "incele" ? (
         (() => {
-          const bekleyenListe = bekleyen.kayitlar.filter((r) => !aranan || `${r.baslik || ""} ${kisiAdi(r.kisiId)}`.toLocaleLowerCase("tr").includes(aranan));
-          return bekleyenListe.length === 0 ? (
+          const ara = (r) => !aranan || `${r.baslik || ""} ${kisiAdi(r.kisiId)}`.toLocaleLowerCase("tr").includes(aranan);
+          const bekleyenListe = bekleyen.kayitlar.filter(ara);
+          const sinifliListe = siniflananHane(findata).filter(ara);
+          return bekleyenListe.length === 0 && sinifliListe.length === 0 ? (
             <Bos baslik="İncelenecek işlem yok" mesaj="Sınıflandırılmayı bekleyen işlem yok. Hane kişilerine giden/gelen para burada listelenir." icon="doc" />
           ) : (
             <>
@@ -228,11 +234,23 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
                 <div style={{ fontSize: 13, fontWeight: 600, color: V.ink, marginBottom: 3 }}>🔎 {bekleyen.adet} işlem · {TL(bekleyen.toplam)} sınıflandırılmayı bekliyor</div>
                 <div style={{ fontSize: 12, color: V.ink2, lineHeight: 1.5 }}>Ham işleme dokunulmaz — yalnızca <b>finansal anlamını</b> seçersin. Renkli nokta KPI etkisini gösterir: <span style={{ color: V.neg }}>● gider</span> · <span style={{ color: V.pos }}>● gelir/iade</span> · <span style={{ color: V.ink3 }}>● nötr</span>. İstediğin zaman değiştirebilirsin.</div>
               </div>
-              <Card style={{ padding: "4px 18px" }}>
-                {bekleyenListe.map((r, i) => (
-                  <InceleSatir key={`${r._yon}-${r.id}`} rec={r} kisiAd={kisiAdi(r.kisiId)} son={i === bekleyenListe.length - 1} onSinifla={siniflaKayit} />
-                ))}
-              </Card>
+              {bekleyenListe.length > 0 && (
+                <Card style={{ padding: "4px 18px", marginBottom: sinifliListe.length ? 14 : 0 }}>
+                  {bekleyenListe.map((r, i) => (
+                    <InceleSatir key={`${r._yon}-${r.id}`} rec={r} kisiAd={kisiAdi(r.kisiId)} son={i === bekleyenListe.length - 1} onSinifla={siniflaKayit} />
+                  ))}
+                </Card>
+              )}
+              {sinifliListe.length > 0 && (
+                <>
+                  <div style={{ margin: "0 4px 7px", fontSize: 11.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Sınıflanmış · değiştirebilirsin</div>
+                  <Card style={{ padding: "4px 18px" }}>
+                    {sinifliListe.map((r, i) => (
+                      <InceleSatir key={`s-${r._yon}-${r.id}`} rec={r} kisiAd={kisiAdi(r.kisiId)} son={i === sinifliListe.length - 1} onSinifla={siniflaKayit} aktifTur={r.tur} />
+                    ))}
+                  </Card>
+                </>
+              )}
             </>
           );
         })()

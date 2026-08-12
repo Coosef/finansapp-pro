@@ -16,6 +16,17 @@ export function bekleyenInceleme(findata) {
   return { adet: kayitlar.length, toplam, kayitlar };
 }
 
+// İncelemeden geçip SINIFLANMIŞ (artık needs_review olmayan) ama yeniden
+// sınıflanabilir kayıtlar: incelemeNeden ya da kisiId taşıyan gelir/gider.
+// Kullanıcı türünü sonradan değiştirebilsin diye İncele görünümünde ayrı listelenir.
+export function siniflananHane(findata) {
+  const d = findata || {};
+  const uygun = (x) => (x?.incelemeNeden || x?.kisiId) && x?.tur && x.tur !== TUR.INCELE;
+  const al = (arr, yon) => (arr || []).filter(uygun).map((x) => ({ ...x, _yon: yon }));
+  return [...al(d.gelirler, "gelir"), ...al(d.giderler, "gider")]
+    .sort((a, b) => String(b.tarih || "").localeCompare(String(a.tarih || "")));
+}
+
 // Ham yöne (gelir=gelen / gider=giden) uygun finansal anlam seçenekleri.
 // İnvaryant: ham yön DEĞİŞMEZ; yalnız anlam seçilir. Bu yüzden karşı-yön
 // birincil seçenekleri (gidene "Gelir") sunulmaz.
