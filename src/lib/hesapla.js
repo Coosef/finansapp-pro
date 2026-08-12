@@ -19,12 +19,17 @@ function aboneCarpani(donem) {
   return donem === "buYil" ? 12 : 1;
 }
 
-// Kategori dağılımı: {kategori: toplam} → azalan sıralı [{kategori, toplam, pct}]
+// Kategori dağılımı: {kategori: toplam} → azalan sıralı [{kategori, toplam, pct}].
+// turEtkisi ile TUTARLI: yalnız gider KPI'sına katkı veren kayıtlar sayılır
+// (needs_review / iç+hane transfer / verilen borç = nötr → dışlanır). Etiketsiz
+// kayıt eski davranışla birebir (ham miktar) → geriye tam uyum.
 export function kategoriDagilim(giderler) {
   const kat = {};
   (giderler || []).forEach((g) => {
+    const m = turEtkisi(g, "gider").gider; // KPI'ya gider katkısı (nötr türlerde 0)
+    if (m <= 0) return; // incelemede/transfer/borç → harcama dağılımına girmez
     const k = g.kategori || "Diğer";
-    kat[k] = (kat[k] || 0) + (+g.miktar || 0);
+    kat[k] = (kat[k] || 0) + m;
   });
   const toplam = Object.values(kat).reduce((s, v) => s + v, 0);
   return Object.entries(kat)

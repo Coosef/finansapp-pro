@@ -151,4 +151,19 @@ describe("kategoriDagilim", () => {
     expect(Math.round(d[0].pct)).toBe(83); // 5000/6000
     expect(d[1]).toMatchObject({ kategori: "Restoran", toplam: 1000 });
   });
+  it("needs_review / nötr türleri dışlar, sınıflı hediyeyi katar (turEtkisi tutarlı)", () => {
+    const giderler = [
+      { kategori: "Market", miktar: 1000 }, // düz gider → sayılır
+      { kategori: "Diğer", miktar: 9000, tur: "needs_review" }, // incelemede → KPI dışı → sayılmaz
+      { kategori: "Gönderim", miktar: 5000, tur: "household_transfer" }, // nötr → sayılmaz
+      { kategori: "Hediye", miktar: 2000, tur: "gift" }, // hediye (gider yönü) → sayılır
+    ];
+    const d = kategoriDagilim(giderler);
+    const kats = d.map((x) => x.kategori);
+    expect(kats).toEqual(expect.arrayContaining(["Market", "Hediye"]));
+    expect(kats).not.toContain("Diğer"); // needs_review dışlandı
+    expect(kats).not.toContain("Gönderim"); // hane transfer dışlandı
+    expect(d.find((x) => x.kategori === "Market").toplam).toBe(1000);
+    expect(d.find((x) => x.kategori === "Hediye").toplam).toBe(2000);
+  });
 });

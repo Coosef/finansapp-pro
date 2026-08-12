@@ -127,7 +127,7 @@ export function Panel({
   const drillAc = (baslik, kayitlar, tip) => setDrill({ baslik, kayitlar: [...(kayitlar || [])].sort((a, b) => String(b.tarih).localeCompare(String(a.tarih))), tip });
 
   const stats = [
-    { label: "Toplam Gelir", value: TL(toplamGelir), delta: `${donemAdi} · geçen aya göre ${yuzde(mom.degisim.gelir)}`, deltaColor: momRenk(mom.degisim.gelir, true), onClick: () => drillAc("Gelirler — " + donemAdi, oz.gelirler, "gelir") },
+    { label: "Toplam Gelir", value: TL(oz.gelir), delta: `${donemAdi} · geçen aya göre ${yuzde(mom.degisim.gelir)}`, deltaColor: momRenk(mom.degisim.gelir, true), onClick: () => drillAc("Gelirler — " + donemAdi, oz.gelirler, "gelir") },
     { label: "Toplam Gider", value: TL(giderToplam), delta: `Abonelik dahil · ${yuzde(mom.degisim.giderToplam)}`, deltaColor: momRenk(mom.degisim.giderToplam, false), onClick: () => drillAc("Giderler — " + donemAdi, oz.giderler, "gider") },
     { label: "Net Nakit", value: TL(nakit), delta: `Tasarruf %${tasarrufOrani}`, deltaColor: nakitRenk },
     { label: "Net Varlık", value: TL(netDeger), delta: `Yatırım ${TL(yatirimDeger)}`, deltaColor: V.ink3, onClick: () => onGit && onGit("hesap") },
@@ -167,10 +167,9 @@ export function Panel({
     sonNokta = pts[pts.length - 1];
   }
 
-  // ---- Harcama dağılımı (donut) ----
-  const katToplam = {};
-  (fd.giderler || []).forEach((g) => { katToplam[g.kategori] = (katToplam[g.kategori] || 0) + g.miktar; });
-  const katSirali = Object.entries(katToplam).sort((a, b) => b[1] - a[1]);
+  // ---- Harcama dağılımı (donut) — oz.kategoriler ile TUTARLI (turEtkisi: needs_review
+  // / transfer / borç dışı). Kendi ham toplamı yerine tek doğruluk kaynağını kullan.
+  const katSirali = oz.kategoriler.map((k) => [k.kategori, k.toplam]);
   const top5 = katSirali.slice(0, 5);
   const digerTutar = katSirali.slice(5).reduce((s, [, v]) => s + v, 0);
   const donutData = [...top5.map(([cat, amt], i) => ({ cat, amt, color: PALET[i % PALET.length] }))];
