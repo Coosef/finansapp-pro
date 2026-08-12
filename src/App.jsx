@@ -335,6 +335,7 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
   const [bildirim, setBildirim] = useState(null);
   const [daha, setDaha] = useState(false);
   const [donem, setDonem] = useState("buAy");
+  const [islemFiltre, setIslemFiltre] = useState(null); // Panel→İşlemler tek-seferlik "İncele" odağı
   const [donemAcik, setDonemAcik] = useState(false);
   const [bildirimAcik, setBildirimAcik] = useState(false);
   const [paletAcik, setPaletAcik] = useState(false);
@@ -706,8 +707,8 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
 
         <div className="fa-scr">
           <div className="fa-page" key={tab} style={{ maxWidth: 1120, margin: "0 auto" }}>
-            {tab === "panel" && <Panel {...ekranOrtak} donemAdi={DONEMLER.find((d) => d.id === donem)?.ad} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} nakit={nakit} netDeger={netDeger} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} guncelDeger={guncelDeger} onHizliEkle={ekle} kategoriOgren={kategoriOgren} onGit={setTab} />}
-            {tab === "islemler" && <Islemler findata={findata} fd={fd} donem={donem} bildir={bildir} onSil={sil} onDuzenle={duzenleIslem} onGelirEkle={() => islemAc("gelir")} onGiderEkle={() => islemAc("gider")} onAbonelikEkle={abonelikAc} />}
+            {tab === "panel" && <Panel {...ekranOrtak} donemAdi={DONEMLER.find((d) => d.id === donem)?.ad} toplamGelir={toplamGelir} toplamGider={toplamGider} toplamAbonelik={toplamAbonelik} nakit={nakit} netDeger={netDeger} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} guncelDeger={guncelDeger} onHizliEkle={ekle} kategoriOgren={kategoriOgren} onGit={setTab} onIncele={() => { setIslemFiltre("incele"); setTab("islemler"); }} />}
+            {tab === "islemler" && <Islemler findata={findata} fd={fd} donem={donem} bildir={bildir} setFindata={setFindata} baslangicFiltre={islemFiltre} onFiltreTemizle={() => setIslemFiltre(null)} onSil={sil} onDuzenle={duzenleIslem} onGelirEkle={() => islemAc("gelir")} onGiderEkle={() => islemAc("gider")} onAbonelikEkle={abonelikAc} />}
             {tab === "hesap" && <Hesaplar findata={findata} setFindata={setFindata} bildir={bildir} />}
             {tab === "yatirim" && <Yatirimlar findata={findata} setFindata={setFindata} guncelDeger={guncelDeger} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} yatirimMaliyet={yatirimMaliyet} onEkle={yatirimAc} onSil={(id) => sil("yatirim", id)} onDuzenle={duzenleYatirim} onGuncelle={tumFiyatlariGuncelle} guncelleniyor={fiyatGuncelleniyor} />}
             {tab === "asistan" && <Asistan findata={findata} guncelDeger={guncelDeger} toplamGelir={toplamGelirTum} toplamGider={toplamGiderTum} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} netDeger={netDeger} bildir={bildir} />}

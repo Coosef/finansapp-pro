@@ -14,6 +14,7 @@ import { faturaKategori } from "../lib/fatura.js";
 import { taksitPlanlari, aylikTaksitYuku, kalanTaksitBorcu } from "../lib/taksit.js";
 import { nakitAkisProjeksiyon } from "../lib/nakitakis.js";
 import { sessizZamlar } from "../lib/anomali.js";
+import { bekleyenInceleme } from "../lib/incele.js";
 import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para, Modal, Field } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -28,8 +29,9 @@ const kisaTarih = (t) => (t ? `${parseInt(t.slice(8, 10), 10)} ${kisaAy(t)}` : "
 export function Panel({
   findata, fd, donem, donemAdi, setFindata, bildir,
   toplamGelir, toplamGider, toplamAbonelik, nakit, netDeger,
-  yatirimDeger, yatirimKar, guncelDeger, onHizliEkle, kategoriOgren, onGit,
+  yatirimDeger, yatirimKar, guncelDeger, onHizliEkle, kategoriOgren, onGit, onIncele,
 }) {
+  const bekleyenIncele = bekleyenInceleme(findata); // sınıflandırma bekleyen (needs_review)
   const [metin, setMetin] = useState("");
   const [bekle, setBekle] = useState(false);
   const [fisOku, setFisOku] = useState(false);
@@ -227,6 +229,23 @@ export function Panel({
     <div>
       {/* 0) Editoryal brifing (veriden üretilen manşet) */}
       <Brifing manset={brifing.manset} destek={brifing.destek} />
+
+      {/* 0a) İnceleme uyarısı — finansal anlamı bekleyen (needs_review) işlemler.
+          Tıkla → İşlemler'in İncele görünümü. KPI'a girmezler; sınıflanınca yansır. */}
+      {bekleyenIncele.adet > 0 && (
+        <div
+          onClick={() => (onIncele ? onIncele() : onGit && onGit("islemler"))}
+          role="button"
+          style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}77`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+        >
+          <span style={{ fontSize: 18 }}>🔎</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink }}>{bekleyenIncele.adet} işlem · {TL(bekleyenIncele.toplam)} sınıflandırılmayı bekliyor</div>
+            <div style={{ fontSize: 11.5, color: V.ink2 }}>Hane kişilerine giden/gelen para — KPI'a girmez. Finansal türünü seçmek için dokun.</div>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 600, color: V.accent, flexShrink: 0 }}>İncele →</span>
+        </div>
+      )}
 
       {/* 0b) Sessiz zam uyarısı — tutarı sessizce artan tekrarlayan kalemler */}
       {zamlar.length > 0 && (
