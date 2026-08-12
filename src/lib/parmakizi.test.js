@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { normalizeAciklama, hesapAnahtar, parmakIzi, mevcutParmakSeti, batchDedup } from "./parmakizi.js";
+import { ekstreUygula } from "./ekstre.js";
 
 describe("normalizeAciklama", () => {
   it("rakam/noktalama atar, küçük harfe indirir", () => {
@@ -51,6 +52,31 @@ describe("batchDedup — çoklu dosya cross-file dedup (idempotent)", () => {
     const r = batchDedup(new Set(), gruplar);
     expect(r[0][0]._kesinTekrar).toBeFalsy();
     expect(r[0][1]._kesinTekrar).toBeFalsy();
+  });
+  // Gerçek apply-loop (importing.jsx cokluIceAktar mantığı) idempotency kanıtı
+  const uygulaLoop = (findata, dosyalar) => {
+    let cur = findata;
+    const set = mevcutParmakSeti(cur);
+    for (const s of dosyalar) {
+      const hA = hesapAnahtar(cur, { son4: s.ozet?.son4 });
+      const temiz = (s.kayitlar || []).filter((k) => { const fp = parmakIzi(k, hA); if (set.has(fp)) return false; set.add(fp); return true; });
+      cur = ekstreUygula(cur, s.ozet, temiz).data;
+    }
+    return cur;
+  };
+  it("A dosyası + B dosyası aynı işlem (aynı hesap) → tek ekonomik gider", () => {
+    const ozet = { ekstreTipi: "hesap", son4: "1234", banka: "Garanti" };
+    const rec = { baslik: "Migros AVM", miktar: 500, kategori: "Market", tarih: "2026-08-05", tip: "gider" };
+    const d = uygulaLoop({ gelirler: [], giderler: [], hesaplar: [] }, [{ ozet, kayitlar: [rec] }, { ozet, kayitlar: [{ ...rec }] }]);
+    expect(d.giderler.filter((g) => g.baslik === "Migros AVM").length).toBe(1);
+  });
+  it("aynı gün/tutar FARKLI market → iki gider korunur (kayıp yok)", () => {
+    const ozet = { ekstreTipi: "hesap", son4: "1234", banka: "Garanti" };
+    const d = uygulaLoop({ gelirler: [], giderler: [], hesaplar: [] }, [{ ozet, kayitlar: [
+      { baslik: "Market A", miktar: 500, kategori: "Market", tarih: "2026-08-05", tip: "gider" },
+      { baslik: "Market B", miktar: 500, kategori: "Market", tarih: "2026-08-05", tip: "gider" },
+    ] }]);
+    expect(d.giderler.length).toBe(2);
   });
   it("mevcut findata parmak izine karşı da dedup", () => {
     const d = { hesaplar: [{ id: "h1", son4: "1234" }], giderler: [{ baslik: "Migros AVM", miktar: 350, tarih: "2026-08-05", hesapId: "h1" }], gelirler: [] };

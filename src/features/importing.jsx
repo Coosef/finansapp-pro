@@ -12,6 +12,7 @@ import { ekstreParse, ekstreDogrula, yenidenSiniflandir, hesapBul, ekstreUygula,
 import { giderKategorileri, gelirKategorileri, iceAktarilaniTemizle } from "../lib/finance.js";
 import { maasEslestirmeAdayi, maasEslestirUygula } from "../lib/maas.js";
 import { kisiBul } from "../lib/kisi.js";
+import { mevcutParmakSeti, parmakIzi, hesapAnahtar } from "../lib/parmakizi.js";
 import { gibKareParse, faturaKategori, kalemDogrula, yinelenenFaturaMi } from "../lib/fatura.js";
 import { Card, Btn, Seg, Yukleniyor } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
@@ -208,10 +209,22 @@ export function IceAktar({ findata, setFindata, bildir, ekle, kategoriOgren }) {
     if (islenmis.length) {
       setFindata((d) => {
         let cur = d;
+        // Cross-file / re-import idempotency: biriken parmak izi setine karşı KESİN
+        // tekrarları ele (aynı işlem birden çok dosyada/ikinci importta çoğalmasın).
+        // possible_duplicate (fuzzy _tekrar) buna DAHİL DEĞİL, sessizce silinmez.
+        const set = mevcutParmakSeti(cur);
         for (const s of islenmis) {
-          const maaslar = s.kayitlar.filter((k) => k._sec && !k._transfer && k._maas);
-          const secili = s.kayitlar.filter((k) => k._sec && !k._transfer && !k._maas);
-          const uyg = [...secili, ...s.kayitlar.filter((k) => k._transfer)];
+          const hAnahtar = hesapAnahtar(cur, { son4: s.ozet?.son4, hesapId: hesapBul(cur, s.ozet)?.hedef?.id });
+          const temiz = s.kayitlar.map((k) => {
+            if (k._transfer || !k._sec) return k;
+            const fp = parmakIzi(k, hAnahtar);
+            if (set.has(fp)) return { ...k, _sec: false, _kesinTekrar: true };
+            set.add(fp);
+            return k;
+          });
+          const maaslar = temiz.filter((k) => k._sec && !k._transfer && k._maas);
+          const secili = temiz.filter((k) => k._sec && !k._transfer && !k._maas);
+          const uyg = [...secili, ...temiz.filter((k) => k._transfer)];
           cur = ekstreUygula(cur, s.ozet, uyg).data;
           for (const k of maaslar) cur = maasEslestirUygula(cur, k._maas.maasId, k._maas.ay, k.miktar, "ekstre");
         }
