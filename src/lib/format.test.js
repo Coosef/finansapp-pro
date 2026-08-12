@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TL, TL2, bugun, buAy, sonrakiTarih, aylikEsdeger, kategoriAnahtar, sayiCikar, sayiCevir, parseJSON, tarihNormalize } from "./format.js";
+import { TL, TL2, bugun, buAy, sonrakiTarih, aylikEsdeger, kategoriAnahtar, sayiCikar, sayiCevir, parseJSON, tarihNormalize, uid } from "./format.js";
 
 describe("para biçimleme", () => {
   it("TL binlik ayracı ve ₺ içerir, ondalık yok", () => {
@@ -23,6 +23,19 @@ describe("tarih yardımcıları", () => {
   });
   it("buAy YYYY-MM biçiminde", () => {
     expect(buAy()).toMatch(/^\d{4}-\d{2}$/);
+  });
+  it("bugun/buAy YEREL takvimi kullanır (UTC toISOString kayması yok)", () => {
+    // Eylül 1, 01:30 yerel: UTC+3'te toISOString Ağustos'a düşerdi; yerel Eylül olmalı.
+    expect(bugun(new Date(2026, 8, 1, 1, 30))).toBe("2026-09-01");
+    expect(buAy(new Date(2026, 8, 1, 1, 30))).toBe("2026-09");
+  });
+  it("ay sonu 23:59 yerel → doğru ay", () => {
+    expect(bugun(new Date(2026, 7, 31, 23, 59))).toBe("2026-08-31");
+    expect(buAy(new Date(2026, 7, 31, 23, 59))).toBe("2026-08");
+  });
+  it("Aralık→Ocak yıl geçişi (yerel)", () => {
+    expect(bugun(new Date(2026, 11, 31, 23, 30))).toBe("2026-12-31");
+    expect(buAy(new Date(2027, 0, 1, 0, 5))).toBe("2027-01");
   });
   it("sonrakiTarih aylık", () => {
     expect(sonrakiTarih("2026-01-15", "aylık")).toBe("2026-02-15");
@@ -62,6 +75,14 @@ describe("tarihNormalize (AI/fiş tarihini güvenli ISO'ya çevir)", () => {
   });
   it("fallback verilmezse bugünü kullanır", () => {
     expect(tarihNormalize("saçma")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("uid — yoğun döngüde çarpışmasız", () => {
+  it("5000 çağrının tamamı benzersiz", () => {
+    const s = new Set();
+    for (let i = 0; i < 5000; i++) s.add(uid());
+    expect(s.size).toBe(5000);
   });
 });
 
