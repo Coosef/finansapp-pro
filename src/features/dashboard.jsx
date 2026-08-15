@@ -15,6 +15,7 @@ import { taksitPlanlari, aylikTaksitYuku, kalanTaksitBorcu } from "../lib/taksit
 import { nakitAkisProjeksiyon } from "../lib/nakitakis.js";
 import { sessizZamlar } from "../lib/anomali.js";
 import { bekleyenInceleme } from "../lib/incele.js";
+import { oneriBekleyen } from "../lib/oneri.js";
 import { Card, Btn, Stat, ProgressBar, Bos, Brifing, Para, Modal, Field } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -32,6 +33,7 @@ export function Panel({
   yatirimDeger, yatirimKar, guncelDeger, onHizliEkle, kategoriOgren, onGit, onIncele,
 }) {
   const bekleyenIncele = bekleyenInceleme(findata); // sınıflandırma bekleyen (needs_review)
+  const oneriDurum = oneriBekleyen(findata); // motor önerisi (untagged → KPI'yı etkileyebilir)
   const [metin, setMetin] = useState("");
   const [bekle, setBekle] = useState(false);
   const [fisOku, setFisOku] = useState(false);
@@ -241,6 +243,23 @@ export function Panel({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink }}>{bekleyenIncele.adet} işlem · {TL(bekleyenIncele.toplam)} sınıflandırılmayı bekliyor</div>
             <div style={{ fontSize: 11.5, color: V.ink2 }}>Hane kişilerine giden/gelen para — KPI'a girmez. Finansal türünü seçmek için dokun.</div>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 600, color: V.accent, flexShrink: 0 }}>İncele →</span>
+        </div>
+      )}
+
+      {/* 0a-2) Öneri nudge — motor, untagged işlemlerde farklı finansal anlam öneriyor.
+          Otomatik UYGULAMAZ; tıkla → İncele'de onayla. */}
+      {oneriDurum.toplamAdet > 0 && (
+        <div
+          onClick={() => (onIncele ? onIncele() : onGit && onGit("islemler"))}
+          role="button"
+          style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}77`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+        >
+          <span style={{ fontSize: 18 }}>💡</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink }}>{oneriDurum.toplamAdet} işlem için sınıflandırma önerisi — finansal doğruluğu artır</div>
+            <div style={{ fontSize: 11.5, color: V.ink2 }}>Stopaj, hane transferi gibi KPI'yı etkileyebilecek kalemler. Otomatik uygulanmaz — İncele'de onaylarsın.</div>
           </div>
           <span style={{ fontSize: 12, fontWeight: 600, color: V.accent, flexShrink: 0 }}>İncele →</span>
         </div>

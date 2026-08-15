@@ -7,6 +7,7 @@ import { V, F, SERIF, MONO, AY_ADI, inputStyle } from "../lib/constants.js";
 import { TL, sayiCevir } from "../lib/format.js";
 import { tryeCevir, pbSembol, PB_SECENEK } from "../lib/parabirimi.js";
 import { bekleyenInceleme, siniflananHane, turSecenekleri, turEtkiIpucu, turEtiket } from "../lib/incele.js";
+import { oneriBekleyen, topluSinifla, geriAlSinifla } from "../lib/oneri.js";
 import { Icon } from "../components/icons.jsx";
 import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 
@@ -127,12 +128,34 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
   const kisiAdi = (id) => (findata.kisiler || []).find((k) => String(k.id) === String(id))?.ad || "";
 
   // Bir kaydın finansal anlamını (tur) ayarla — ham başlık/tutar/tarih/kişi KORUNUR.
+  // kaynak: "user" (elle) | "rule" (öneri kabul) | "ai" — provenance kaydı.
   // Sınıf sonrası KPI/Analiz/Karne paylaşılan turEtkisi katmanından güncellenir.
-  function siniflaKayit(rec, yeniTur) {
+  function siniflaKayit(rec, yeniTur, kaynak = "user") {
     if (!setFindata) return;
     const list = rec._yon === "gelir" ? "gelirler" : "giderler";
-    setFindata((d) => ({ ...d, [list]: (d[list] || []).map((x) => (String(x.id) === String(rec.id) ? { ...x, tur: yeniTur } : x)) }));
+    setFindata((d) => ({ ...d, [list]: (d[list] || []).map((x) => (String(x.id) === String(rec.id) ? { ...x, tur: yeniTur, turKaynak: kaynak } : x)) }));
     bildir && bildir(`"${rec.baslik}" → ${turEtiket(yeniTur)} olarak sınıflandı`, "ok");
+  }
+
+  // Öneri motoru (deterministik): untagged kayıtlardan finansal anlamı düz gelir/
+  // gider'den FARKLI olanları grupla. Otomatik UYGULAMAZ — kullanıcı onaylar.
+  const oneri = oneriBekleyen(findata);
+  const [oneriAcik, setOneriAcik] = useState({}); // grup önizleme aç/kapa
+  const [sonToplu, setSonToplu] = useState(null); // batch undo tokeni
+
+  // Yüksek güvenli grubu toplu uygula (kullanıcı tetikli, önizlemeli, geri-alınır).
+  function siniflaGrup(g) {
+    if (!setFindata || !g.kayitlar.length) return;
+    const { data, geriAl } = topluSinifla(findata, g.kayitlar, "rule");
+    setFindata(() => data);
+    setSonToplu({ geriAl, adet: g.kayitlar.length, label: g.label });
+    bildir && bildir(`${g.kayitlar.length} işlem "${g.label}" olarak sınıflandı — geri alınabilir`, "ok");
+  }
+  function topluGeriAl() {
+    if (!sonToplu || !setFindata) return;
+    setFindata((d) => geriAlSinifla(d, sonToplu.geriAl));
+    bildir && bildir(`${sonToplu.adet} işlem geri alındı`, "ok");
+    setSonToplu(null);
   }
 
   const hepsi = [
@@ -166,12 +189,13 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
   const ayNet = (arr) => arr.reduce((s, t) => s + (t.tip === "gelir" ? +t.miktar : -t.miktar), 0);
 
   const sinifliAdet = siniflananHane(findata).length; // yeniden sınıflanabilir (sınıflanmış hane)
+  const inceleSayac = bekleyen.adet || oneri.toplamAdet; // pill rozetinde göster (needs_review yoksa öneri)
   const FILTRELER = [
     { id: "tumu", label: "Tümü" },
     { id: "gelir", label: "Gelir" },
     { id: "gider", label: "Gider" },
     { id: "abonelik", label: "Abonelik" },
-    ...(bekleyen.adet || sinifliAdet ? [{ id: "incele", label: bekleyen.adet ? `İncele · ${bekleyen.adet}` : "İncele", uyari: bekleyen.adet > 0 }] : []),
+    ...(bekleyen.adet || sinifliAdet || oneri.toplamAdet ? [{ id: "incele", label: inceleSayac ? `İncele · ${inceleSayac}` : "İncele", uyari: bekleyen.adet > 0 || oneri.toplamAdet > 0 }] : []),
   ];
 
   return (
@@ -226,14 +250,58 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
           const ara = (r) => !aranan || `${r.baslik || ""} ${kisiAdi(r.kisiId)}`.toLocaleLowerCase("tr").includes(aranan);
           const bekleyenListe = bekleyen.kayitlar.filter(ara);
           const sinifliListe = siniflananHane(findata).filter(ara);
-          return bekleyenListe.length === 0 && sinifliListe.length === 0 ? (
-            <Bos baslik="İncelenecek işlem yok" mesaj="Sınıflandırılmayı bekleyen işlem yok. Hane kişilerine giden/gelen para burada listelenir." icon="doc" />
+          const oneriGruplar = oneri.gruplar.map((g) => ({ ...g, kayitlar: g.kayitlar.filter(ara) })).filter((g) => g.kayitlar.length);
+          return bekleyenListe.length === 0 && sinifliListe.length === 0 && oneriGruplar.length === 0 ? (
+            <Bos baslik="İncelenecek işlem yok" mesaj="Sınıflandırılmayı bekleyen ya da önerilen işlem yok." icon="doc" />
           ) : (
             <>
-              <div style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}55`, borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: V.ink, marginBottom: 3 }}>🔎 {bekleyen.adet} işlem · {TL(bekleyen.toplam)} sınıflandırılmayı bekliyor</div>
-                <div style={{ fontSize: 12, color: V.ink2, lineHeight: 1.5 }}>Ham işleme dokunulmaz — yalnızca <b>finansal anlamını</b> seçersin. Renkli nokta KPI etkisini gösterir: <span style={{ color: V.neg }}>● gider</span> · <span style={{ color: V.pos }}>● gelir/iade</span> · <span style={{ color: V.ink3 }}>● nötr</span>. İstediğin zaman değiştirebilirsin.</div>
-              </div>
+              {oneriGruplar.length > 0 && (
+                <>
+                  <div style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}55`, borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12.5, color: V.ink2, lineHeight: 1.5, flex: 1, minWidth: 200 }}>💡 <b style={{ color: V.ink }}>{oneri.toplamAdet} işlem</b> için sınıflandırma önerisi — <b>otomatik uygulanmaz</b>, sen onaylarsın. Ham işleme dokunulmaz, geri alınır.</div>
+                    {sonToplu && (
+                      <button onClick={topluGeriAl} className="fa-btn" style={{ border: `1px solid ${V.border2}`, borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: F, background: V.card2, color: V.ink2, whiteSpace: "nowrap" }}>↩︎ Geri al ({sonToplu.adet})</button>
+                    )}
+                  </div>
+                  {oneriGruplar.map((g) => {
+                    const ip = turEtkiIpucu(g.tur, g.kayitlar[0]?._yon);
+                    const yuksek = g.guven === "yuksek";
+                    const acik = oneriAcik[g.tur];
+                    return (
+                      <Card key={g.tur} style={{ padding: "12px 18px", marginBottom: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 600, color: V.ink, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 700, color: yuksek ? V.pos : V.accent, background: yuksek ? V.chipGreen : V.chipGold, border: `1px solid ${(yuksek ? V.pos : V.accent)}55`, padding: "1px 7px", borderRadius: 5 }}>{yuksek ? "yüksek güven" : "gözden geçir"}</span>
+                              {g.adet} işlem → {g.label}
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, color: V.ink3, fontWeight: 500 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: ETKI_RENK[ip.tip] }} />{ip.metin}</span>
+                            </div>
+                            <div style={{ fontSize: 11.5, color: V.ink3, fontFamily: MONO, marginTop: 2 }}>{TL(g.toplam)}</div>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                            <Btn variant="ghost" onClick={() => setOneriAcik((s) => ({ ...s, [g.tur]: !acik }))} style={{ padding: "7px 11px", fontSize: 12 }}>{acik ? "Gizle" : "Önizle"}</Btn>
+                            {yuksek && <Btn onClick={() => siniflaGrup(g)} style={{ padding: "7px 11px", fontSize: 12 }}>Bu grubu uygula ({g.adet})</Btn>}
+                          </div>
+                        </div>
+                        {(acik || !yuksek) && (
+                          <div style={{ marginTop: 4 }}>
+                            {g.kayitlar.map((r, i) => (
+                              <InceleSatir key={`o-${r._yon}-${r.id}`} rec={r} kisiAd={kisiAdi(r.kisiId)} son={i === g.kayitlar.length - 1} onSinifla={(rec, tur) => siniflaKayit(rec, tur, tur === r._oneriTur ? "rule" : "user")} aktifTur={r._oneriTur} />
+                            ))}
+                          </div>
+                        )}
+                        {!yuksek && <div style={{ fontSize: 11.5, color: V.ink3, marginTop: 6 }}>Yüksek etkili — her birini tek tek onayla (toplu yok). Anlamı sen seç: transfer / hediye / borç…</div>}
+                      </Card>
+                    );
+                  })}
+                </>
+              )}
+              {bekleyen.adet > 0 && (
+                <div style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}55`, borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: V.ink, marginBottom: 3 }}>🔎 {bekleyen.adet} işlem · {TL(bekleyen.toplam)} sınıflandırılmayı bekliyor</div>
+                  <div style={{ fontSize: 12, color: V.ink2, lineHeight: 1.5 }}>Ham işleme dokunulmaz — yalnızca <b>finansal anlamını</b> seçersin. Renkli nokta KPI etkisini gösterir: <span style={{ color: V.neg }}>● gider</span> · <span style={{ color: V.pos }}>● gelir/iade</span> · <span style={{ color: V.ink3 }}>● nötr</span>. İstediğin zaman değiştirebilirsin.</div>
+                </div>
+              )}
               {bekleyenListe.length > 0 && (
                 <Card style={{ padding: "4px 18px", marginBottom: sinifliListe.length ? 14 : 0 }}>
                   {bekleyenListe.map((r, i) => (
