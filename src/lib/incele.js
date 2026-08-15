@@ -32,6 +32,7 @@ export function siniflananHane(findata) {
 // birincil seçenekleri (gidene "Gelir") sunulmaz.
 const SEC_GIDER = [
   { tur: TUR.GIDER, label: "Gider (harcama)" },
+  { tur: TUR.STOPAJ, label: "Stopaj / vergi kesintisi" },
   { tur: TUR.HANE_TRANSFER, label: "Hane transferi" },
   { tur: TUR.BORC_VERME, label: "Verilen borç" },
   { tur: TUR.BORC_ODEME, label: "Borç geri ödemesi" },
