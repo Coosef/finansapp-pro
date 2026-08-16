@@ -8,6 +8,7 @@ import { TL, sayiCevir } from "../lib/format.js";
 import { tryeCevir, pbSembol, PB_SECENEK } from "../lib/parabirimi.js";
 import { bekleyenInceleme, siniflananHane, turSecenekleri, turEtkiIpucu, turEtiket } from "../lib/incele.js";
 import { oneriBekleyen, topluSinifla, geriAlSinifla } from "../lib/oneri.js";
+import { merchantCoz, benzerAdaylar, merchantKuralUret } from "../lib/merchant.js";
 import { Icon } from "../components/icons.jsx";
 import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 
@@ -70,10 +71,12 @@ const TIP_STIL = {
   abonelik: { bg: V.chipGold, renk: V.gold, icon: "repeat", sign: "−", amtRenk: V.neg },
 };
 
-function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
+function IslemSatir({ t, hesapAd, son, onDuzenle, onSil, merchant, onMerchant }) {
   const s = TIP_STIL[t.tip] || TIP_STIL.gider;
   const tekrar = t.otomatik || t.tekrar || t.tip === "abonelik";
   const meta = [hesapAd, t.kategori, isoKisa(t.tarih)].filter(Boolean).join(" · ");
+  const mAd = merchant && (merchant.merchant || merchant.merchantCandidate);
+  const mKesin = merchant && merchant.merchant; // high/medium = kesin; candidate = aday
   return (
     <div
       onClick={() => onDuzenle(t.tip, t)}
@@ -96,6 +99,13 @@ function IslemSatir({ t, hesapAd, son, onDuzenle, onSil }) {
           )}
           {t.tur === "needs_review" && (
             <span title="Finansal anlamı bekliyor — İncele filtresinde sınıfla" style={{ fontSize: "9.5px", color: V.accent, background: V.chipGold, border: `1px solid ${V.accent}55`, padding: "1px 5px", borderRadius: 5, fontWeight: 700, flexShrink: 0, letterSpacing: "0.03em" }}>İNCELE</span>
+          )}
+          {mAd && onMerchant && (
+            <span
+              onClick={(e) => { e.stopPropagation(); onMerchant(t); }}
+              title={mKesin ? `Merchant: ${merchant.merchant} — düzelt` : `Merchant adayı (düşük güven): ${merchant.merchantCandidate} — onayla/düzelt`}
+              style={{ fontSize: "9.5px", color: mKesin ? V.emerald : V.ink3, background: V.card2, border: `1px solid ${mKesin ? V.emerald + "55" : V.border2}`, padding: "1px 6px", borderRadius: 5, fontWeight: 600, flexShrink: 0, letterSpacing: "0.02em", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 3, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >🏷 {mAd}{mKesin ? "" : " ?"}{merchant.psp ? ` · ${merchant.psp}` : ""}</span>
           )}
         </div>
         <div style={{ fontSize: "11.5px", color: V.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -156,6 +166,42 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
     setFindata((d) => geriAlSinifla(d, sonToplu.geriAl));
     bildir && bildir(`${sonToplu.adet} işlem geri alındı`, "ok");
     setSonToplu(null);
+  }
+
+  // ---- Merchant enrichment (runtime-derived; ham baslik ASLA değişmez; KPI 0 TL) ----
+  const merchantKurallari = findata.merchantKurallari || [];
+  const mCoz = (t) => merchantCoz(t.baslik, merchantKurallari, t.merchantOverride);
+  const [mDuzen, setMDuzen] = useState(null); // merchant editörü açık olan işlem
+  const [mAd, setMAd] = useState("");
+  const [mBenzer, setMBenzer] = useState(false); // "benzerlere uygula" önizleme açık
+  const yeniId = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "mk_" + Date.now());
+  const listOf = (tip) => (tip === "gelir" ? "gelirler" : tip === "abonelik" ? "abonelikler" : "giderler");
+
+  function merchantAc(t) { setMDuzen(t); setMAd(mCoz(t).merchant || mCoz(t).merchantCandidate || ""); setMBenzer(false); }
+  function merchantAyarla(t, ad) {
+    if (!setFindata) return;
+    const L = listOf(t.tip);
+    setFindata((d) => ({ ...d, [L]: (d[L] || []).map((x) => (String(x.id) === String(t.id) ? { ...x, merchantOverride: ad } : x)) }));
+    bildir && bildir(`Merchant: "${ad}" (bu işlem)`, "ok");
+    setMDuzen(null);
+  }
+  function merchantTemizle(t) {
+    if (!setFindata) return;
+    const L = listOf(t.tip);
+    setFindata((d) => ({ ...d, [L]: (d[L] || []).map((x) => (String(x.id) === String(t.id) ? (() => { const { merchantOverride, ...r } = x; return r; })() : x)) }));
+    bildir && bildir("Merchant override kaldırıldı (türetilmişe döndü)", "ok");
+    setMDuzen(null);
+  }
+  function kuralEkle(kural) {
+    if (!setFindata) return;
+    setFindata((d) => ({ ...d, merchantKurallari: [...(d.merchantKurallari || []), { id: yeniId(), ...kural }] }));
+    bildir && bildir(`"${kural.merchant}" kuralı eklendi (benzer işlemlere uygulanır)`, "ok");
+    setMDuzen(null);
+  }
+  function kuralSil(id) {
+    if (!setFindata) return;
+    setFindata((d) => ({ ...d, merchantKurallari: (d.merchantKurallari || []).filter((k) => k.id !== id) }));
+    bildir && bildir("Merchant kuralı silindi (türetilmişe döner)", "ok");
   }
 
   const hepsi = [
@@ -359,7 +405,7 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
                 </div>
                 <Card style={{ padding: "6px 18px" }}>
                   {gruplar[ay].map((t, i) => (
-                    <IslemSatir key={`${t.tip}-${t.id}`} t={t} hesapAd={hesapAdi(t.hesapId)} son={i === gruplar[ay].length - 1} onDuzenle={onDuzenle} onSil={onSil} />
+                    <IslemSatir key={`${t.tip}-${t.id}`} t={t} hesapAd={hesapAdi(t.hesapId)} son={i === gruplar[ay].length - 1} onDuzenle={onDuzenle} onSil={onSil} merchant={mCoz(t)} onMerchant={merchantAc} />
                   ))}
                 </Card>
               </div>
@@ -367,6 +413,59 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
           })}
         </>
       )}
+      {mDuzen && (() => {
+        const r = mCoz(mDuzen);
+        const kural = mAd.trim() ? merchantKuralUret(mDuzen.baslik, mAd.trim(), "contains") : null;
+        const tumIslemler = [...(findata.gelirler || []), ...(findata.giderler || []), ...(findata.abonelikler || [])];
+        const etkilenen = kural ? benzerAdaylar(tumIslemler, kural) : [];
+        return (
+          <Modal title="Merchant düzelt" onClose={() => setMDuzen(null)} maxWidth={460}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 10.5, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Ham açıklama (değişmez)</div>
+                <div style={{ fontSize: 12.5, color: V.ink2, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 8, padding: "8px 10px", wordBreak: "break-word" }}>{mDuzen.baslik}</div>
+              </div>
+              <div style={{ fontSize: 11.5, color: V.ink3 }}>
+                Türetilen: <b style={{ color: r.merchant ? V.emerald : V.ink2 }}>{r.merchant || r.merchantCandidate || "—"}</b>
+                {r.merchantSource ? ` · ${r.merchantSource}` : ""}{r.merchantConfidence ? ` · ${r.merchantConfidence}` : ""}{r.psp ? ` · PSP: ${r.psp}` : ""}
+              </div>
+              <Field label="Merchant" value={mAd} onChange={setMAd} placeholder="Örn: Migros" />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Btn onClick={() => mAd.trim() && merchantAyarla(mDuzen, mAd.trim())} style={{ padding: "8px 12px", opacity: mAd.trim() ? 1 : 0.5 }}>Bu işleme uygula</Btn>
+                {mDuzen.merchantOverride && <Btn variant="ghost" onClick={() => merchantTemizle(mDuzen)} style={{ padding: "8px 12px" }}>Override'ı kaldır</Btn>}
+                {mAd.trim() && <Btn variant="ghost" onClick={() => setMBenzer((v) => !v)} style={{ padding: "8px 12px" }}>{mBenzer ? "Gizle" : "Benzerlere uygula…"}</Btn>}
+              </div>
+              {mBenzer && kural && (
+                <div style={{ border: `1px solid ${V.border}`, borderRadius: 10, padding: "10px 12px", background: V.card2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: V.ink, marginBottom: 6 }}>Bu kural <b>{etkilenen.length}</b> işlemi "{mAd.trim()}" yapar (kapsam: içerir "{kural.anahtar}"):</div>
+                  <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                    {etkilenen.slice(0, 40).map((x) => (
+                      <div key={x.id} style={{ fontSize: 11, color: V.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {x.baslik}</div>
+                    ))}
+                    {etkilenen.length > 40 && <div style={{ fontSize: 11, color: V.ink3 }}>… +{etkilenen.length - 40} daha</div>}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <Btn onClick={() => etkilenen.length && kuralEkle(kural)} style={{ padding: "8px 12px", opacity: etkilenen.length ? 1 : 0.5 }}>Onayla ve {etkilenen.length} işleme uygula</Btn>
+                  </div>
+                </div>
+              )}
+              {merchantKurallari.length > 0 && (
+                <div>
+                  <div style={{ margin: "4px 0 6px", fontSize: 11, color: V.ink3, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Merchant kuralların ({merchantKurallari.length})</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 140, overflowY: "auto" }}>
+                    {merchantKurallari.map((k) => (
+                      <div key={k.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: V.ink2 }}>
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><b style={{ color: V.ink }}>{k.merchant}</b> ← {k.tip}:"{k.anahtar}"</span>
+                        <DelBtn onClick={() => kuralSil(k.id)} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
