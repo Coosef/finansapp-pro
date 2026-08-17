@@ -10,3 +10,8 @@ dev-dist
 .design/
 docs-design-reference.html
 pb/pb_data/
+e2e/.pb-datadir
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
