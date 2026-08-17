@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { turOner, oneriBekleyen, sanitizeAciklama, turOnerAI, topluSinifla, geriAlSinifla } from "./oneri.js";
+import { turOner, oneriBekleyen, sanitizeAciklama, turOnerAI, topluSinifla, geriAlSinifla, aiAdaylari, aiContext, aiGuvenBand, aiKabulUygula, gecmisKararlar } from "./oneri.js";
 import { TUR } from "./siniftur.js";
+import { donemHesap } from "./hesapla.js";
 
 // ============================================================
 // Sınıflandırma öneri motoru (v1.5.0).
@@ -146,19 +147,147 @@ describe("sanitizeAciklama — AI'a göndermeden PII temizliği", () => {
   });
 });
 
-describe("turOnerAI — yalnız öneri, PII sanitize, graceful", () => {
-  it("mock AI JSON önerisini parse eder ve girdiyi sanitize eder", async () => {
-    const spy = vi.fn(async () => JSON.stringify([{ id: "x1", tur: TUR.HANE_TRANSFER, neden: "test" }]));
+describe("turOnerAI — yalnız öneri, PII sanitize (Increment 3 schema)", () => {
+  it("suggestedTur şemasını parse eder + girdiyi sanitize eder + suggestionSource=ai", async () => {
+    const spy = vi.fn(async () => JSON.stringify([{ id: "x1", suggestedTur: TUR.HANE_TRANSFER, reason: "test", evidence: ["e"] }]));
     const kayitlar = [{ id: "x1", baslik: "Giden Transfer TR33 0006 1005 1978 6457 8413 26", _yon: "gider" }];
     const out = await turOnerAI(kayitlar, spy);
-    expect(out[0].tur).toBe(TUR.HANE_TRANSFER);
-    expect(out[0].guven).toBe("ai");
-    // AI'a giden mesaj IBAN içermemeli
+    expect(out[0].suggestedTur).toBe(TUR.HANE_TRANSFER);
+    expect(out[0].suggestionSource).toBe("ai");
     const gonderilen = JSON.stringify(spy.mock.calls[0][0]);
     expect(gonderilen).not.toMatch(/TR33\s?0006/);
   });
-  it("AI hatası / anahtar yok → [] (graceful, asla otomatik uygulama)", async () => {
-    const patla = vi.fn(async () => { throw new Error("AIAnahtarYok"); });
-    expect(await turOnerAI([{ id: "x", baslik: "x", _yon: "gider" }], patla)).toEqual([]);
+});
+
+describe("aiAdaylari — yalnız unresolved (deterministik/user/final hariç)", () => {
+  const findata = {
+    kisiler: [], hesaplar: [], gelirler: [],
+    giderler: [
+      { id: "a", baslik: "Belirsiz odeme XYZ", miktar: 100 },                       // untagged, turOner null → aday
+      { id: "b", baslik: "Vergi Kesintisi Faiz geliri", miktar: 5 },                 // turOner→stopaj → hariç
+      { id: "c", baslik: "Migros", miktar: 200, tur: TUR.GIDER, turKaynak: "user" }, // user final → hariç
+      { id: "d", baslik: "Bilinmeyen EFT", miktar: 300, tur: TUR.INCELE },           // needs_review → aday
+      { id: "e", baslik: "Kira", miktar: 400, tur: TUR.GIDER, turKaynak: "rule" },   // rule final → hariç
+    ],
+  };
+  it("untagged-unresolved + needs_review aday; deterministik/user/final elenir", () => {
+    expect(aiAdaylari(findata).map((x) => x.id).sort()).toEqual(["a", "d"]);
+  });
+  it("kesin merchant'lı sıradan alışveriş ve net faiz geliri AI adayı DEĞİL (belirsiz değil)", () => {
+    const fd = {
+      kisiler: [], hesaplar: [],
+      gelirler: [{ id: "faiz", baslik: "Faiz Geliri %30 faiz oranı ile 1 günlük brüt faiz geliri", miktar: 5 }],
+      giderler: [
+        { id: "mig", baslik: "MIGROS 5M ANTALYA", miktar: 100 },                      // kesin merchant → sıradan
+        { id: "trf", baslik: "Gelen Transfer, Beste Ray, Bireysel Ödeme", miktar: 800 }, // merchantsız transfer → belirsiz
+      ],
+    };
+    const ids = aiAdaylari(fd).map((x) => x.id);
+    expect(ids).not.toContain("faiz");
+    expect(ids).not.toContain("mig");
+    expect(ids).toContain("trf");
+  });
+});
+
+describe("aiContext — structured + sanitized + merchant/PSP", () => {
+  it("PSP≠merchant + IBAN sanitize + direction/amount", () => {
+    const c = aiContext({ id: "x", _yon: "gider", baslik: "IYZICO/amazon.com.tr TR33 0006 1005 1978 6457 8413 26", miktar: 1200, kategori: "Teknoloji" });
+    expect(c.direction).toBe("outgoing");
+    expect(c.amount).toBe(1200);
+    expect(c.psp).toBe("IYZICO");
+    expect(c.merchant).toBe("Amazon");
+    expect(c.description).not.toMatch(/TR33\s?0006/);
+  });
+  it("merchantOverride context olarak kullanılır (AI değiştiremez)", () => {
+    expect(aiContext({ id: "y", _yon: "gider", baslik: "ZZZ 999", miktar: 10, merchantOverride: "Özel" }).merchant).toBe("Özel");
+  });
+});
+
+describe("sanitizeAciklama — genişletilmiş PII (TC, banka ref)", () => {
+  it("11-hane TC ve uzun referans no maskelenir", () => {
+    const s = sanitizeAciklama("TC 12345678901 sorgu no 4298597168 tutar");
+    expect(s).not.toMatch(/\b\d{11}\b/);
+    expect(s).not.toMatch(/4298597168/);
+  });
+});
+
+describe("turOnerAI — bounded batch + strict schema + graceful", () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: "r" + i, _yon: "gider", baslik: "X" + i, miktar: 1 }));
+  it("bounded batch: 25 kayıt / batchSize 10 → 3 çağrı", async () => {
+    const spy = vi.fn(async () => "[]");
+    await turOnerAI(mk(25), spy, { batchSize: 10 });
+    expect(spy.mock.calls.length).toBe(3);
+  });
+  it("geçerli enum kalır, bilinmeyen enum reddedilir", async () => {
+    const spy = vi.fn(async () => JSON.stringify([
+      { id: "r0", suggestedTur: TUR.GIDER, reason: "ok", evidence: ["x"] },
+      { id: "r1", suggestedTur: "uydurma_tur", reason: "no" },
+    ]));
+    const out = await turOnerAI(mk(2), spy, { batchSize: 10 });
+    expect(out.map((o) => o.id)).toEqual(["r0"]);
+  });
+  it("invalid JSON → [] (batch atlanır, throw yok)", async () => {
+    expect(await turOnerAI(mk(2), vi.fn(async () => "bu json değil"))).toEqual([]);
+  });
+  it("aiCagir throw (timeout/rate-limit/key-yok) → [] (retry storm yok: batch başına tek deneme)", async () => {
+    const spy = vi.fn(async () => { throw new Error("429"); });
+    expect(await turOnerAI(mk(2), spy)).toEqual([]);
+    expect(spy.mock.calls.length).toBe(1);
+  });
+  it("AI null response → []", async () => {
+    expect(await turOnerAI(mk(1), vi.fn(async () => "null"))).toEqual([]);
+  });
+  it("input kayıtları mutate edilmez", async () => {
+    const cands = mk(1);
+    await turOnerAI(cands, vi.fn(async () => JSON.stringify([{ id: "r0", suggestedTur: TUR.GIDER }])));
+    expect(cands[0].tur).toBeUndefined();
+  });
+});
+
+describe("gecmisKararlar — kullanıcı kararlarından learning seed", () => {
+  it("kullanıcı/AI-kabul sınıflı kayıtlardan {merchant, tur} çıkarır; untagged hariç", () => {
+    const fd = {
+      gelirler: [],
+      giderler: [
+        { id: "1", baslik: "MIGROS 5M ANTALYA", miktar: 100, tur: TUR.GIDER, turKaynak: "user" },
+        { id: "2", baslik: "Belirsiz odeme", miktar: 50 },
+        { id: "3", baslik: "TRENDYOL", miktar: 20, tur: TUR.IADE, acceptedSuggestionSource: "ai" },
+      ],
+    };
+    const g = gecmisKararlar(fd);
+    expect(g).toContainEqual({ merchant: "Migros", tur: TUR.GIDER });
+    expect(g).toContainEqual({ merchant: "Trendyol", tur: TUR.IADE });
+    expect(g.length).toBe(2);
+  });
+});
+
+describe("aiGuvenBand — app-side kanıt (model self-confidence DEĞİL)", () => {
+  it("merchant high + önceki kullanıcı kararı → Yüksek", () => {
+    expect(aiGuvenBand({ suggestedTur: TUR.GIDER, evidence: ["a", "b"] }, { merchant: "Amazon", merchantConfidence: "high" }, [{ merchant: "Amazon", tur: TUR.GIDER }])).toBe("Yüksek");
+  });
+  it("yalnız zayıf merchant → Orta", () => {
+    expect(aiGuvenBand({ suggestedTur: TUR.GIDER, evidence: [] }, { merchant: "X", merchantConfidence: "medium" }, [])).toBe("Orta");
+  });
+  it("kanıt yok → Düşük (model'in kendi %99'u sayılmaz)", () => {
+    expect(aiGuvenBand({ suggestedTur: TUR.GIDER, evidence: [], modelConfidence: 0.99 }, { merchant: null }, [])).toBe("Düşük");
+  });
+});
+
+describe("aiKabulUygula — provenance + KPI yalnız kabulden sonra + raw/override korunur", () => {
+  const BUGUN = "2026-08-16";
+  const findata = { gelirler: [], giderler: [{ id: "a", baslik: "Bilinmeyen EFT", miktar: 100, merchantOverride: "Özel", tarih: "2026-08-01" }] };
+  it("kabul öncesi KPI değişmez (suggestion ayrı state)", () => {
+    expect(donemHesap(findata, "tum", BUGUN).giderToplam).toBe(100);
+  });
+  it("kabul → tur + provenance; ham/override korunur; KPI yalnız kabulden sonra değişir", () => {
+    const after = aiKabulUygula(findata, [{ id: "a", yon: "gider", tur: TUR.IC_TRANSFER }]);
+    const r = after.giderler[0];
+    expect(r.tur).toBe(TUR.IC_TRANSFER);
+    expect(r.turKaynak).toBe("user");
+    expect(r.acceptedSuggestionSource).toBe("ai");
+    expect(r.baslik).toBe("Bilinmeyen EFT");
+    expect(r.merchantOverride).toBe("Özel");
+    expect(r.miktar).toBe(100);
+    expect(donemHesap(after, "tum", BUGUN).giderToplam).toBe(0);
   });
 });

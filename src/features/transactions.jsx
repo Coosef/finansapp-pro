@@ -7,8 +7,9 @@ import { V, F, SERIF, MONO, AY_ADI, inputStyle } from "../lib/constants.js";
 import { TL, sayiCevir } from "../lib/format.js";
 import { tryeCevir, pbSembol, PB_SECENEK } from "../lib/parabirimi.js";
 import { bekleyenInceleme, siniflananHane, turSecenekleri, turEtkiIpucu, turEtiket } from "../lib/incele.js";
-import { oneriBekleyen, topluSinifla, geriAlSinifla } from "../lib/oneri.js";
+import { oneriBekleyen, topluSinifla, geriAlSinifla, aiAdaylari, turOnerAI, aiContext, aiGuvenBand, aiKabulUygula, gecmisKararlar } from "../lib/oneri.js";
 import { merchantCoz, benzerAdaylar, merchantKuralUret } from "../lib/merchant.js";
+import { claudeCall, aiHazir } from "../lib/ai.js";
 import { Icon } from "../components/icons.jsx";
 import { Card, Btn, Modal, Field, Toggle, DelBtn, Bos } from "../components/ui.jsx";
 
@@ -204,6 +205,39 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
     bildir && bildir("Merchant kuralı silindi (türetilmişe döner)", "ok");
   }
 
+  // ---- AI fallback (Increment 3): deterministik + merchant SONRASI, opsiyonel.
+  // Yalnız belirsiz/unresolved adaylar; kullanıcı aksiyonuyla; asla otomatik yazmaz. ----
+  const aiAdaylar = aiAdaylari(findata);
+  const [aiDurum, setAiDurum] = useState(null); // null | onay | calisiyor | sonuc | hata
+  const [aiSonuc, setAiSonuc] = useState([]);
+  const [aiHataMsg, setAiHataMsg] = useState("");
+  async function aiCalistir() {
+    setAiDurum("calisiyor");
+    try {
+      const adaylar = aiAdaylari(findata);
+      const oneriler = await turOnerAI(adaylar, claudeCall, { merchantKurallari, batchSize: 20 });
+      const idx = {}; adaylar.forEach((a) => (idx[a.id] = a));
+      const gecmis = gecmisKararlar(findata, merchantKurallari); // learning: önceki kullanıcı kararları band'i güçlendirir
+      const zengin = oneriler.map((o) => {
+        const kayit = idx[o.id]; if (!kayit) return null;
+        const ctx = aiContext(kayit, merchantKurallari);
+        return { ...o, yon: kayit._yon, kayit, merchant: ctx.merchant, band: aiGuvenBand(o, ctx, gecmis) };
+      }).filter(Boolean);
+      if (!zengin.length) { setAiHataMsg("AI, belirsiz kayıtlar için öneri üretmedi (hepsi atlandı)."); setAiDurum("hata"); return; }
+      setAiSonuc(zengin); setAiDurum("sonuc");
+    } catch (e) {
+      setAiHataMsg("AI çağrısı başarısız: " + (e?.message || "bilinmeyen hata") + ". Uygulama normal çalışmaya devam eder; hiçbir işlem değişmedi.");
+      setAiDurum("hata");
+    }
+  }
+  function aiKabulEt(sec) {
+    if (!setFindata || !sec.length) return;
+    setFindata((d) => aiKabulUygula(d, sec.map((x) => ({ id: x.id, yon: x.yon, tur: x._secTur || x.suggestedTur }))));
+    bildir && bildir(`${sec.length} işlem AI önerisiyle sınıflandı (senin onayınla)`, "ok");
+    setAiSonuc((s) => s.filter((x) => !sec.some((k) => k.id === x.id && k.yon === x.yon)));
+  }
+  function aiYoksay(x) { setAiSonuc((s) => s.filter((y) => !(y.id === x.id && y.yon === x.yon))); }
+
   const hepsi = [
     ...(fd.gelirler || []).map((x) => ({ ...x, tip: "gelir" })),
     ...(fd.giderler || []).map((x) => ({ ...x, tip: "gider" })),
@@ -241,7 +275,7 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
     { id: "gelir", label: "Gelir" },
     { id: "gider", label: "Gider" },
     { id: "abonelik", label: "Abonelik" },
-    ...(bekleyen.adet || sinifliAdet || oneri.toplamAdet ? [{ id: "incele", label: inceleSayac ? `İncele · ${inceleSayac}` : "İncele", uyari: bekleyen.adet > 0 || oneri.toplamAdet > 0 }] : []),
+    ...(bekleyen.adet || sinifliAdet || oneri.toplamAdet || (aiHazir() && aiAdaylar.length) ? [{ id: "incele", label: inceleSayac ? `İncele · ${inceleSayac}` : "İncele", uyari: bekleyen.adet > 0 || oneri.toplamAdet > 0 }] : []),
   ];
 
   return (
@@ -297,10 +331,17 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
           const bekleyenListe = bekleyen.kayitlar.filter(ara);
           const sinifliListe = siniflananHane(findata).filter(ara);
           const oneriGruplar = oneri.gruplar.map((g) => ({ ...g, kayitlar: g.kayitlar.filter(ara) })).filter((g) => g.kayitlar.length);
-          return bekleyenListe.length === 0 && sinifliListe.length === 0 && oneriGruplar.length === 0 ? (
+          const aiVar = aiHazir() && aiAdaylar.length > 0;
+          return bekleyenListe.length === 0 && sinifliListe.length === 0 && oneriGruplar.length === 0 && !aiVar ? (
             <Bos baslik="İncelenecek işlem yok" mesaj="Sınıflandırılmayı bekleyen ya da önerilen işlem yok." icon="doc" />
           ) : (
             <>
+              {aiVar && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 12 }}>
+                  <div style={{ fontSize: 12.5, color: V.ink2 }}>🤖 <b style={{ color: V.ink }}>{aiAdaylar.length}</b> belirsiz işlem için AI önerisi alınabilir <span style={{ color: V.ink3 }}>(deterministik + merchant sonrası kalanlar; otomatik uygulanmaz)</span></div>
+                  <Btn onClick={() => setAiDurum("onay")} style={{ padding: "7px 12px", fontSize: 12 }}>Kalanları AI ile öner</Btn>
+                </div>
+              )}
               {oneriGruplar.length > 0 && (
                 <>
                   <div style={{ background: "var(--chip-amber)", border: `1px solid ${V.accent}55`, borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -412,6 +453,58 @@ export function Islemler({ findata, fd, donem, bildir, setFindata, baslangicFilt
             );
           })}
         </>
+      )}
+      {aiDurum && (
+        <Modal title="AI ile sınıflandırma önerisi" onClose={() => setAiDurum(null)} maxWidth={520}>
+          {aiDurum === "onay" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 13, color: V.ink }}><b>{aiAdaylar.length}</b> belirsiz işlem için AI önerisi oluşturulacak.</div>
+              <div style={{ fontSize: 11.5, color: V.ink2, background: V.card2, border: `1px solid ${V.border}`, borderRadius: 8, padding: "9px 11px", lineHeight: 1.55 }}>
+                🔒 AI'a yalnız <b>maskeli</b> yapılandırılmış veri gider: yön, tutar, <b>sanitize açıklama</b> (IBAN/kart/telefon/TC/referans maskeli), normalize merchant, kategori. Ham işlem <b>değişmez</b>, anahtarın sunucuda; öneriler <b>otomatik uygulanmaz</b> — sen onaylarsın.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn onClick={aiCalistir} style={{ padding: "8px 13px" }}>Gönder ({aiAdaylar.length})</Btn>
+                <Btn variant="ghost" onClick={() => setAiDurum(null)} style={{ padding: "8px 13px" }}>Vazgeç</Btn>
+              </div>
+            </div>
+          )}
+          {aiDurum === "calisiyor" && <div style={{ fontSize: 13, color: V.ink2, padding: "14px 0" }}>AI önerileri alınıyor… (batch'ler halinde, ham veri maskeli)</div>}
+          {aiDurum === "hata" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 12.5, color: V.neg, lineHeight: 1.5 }}>{aiHataMsg}</div>
+              <Btn variant="ghost" onClick={() => setAiDurum(null)} style={{ padding: "8px 13px" }}>Kapat</Btn>
+            </div>
+          )}
+          {aiDurum === "sonuc" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 12, color: V.ink2 }}>{aiSonuc.length} öneri — Kabul / Başka tür / Yoksay. <b>Otomatik uygulanmaz.</b></div>
+                <Btn onClick={() => aiKabulEt(aiSonuc.filter((x) => x.band === "Yüksek"))} style={{ padding: "6px 10px", fontSize: 11.5 }}>Yüksek güvenlileri kabul ({aiSonuc.filter((x) => x.band === "Yüksek").length})</Btn>
+              </div>
+              <div style={{ maxHeight: 340, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+                {aiSonuc.map((x) => {
+                  const secTur = x._secTur || x.suggestedTur;
+                  const ip = turEtkiIpucu(secTur, x.yon);
+                  return (
+                    <div key={`${x.yon}-${x.id}`} style={{ border: `1px solid ${V.border}`, borderRadius: 10, padding: "9px 11px", background: V.card2 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.kayit.baslik}</div>
+                      <div style={{ fontSize: 11, color: V.ink3, margin: "2px 0 6px" }}>{x.merchant ? `${x.merchant} · ` : ""}{TL(x.kayit.miktar)} · {x.yon === "gelir" ? "gelen" : "giden"} · <span style={{ color: x.band === "Yüksek" ? V.pos : x.band === "Orta" ? V.gold : V.ink3, fontWeight: 600 }}>{x.band} güven</span></div>
+                      <div style={{ fontSize: 11, color: V.ink2, marginBottom: 7 }}>Öneri: <b style={{ color: V.accent }}>{turEtiket(secTur)}</b> · <span style={{ color: ETKI_RENK[ip.tip] }}>{ip.metin}</span>{x.reason ? ` — ${x.reason}` : ""}</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                        <Btn onClick={() => aiKabulEt([x])} style={{ padding: "5px 10px", fontSize: 11.5 }}>Kabul</Btn>
+                        <select value={secTur} onChange={(e) => setAiSonuc((s) => s.map((y) => (y.id === x.id && y.yon === x.yon ? { ...y, _secTur: e.target.value } : y)))} style={{ padding: "5px 8px", fontSize: 11.5, background: V.card, color: V.ink2, border: `1px solid ${V.border2}`, borderRadius: 7, fontFamily: F }}>
+                          {turSecenekleri(x.yon).map((s) => <option key={s.tur} value={s.tur}>{s.label}</option>)}
+                        </select>
+                        <button onClick={() => aiYoksay(x)} className="fa-btn" style={{ border: `1px solid ${V.border2}`, borderRadius: 7, padding: "5px 10px", fontSize: 11.5, cursor: "pointer", fontFamily: F, background: "transparent", color: V.ink3 }}>Yoksay</button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {aiSonuc.length === 0 && <div style={{ fontSize: 12, color: V.ink3, padding: "10px 0" }}>Tüm öneriler işlendi.</div>}
+              </div>
+            </div>
+          )}
+        </Modal>
       )}
       {mDuzen && (() => {
         const r = mCoz(mDuzen);

@@ -8,6 +8,7 @@
 import { TUR } from "./siniftur.js";
 import { kisiBul } from "./kisi.js";
 import { turEtiket } from "./incele.js";
+import { merchantCoz } from "./merchant.js";
 
 const kucuk = (s) => String(s ?? "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase();
 
@@ -128,36 +129,139 @@ export function sanitizeAciklama(s) {
   t = t.replace(/TR\d{2}\s?(?:\d{4}\s?){5}\d{2}/gi, "[IBAN]"); // TR IBAN (gruplu)
   t = t.replace(/\bTR\d{2}(?:\s?\d){18,22}\b/gi, "[IBAN]"); // TR IBAN (esnek)
   t = t.replace(/\b(?:\d[ -]?){15,16}\b/g, "[KART]"); // kart no
+  t = t.replace(/\b\d{11}\b/g, "[KIMLIK]"); // TC benzeri 11 hane
+  t = t.replace(/\b0?5\d{2}[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}\b/g, "[TEL]"); // TR cep (ref'ten ÖNCE)
+  t = t.replace(/\b\d{7,10}\b/g, "[REF]"); // banka referans / sorgu no
   t = t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[EPOSTA]"); // e-posta
-  t = t.replace(/\b0?5\d{2}[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}\b/g, "[TEL]"); // TR cep
   return t;
 }
 
-// Kural eşleşmeyen "zor" kayıtlar için isteğe bağlı AI önerisi. YALNIZ öneri üretir
-// (asla otomatik uygulamaz). aiCagir enjekte edilir (varsayılan: ai.claudeCall);
-// çağrıdan önce PII sanitize edilir. Hata/anahtar yoksa [] döner (graceful).
-export async function turOnerAI(kayitlar, aiCagir) {
+// ---- AI fallback (Increment 3) — 1. katman DEĞİL; deterministik oneri.js + merchant
+// sonrası. YALNIZ öneri üretir (asla tur yazmaz). ----
+
+// Untagged kayıt GERÇEKTEN belirsiz mi (AI'a değer)? Kesin merchant'lı sıradan
+// alışveriş (default gider doğru) ve net faiz geliri (default gelir doğru) belirsiz
+// DEĞİL → AI'a gönderme. Merchant'sız transfer/counterparty → belirsiz.
+function belirsizMi(kayit, merchantKurallari) {
+  const b = kucuk(kayit.baslik);
+  if (/faiz gel|faiz oran|toplam dönem faizi|limit aşım faizi/.test(b)) return false;
+  const m = merchantCoz(kayit.baslik, merchantKurallari || [], kayit.merchantOverride);
+  if (m.merchant && (m.merchantConfidence === "high" || m.merchantConfidence === "medium")) return false;
+  return true;
+}
+
+// AI adayları: yalnız UNRESOLVED + BELİRSİZ — (tur yok VEYA needs_review) + deterministik
+// çözemedi (turOner null) + kullanıcı sınıflamamış + (needs_review VEYA belirsiz). Final
+// classification, sıradan merchant alışverişi ve net faiz geliri hariç. "Bütün transaction'ları
+// AI'a gönderme" guardrail'i.
+export function aiAdaylari(findata) {
+  const d = findata || {};
+  const kisiler = d.kisiler || [], hesaplar = d.hesaplar || [], mk = d.merchantKurallari || [];
+  const uygun = (arr, yon) =>
+    (arr || [])
+      .filter((x) => {
+        if (x.tur && x.tur !== TUR.INCELE) return false; // final classification → hariç
+        if (x.turKaynak === "user") return false;         // kullanıcı sınıflamış → hariç
+        if (turOner({ ...x, _yon: yon }, kisiler, hesaplar)) return false; // deterministik çözdü → hariç
+        if (x.tur === TUR.INCELE) return true;            // needs_review → her zaman aday
+        return belirsizMi(x, mk);                          // untagged → yalnız belirsizse
+      })
+      .map((x) => ({ ...x, _yon: yon }));
+  return [...uygun(d.gelirler, "gelir"), ...uygun(d.giderler, "gider")];
+}
+
+// AI'a gönderilecek YAPILANDIRILMIŞ + sanitize context (ham metin tek başına değil).
+// merchantOverride güvenilir context olarak kullanılır (AI onu DEĞİŞTİREMEZ).
+export function aiContext(kayit, merchantKurallari = []) {
+  const m = merchantCoz(kayit.baslik, merchantKurallari, kayit.merchantOverride);
+  return {
+    id: kayit.id,
+    direction: kayit._yon === "gelir" ? "incoming" : "outgoing",
+    amount: Math.abs(+kayit.miktar || 0),
+    description: sanitizeAciklama(kayit.baslik),
+    merchant: m.merchant || m.merchantCandidate || null,
+    merchantConfidence: m.merchantConfidence || null,
+    psp: m.psp || null,
+    kategori: kayit.kategori || null,
+    recurring: !!(kayit.otomatik || kayit.tekrar),
+  };
+}
+
+// Bounded batch + strict schema + graceful. Çıktı: [{id, suggestedTur(enum), reason,
+// evidence[], suggestionSource:'ai'}]. Bilinmeyen enum → reddedilir. Hata/parse/null →
+// o batch atlanır (throw yok, retry storm yok — ai.js kendi backoff'unu yapar). Mutate yok.
+export async function turOnerAI(kayitlar, aiCagir, opts = {}) {
   if (!aiCagir || !(kayitlar || []).length) return [];
-  const temiz = kayitlar.map((k) => ({ id: k.id, yon: k._yon, kategori: k.kategori, aciklama: sanitizeAciklama(k.baslik) }));
-  const gecerli = Object.values(TUR).join(", ");
-  const prompt =
-    "Aşağıdaki banka işlemlerinin FİNANSAL ANLAMINI sınıflandır. Ham yön (gelir/gider) DEĞİŞMEZ; " +
-    "yalnız anlamı seç. Emin değilsen o kaydı ATLA. Yalnız JSON array döndür: [{\"id\":\"..\",\"tur\":\"..\",\"neden\":\"..\"}]. " +
-    `Geçerli tur değerleri: ${gecerli}.\nİşlemler:\n` + JSON.stringify(temiz);
-  let txt;
-  try {
-    txt = await aiCagir([{ role: "user", content: prompt }], false, true);
-  } catch {
-    return [];
+  const batchSize = opts.batchSize || 25;
+  const merchantKurallari = opts.merchantKurallari || [];
+  const gecerli = new Set(Object.values(TUR));
+  const out = [];
+  for (let i = 0; i < kayitlar.length; i += batchSize) {
+    const grup = kayitlar.slice(i, i + batchSize);
+    const ctx = grup.map((k) => aiContext(k, merchantKurallari));
+    const prompt =
+      "Aşağıdaki banka işlemlerinin FİNANSAL ANLAMINI (tur) öner. Ham yön DEĞİŞMEZ. Emin değilsen ATLA. " +
+      "Yalnız JSON array: [{\"id\":\"..\",\"suggestedTur\":\"..\",\"reason\":\"..\",\"evidence\":[\"..\"]}]. " +
+      `Geçerli suggestedTur: ${[...gecerli].join(", ")}.\ncontext:\n` + JSON.stringify(ctx);
+    let txt;
+    try {
+      txt = await aiCagir([{ role: "user", content: prompt }], false, true);
+    } catch {
+      continue; // batch atlanır; retry storm YOK
+    }
+    let arr;
+    try {
+      arr = JSON.parse(txt);
+      if (!Array.isArray(arr)) arr = arr?.oneriler || arr?.suggestions || [];
+    } catch {
+      continue;
+    }
+    for (const o of arr || []) {
+      if (!o || !o.id || !gecerli.has(o.suggestedTur)) continue; // bilinmeyen enum → reject
+      out.push({ id: o.id, suggestedTur: o.suggestedTur, reason: o.reason || "", evidence: Array.isArray(o.evidence) ? o.evidence : [], suggestionSource: "ai" });
+    }
   }
-  let arr;
-  try {
-    arr = JSON.parse(txt);
-    if (!Array.isArray(arr)) arr = arr?.oneriler || arr?.islemler || [];
-  } catch {
-    return [];
-  }
-  return (arr || [])
-    .filter((o) => o && o.id && Object.values(TUR).includes(o.tur))
-    .map((o) => ({ id: o.id, tur: o.tur, guven: "ai", neden: o.neden || "AI önerisi" }));
+  return out;
+}
+
+// Confidence band — UYGULAMA TARAFI kanıttan (merchant + önceki kullanıcı kararları +
+// evidence). Model'in kendi self-confidence'ı tek başına yüksek yapmaz.
+export function aiGuvenBand(sug, ctx, gecmis = []) {
+  let p = 0;
+  if (ctx && ctx.merchant && ctx.merchantConfidence === "high") p += 2;
+  else if (ctx && ctx.merchant) p += 1;
+  if ((gecmis || []).some((g) => g.merchant && ctx && g.merchant === ctx.merchant && g.tur === sug.suggestedTur)) p += 2;
+  if ((sug.evidence || []).length >= 2) p += 1;
+  return p >= 3 ? "Yüksek" : p >= 1 ? "Orta" : "Düşük";
+}
+
+// Kullanıcı AI önerisini KABUL edince uygula: tur yazılır + provenance
+// (classificationSource=user, acceptedSuggestionSource=ai). kabuller: [{id, yon, tur}].
+// Ham baslik + merchantOverride korunur. Kabul edilmeden hiçbir tur yazılmaz.
+export function aiKabulUygula(findata, kabuller) {
+  const d = findata || {};
+  const map = { gelirler: new Map(), giderler: new Map() };
+  for (const k of kabuller || []) map[k.yon === "gelir" ? "gelirler" : "giderler"].set(String(k.id), k.tur);
+  const upd = (arr, list) =>
+    (arr || []).map((x) =>
+      map[list].has(String(x.id)) ? { ...x, tur: map[list].get(String(x.id)), turKaynak: "user", acceptedSuggestionSource: "ai" } : x);
+  return { ...d, gelirler: upd(d.gelirler, "gelirler"), giderler: upd(d.giderler, "giderler") };
+}
+
+// Learning seed: kullanıcının (elle ya da AI-kabul) sınıfladığı kayıtlardan
+// {merchant, tur} kararları. AI confidence band'i besler; tekrarlı tutarlı kararlar
+// ileride deterministik kural önerisine dönüştürülebilir (tek kabulden global kural YOK).
+export function gecmisKararlar(findata, merchantKurallari = []) {
+  const d = findata || {};
+  const out = [];
+  const tara = (arr) =>
+    (arr || []).forEach((x) => {
+      if (x.tur && x.tur !== TUR.INCELE && (x.turKaynak === "user" || x.acceptedSuggestionSource)) {
+        const m = merchantCoz(x.baslik, merchantKurallari, x.merchantOverride);
+        if (m.merchant) out.push({ merchant: m.merchant, tur: x.tur });
+      }
+    });
+  tara(d.gelirler);
+  tara(d.giderler);
+  return out;
 }
