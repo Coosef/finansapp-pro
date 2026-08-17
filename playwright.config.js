@@ -24,7 +24,9 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "npm run build && npm run preview",
+    // CI'da "production build" ayrı bir gating step; preview yalnızca onu servis eder
+    // (çift build yok). Lokalde reuse yoksa build+preview birlikte çalışır.
+    command: process.env.CI ? "npm run preview" : "npm run build && npm run preview",
     url: "http://localhost:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
