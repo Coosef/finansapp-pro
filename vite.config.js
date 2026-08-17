@@ -56,4 +56,11 @@ export default defineConfig({
       "/pb": { target: "http://localhost:8090", changeOrigin: true, rewrite: (p) => p.replace(/^\/pb/, "") },
     },
   },
+  // Vitest yalnız src birim/entegrasyon testlerini toplar. e2e Playwright dosyaları
+  // (*.spec.mjs) HARİÇ — aksi halde vitest'in varsayılan spec glob'u onları toplar ve
+  // Playwright-only test.beforeEach() vitest bağlamında patlar. (Yalnız test toplama;
+  // build/dev davranışı etkilenmez.)
+  test: {
+    include: ["src/**/*.test.{js,jsx}"],
+  },
 });
