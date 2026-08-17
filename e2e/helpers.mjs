@@ -10,7 +10,7 @@ export const BASE_FINDATA = {
   hesaplar: [{ id: "h1", ad: "Banka", son4: "1234" }],
   kategoriler: { gelir: ["Maaş"], gider: ["Market", "Ulaşım"] },
   kisiler: [],
-  ayarlar: {},
+  ayarlar: { kuruldu: true }, // onboarding'i deterministik olarak atla (App.jsx: ayarlar.kuruldu)
 };
 
 export async function pbAuth() {

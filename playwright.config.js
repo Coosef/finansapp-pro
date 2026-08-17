@@ -17,6 +17,10 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
+    // PWA service worker'ı blokla: autoUpdate SW ilk aktivasyonda controllerchange
+    // → window.location.reload() tetikliyor (main.jsx:13-17) ve testi Panel'e geri
+    // atıyordu. Blok = deterministik; SW app davranışı test kapsamı dışı (prod'a dokunmaz).
+    serviceWorkers: "block",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
