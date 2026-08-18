@@ -54,6 +54,14 @@ jobs:
       - name: Browser E2E (A–L)
         run: npx playwright test --workers=1 --retries=0
 
+      # --- Persistence race gate: P1–P9 suite'i 3× ardışık (retries=0) → yarış kararlılığı ---
+      - name: Persistence race gate (P1–P9 ×3)
+        run: |
+          for i in 1 2 3; do
+            echo "== persistence race gate run $i/3 =="
+            npx playwright test e2e/p-persistence.spec.mjs --workers=1 --retries=0
+          done
+
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
       # HTML report + trace.zip (console + network dahil) + screenshot + video.
       # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.
