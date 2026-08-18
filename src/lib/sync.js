@@ -145,10 +145,11 @@ function veriYolu() {
 // Hane modundayken hane 404 dönerse (silinmiş / çıkarılmışsan) kişisele düşeriz.
 export async function pbFindataCek() {
   if (!syncBagliMi()) return null;
-  let res = await pbFetch(_url, veriYolu(), { headers: { Authorization: _token } });
+  // no-store: reload/focus'ta bayat önbellek dönmesin → conflict tespiti (updated) doğru olsun.
+  let res = await pbFetch(_url, veriYolu(), { headers: { Authorization: _token }, cache: "no-store" });
   if (_haneId && (res.status === 404 || res.status === 403)) {
     _haneId = ""; _haneAd = ""; _haneKod = ""; kaydet();
-    res = await pbFetch(_url, veriYolu(), { headers: { Authorization: _token } });
+    res = await pbFetch(_url, veriYolu(), { headers: { Authorization: _token }, cache: "no-store" });
   }
   if (res.status === 401) { pbCikis(); throw new Error("Oturum süresi doldu, tekrar giriş yap."); }
   if (!res.ok) throw new Error(`Veri çekilemedi (${res.status}).`);
@@ -156,9 +157,9 @@ export async function pbFindataCek() {
   return { data: d.data && Object.keys(d.data).length ? d.data : null, updated: d.updated || null };
 }
 
-// findata'yı buluta yaz
+// findata'yı buluta yaz → { updated } (server revizyon damgası; persistence guard için)
 export async function pbFindataGonder(data) {
-  if (!syncBagliMi()) return;
+  if (!syncBagliMi()) return null;
   const res = await pbFetch(_url, veriYolu(), {
     method: "PATCH",
     headers: { Authorization: _token, "Content-Type": "application/json" },
@@ -166,6 +167,7 @@ export async function pbFindataGonder(data) {
   });
   if (res.status === 401) { pbCikis(); throw new Error("Oturum süresi doldu, tekrar giriş yap."); }
   if (!res.ok) throw new Error(`Veri gönderilemedi (${res.status}).`);
+  try { const d = await res.json(); return { updated: d?.updated || null }; } catch { return { updated: null }; }
 }
 
 // ============================================================

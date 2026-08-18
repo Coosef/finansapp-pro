@@ -6,6 +6,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { V } from "./lib/constants.js";
 import { uid, bugun, TL, sayiCevir } from "./lib/format.js";
 import { syncYukle, syncDurum, syncBagliMi, pbGiris, pbKayit, pbCikis, pbFindataCek, pbFindataGonder, pbHaneBul } from "./lib/sync.js";
+import { createPersister } from "./lib/persistence.js";
+import { journalGet, journalMerge, journalAck, journalClear } from "./lib/journal.js";
+
+// Write-ahead journal TTL: terk edilmiş/çok eski pending replay edilmez (WAL, kalıcı kopya değil).
+const WAJ_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 gün
 import { oturumBaslat, oturumSurdur, oturumDokun, oturumTemizle, oturumDurum, IDLE_VARSAYILAN_DK, UYARI_ESIK_MS } from "./lib/oturum.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
 import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
@@ -115,7 +120,7 @@ export default function FinansAppPro() {
         // Token geçerli → veriyi DB'den çek, oturumu sürdür
         try { await pbHaneBul(); } catch { /* kişisel devam */ }
         const b = await pbFindataCek(); // 401 ise fırlatır → çıkışa düşülür
-        const veri = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+        const veri = oturumVeriHazirla(b); // persister bind + journal replay/conflict
         const email = syncDurum().email || "";
         const u = { username: email, ad: email.split("@")[0], bulut: true };
         oturumSurdur();
@@ -157,7 +162,7 @@ export default function FinansAppPro() {
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
-    if (degisti || ilkBulutGonder) pbFindataGonder(data).catch(() => {});
+    if (degisti || ilkBulutGonder) pbFindataGonder(data).then((r) => r && persister.setSyncedUpdated(r.updated)).catch(() => {});
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
@@ -169,6 +174,7 @@ export default function FinansAppPro() {
   function cikisYap() {
     pbCikis();
     oturumTemizle();
+    persister._reset(); // controller durumunu sıfırla (journal namespace'li kalır → başka kullanıcıya replay olmaz)
     setAktif(null);
     setFindataState(null);
     setSenkron("bekliyor");
@@ -180,10 +186,9 @@ export default function FinansAppPro() {
   async function oturumAc(email) {
     const e = (email || "").trim();
     try { await pbHaneBul(); } catch { /* kişisel devam */ }
-    let veri = bosVeri();
     const b = await pbFindataCek();
     const bulutBos = !b?.data;
-    if (b?.data) veri = { ...bosVeri(), ...b.data };
+    const veri = oturumVeriHazirla(b); // persister bind + journal replay/conflict
     oturumBaslat();
     return girisTamamla({ username: e, ad: e.split("@")[0], bulut: true }, veri, bulutBos);
   }
@@ -196,39 +201,72 @@ export default function FinansAppPro() {
     return oturumAc(email);
   }
 
-  const bulutTimer = useRef(null);
-  const sonVeri = useRef(null); // en son gönderilecek anlık görüntü (retry için)
-  // Saf DB: değişiklik yalnız bellekte + debounce ile buluta yazılır (yerele değil).
+  // Merkezi persistence controller — debounce + monotonik rev + single-flight + trailing
+  // + stale-guard + write-ahead journal (crash/reload güvenliği). Tek örnek (ref).
+  const persisterRef = useRef(null);
+  if (!persisterRef.current) {
+    persisterRef.current = createPersister({
+      send: pbFindataGonder,
+      journal: { merge: journalMerge, ack: journalAck, clear: journalClear, get: journalGet },
+      onStatus: setSenkron,
+    });
+  }
+  const persister = persisterRef.current;
+
+  // Oturum verisini hazırla: persister'ı bağla + write-ahead journal replay. Server
+  // değişmediyse pending mutation'ı kurtar; başka cihaz/oturum ilerlettiyse stale local
+  // snapshot ile OVERWRITE YAPMA (conflict → server kazanır, sessiz değil).
+  function oturumVeriHazirla(b) {
+    let veri = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+    const uid = syncDurum().userId;
+    persister.bind(uid, b?.updated || null);
+    const j = journalGet(uid);
+    if (j) {
+      const eski = j.ts && Date.now() - j.ts > WAJ_TTL_MS; // terk edilmiş/çok eski pending
+      if (eski) {
+        journalClear(uid); // WAL kalıcı kopya değil → eski pending'i replay etme
+      } else if ((b?.updated || null) === j.baseUpdated) {
+        veri = { ...veri, ...j.patch }; // server aynı → pending'i uygula (recovery)
+        const rec = veri;
+        setTimeout(() => persister.schedule(rec, j.patch), 0); // arka planda re-persist → ACK'te journal temizlenir
+      } else {
+        journalClear(uid); // stale local snapshot server'ı EZMEZ (conflict → server kazanır)
+        setSenkron("hata"); // sessiz değil: kaydedilemeyen değişiklik uyarısı
+      }
+    }
+    return veri;
+  }
+
+  // Saf DB: değişiklik yalnız bellekte + persister (debounce/journal/single-flight) ile buluta.
+  // Journal'a yalnız DEĞİŞEN top-level alanlar (delta) yazılır (tüm snapshot değil).
   const setFindata = useCallback((updater) => {
     setFindataState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      sonVeri.current = next;
       if (syncBagliMi()) {
-        setSenkron("kaydediliyor");
-        if (bulutTimer.current) clearTimeout(bulutTimer.current);
-        bulutTimer.current = setTimeout(async () => {
-          try { await pbFindataGonder(next); if (sonVeri.current === next) setSenkron("kaydedildi"); }
-          catch { setSenkron("hata"); }
-        }, 1200);
+        const patch = {};
+        if (prev) { for (const k in next) if (next[k] !== prev[k]) patch[k] = next[k]; }
+        else Object.assign(patch, next);
+        persister.schedule(next, patch);
       }
       return next;
     });
-  }, []);
+  }, [persister]);
 
-  // Gönderim hatasında son anlık görüntüyü pencere odağında + periyodik yeniden dene.
+  // Hata sonrası yeniden dene: pencere odağı + online + periyodik (persister status-guard'lı).
   useEffect(() => {
     if (!aktif) return undefined;
-    const retry = async () => {
-      if (senkron !== "hata" || !sonVeri.current || !syncBagliMi()) return;
-      setSenkron("kaydediliyor");
-      const v = sonVeri.current;
-      try { await pbFindataGonder(v); if (sonVeri.current === v) setSenkron("kaydedildi"); }
-      catch { setSenkron("hata"); }
-    };
+    const retry = () => persister.retry();
     window.addEventListener("focus", retry);
+    window.addEventListener("online", retry);
     const iv = setInterval(retry, 20000);
-    return () => { window.removeEventListener("focus", retry); clearInterval(iv); };
-  }, [aktif, senkron]);
+    return () => { window.removeEventListener("focus", retry); window.removeEventListener("online", retry); clearInterval(iv); };
+  }, [aktif, persister]);
+
+  // NOT: Durability write-ahead journal ile sağlanır (load-path'te conflict-check'li recovery).
+  // Eager unload/hidden flush BİLEREK yok: debounce (1200ms) arka plan sekmelerde de ateşlenir;
+  // erken kapanışta journal kurtarır. Kör unload-flush, offline-pending + başka-cihaz durumunda
+  // server'ı ezebilirdi (multi-device lost-update) — kaldırıldı. persister.flush() metodu
+  // (conflict-check'siz) yalnız explicit/güvenli bağlamlar için mevcut; lifecycle'a bağlı değil.
 
   // Oturum zaman aşımı: etkileşim sayacı + periyodik kontrol + kapanış uyarısı.
   useEffect(() => {
@@ -260,7 +298,8 @@ export default function FinansAppPro() {
       if (!syncBagliMi() || !syncDurum().haneId) return;
       try {
         const b = await pbFindataCek();
-        if (!iptal && b?.data) setFindataState((prev) => ({ ...prev, ...b.data }));
+        // Bekleyen (ACK edilmemiş) yerel değişiklik varken bulut merge YAPMA → pending'i ezmez (R3).
+        if (!iptal && b?.data && !persister.hasPending()) setFindataState((prev) => ({ ...prev, ...b.data }));
       } catch { /* çevrimdışı */ }
     };
     window.addEventListener("focus", cek);
