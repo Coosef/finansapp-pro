@@ -1,0 +1,69 @@
+name: Browser E2E
+
+# Deterministik zincir: npm ci → unit/integration → production build →
+# Playwright browser/runtime → izole PocketBase 0.39.10 → fixture seed →
+# Vite preview → Playwright A–L. Unit veya build fail ederse browser aşamasına geçilmez
+# (adımlar sıralı; ilk hatada job durur).
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Browser E2E          # branch protection için kararlı required-check adı
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"               # playwright.config: reuseExistingServer=false + preview-only webServer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps (npm ci)
+        run: npm ci
+
+      # --- Gating: unit/integration + build browser aşamasından ÖNCE ---
+      - name: Unit/integration tests (vitest)
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      # --- Browser/runtime hazırlığı (pinned chromium + OS deps) ---
+      - name: Playwright browser + runtime deps
+        run: npx playwright install --with-deps chromium
+
+      # --- İzole PB 0.39.10 (globalSetup docker) + fixture seed + preview + A–L ---
+      # PocketBase E2E sürümü globalSetup içinde 0.39.10'a PIN'li (asla :latest).
+      # AI (senaryo L) gerçek /pb/ai endpoint'ini page.route() ile mock eder → gerçek
+      # AI credential / dış servis GEREKMEZ. Throwaway PB + fixture user; production yok.
+      - name: Browser E2E (A–L)
+        run: npx playwright test --workers=1 --retries=0
+
+      # --- Failure artifacts: test fail etse de çalışır (if: always) ---
+      # HTML report + trace.zip (console + network dahil) + screenshot + video.
+      # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
