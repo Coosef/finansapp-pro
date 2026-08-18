@@ -11,6 +11,13 @@ import { journalGet, journalMerge, journalAck, journalClear } from "./lib/journa
 
 // Write-ahead journal TTL: terk edilmiş/çok eski pending replay edilmez (WAL, kalıcı kopya değil).
 const WAJ_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 gün
+
+// Refresh sonrası bulunulan view'da kal: YALNIZ güvenli navigasyon (tab id) sessionStorage'da,
+// user-namespaced. Finansal veri/ID YAZILMAZ. WAL (finansapp:waj:) ile ayrı key; logout'ta temizlenir.
+const NAV_KEY = (uid) => `finansapp:nav:${uid || "anon"}`;
+function navKaydet(uid, tab) { try { sessionStorage.setItem(NAV_KEY(uid), tab); } catch { /* yoksay */ } }
+function navOku(uid) { try { return sessionStorage.getItem(NAV_KEY(uid)); } catch { return null; } }
+function navTemizle(uid) { try { sessionStorage.removeItem(NAV_KEY(uid)); } catch { /* yoksay */ } }
 import { oturumBaslat, oturumSurdur, oturumDokun, oturumTemizle, oturumDurum, IDLE_VARSAYILAN_DK, UYARI_ESIK_MS } from "./lib/oturum.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
 import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
@@ -166,12 +173,15 @@ export default function FinansAppPro() {
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
-    setTab("panel");
+    // Refresh sonrası bulunulan ana view'da kal; geçersiz/stale/başka-kullanıcı → Dashboard fallback.
+    const kayitliTab = navOku(syncDurum().userId);
+    setTab(TABS.some((t) => t.id === kayitliTab) ? kayitliTab : "panel");
     return true;
   }
 
   // Gerçek çıkış: PB oturumunu (token) ve oturum sayaçlarını temizle.
   function cikisYap() {
+    navTemizle(syncDurum().userId); // eski private view başka kullanıcıya taşınmasın (pbCikis'ten ÖNCE, uid dururken)
     pbCikis();
     oturumTemizle();
     persister._reset(); // controller durumunu sıfırla (journal namespace'li kalır → başka kullanıcıya replay olmaz)
@@ -261,6 +271,12 @@ export default function FinansAppPro() {
     const iv = setInterval(retry, 20000);
     return () => { window.removeEventListener("focus", retry); window.removeEventListener("online", retry); clearInterval(iv); };
   }, [aktif, persister]);
+
+  // Bulunulan ana view'ı (tab) güvenli şekilde sakla → refresh sonrası aynı view'da kal.
+  useEffect(() => {
+    if (!aktif) return;
+    navKaydet(syncDurum().userId, tab);
+  }, [tab, aktif]);
 
   // NOT: Durability write-ahead journal ile sağlanır (load-path'te conflict-check'li recovery).
   // Eager unload/hidden flush BİLEREK yok: debounce (1200ms) arka plan sekmelerde de ateşlenir;
