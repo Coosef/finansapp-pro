@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PB, BASE_FINDATA } from "./helpers.mjs";
+import { PB, BASE_FINDATA, casKaydet } from "./helpers.mjs";
 
 // PB sürümü production ile BİREBİR pinli (0.39.10); repo hooks/migrations mount edilir
 // (finansapp-pb container tanımının reuse'u). Throwaway data dir, run sonunda silinir.
@@ -35,9 +35,8 @@ export default async function globalSetup() {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ identity: PB.email, password: PB.password }),
   })).json();
-  await fetch(PB.base + `/api/collections/users/records/${auth.record.id}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json", Authorization: auth.token },
-    body: JSON.stringify({ data: BASE_FINDATA }),
-  });
-  console.log("[e2e] PocketBase 0.39.10 hazır + fixture user seed edildi");
+  // Seed generic PATCH data GUARD tarafından 403'lenir → atomik CAS endpoint'i ile yaz
+  // (yeni kullanıcı: revision null→0, base 0 eşleşir).
+  await casKaydet(PB.base, auth.token, auth.record.id, BASE_FINDATA);
+  console.log("[e2e] PocketBase 0.39.10 hazır + fixture user seed edildi (CAS)");
 }

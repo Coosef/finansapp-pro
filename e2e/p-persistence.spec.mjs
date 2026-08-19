@@ -3,7 +3,7 @@
 // olarak yarış durumunu sınamak. Kurtarma kullanıcı-görünür (UI) olarak doğrulanır.
 // (Reconnect/ACK SONRASI PB/journal doğrulaması için poll meşrudur — yarışı gizlemez.)
 import { test, expect } from "@playwright/test";
-import { seedSession, BASE_FINDATA, getFindata, setFindata, pbAuth, PB } from "./helpers.mjs";
+import { seedSession, BASE_FINDATA, getFindata, setFindata, casKaydet, pbAuth, PB } from "./helpers.mjs";
 import { panele } from "./ui.mjs";
 
 const nrGider = (id, baslik, miktar, tarih) => ({ id, baslik, miktar, kategori: "Gönderim", tarih, tur: "needs_review" });
@@ -19,7 +19,7 @@ async function pbRegister(email, password) {
 }
 async function setFindataAs(email, password, findata) {
   const { token, userId } = await authAs(email, password);
-  await fetch(PB.base + `/api/collections/users/records/${userId}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: token }, body: JSON.stringify({ data: findata }) });
+  await casKaydet(PB.base, token, userId, findata); // guard: generic PATCH data yasak → CAS ile seed
 }
 async function getFindataAs(email, password) {
   const { token, userId } = await authAs(email, password);
@@ -38,12 +38,11 @@ async function seedHaneSession(page, token, userId, email, hane) {
   }, [token, userId, email, hane]);
 }
 
-// PB PATCH'lerini kes (offline); GET'ler geçer. Dönüş: kapatma fonksiyonu.
+// CAS write'larını kes (offline); GET'ler ve diğer istekler geçer. Dönüş: kapatma fonksiyonu.
+// findata artık generic PATCH ile değil, atomik POST /api/findata/kaydet ile yazılır.
 async function offlineYap(page) {
-  await page.route("**/pb/api/collections/**", (route) =>
-    route.request().method() === "PATCH" ? route.abort("failed") : route.continue()
-  );
-  return () => page.unroute("**/pb/api/collections/**");
+  await page.route("**/pb/api/findata/kaydet", (route) => route.abort("failed"));
+  return () => page.unroute("**/pb/api/findata/kaydet");
 }
 
 // ---- P1 (= R1 acceptance): needs_review→Gider + immediate reload → Gider KORUNUR ----
@@ -78,10 +77,10 @@ test("P2 — merchant override + immediate reload → override korunur", async (
 
 // ---- P3: in-flight trailing — A gönderilirken B → final ikisini de içerir ----
 test("P3 — in-flight trailing: A uçuşta iken B → sonuncu kaybolmaz", async ({ page }) => {
-  // İlk PATCH'i geciktir → A uçuşta kalır
+  // İlk CAS write'ı geciktir → A uçuşta kalır
   let n = 0;
-  await page.route("**/pb/api/collections/**", async (route) => {
-    if (route.request().method() === "PATCH" && ++n === 1) await new Promise((r) => setTimeout(r, 1500));
+  await page.route("**/pb/api/findata/kaydet", async (route) => {
+    if (++n === 1) await new Promise((r) => setTimeout(r, 1500));
     return route.continue();
   });
   await seedSession(page, { ...BASE_FINDATA, giderler: [nrGider("a1", "Belirsiz EFT A", 1000, "2026-08-05"), nrGider("a2", "Belirsiz EFT B", 2000, "2026-08-06")] });
@@ -98,8 +97,8 @@ test("P3 — in-flight trailing: A uçuşta iken B → sonuncu kaybolmaz", async
 // ---- P4: out-of-order/stale — eski (yavaş) write response yeni state'i geri almaz ----
 test("P4 — stale response: aynı öğe A→B (ilk PATCH yavaş) → final = B", async ({ page }) => {
   let n = 0;
-  await page.route("**/pb/api/collections/**", async (route) => {
-    if (route.request().method() === "PATCH" && ++n === 1) await new Promise((r) => setTimeout(r, 1500));
+  await page.route("**/pb/api/findata/kaydet", async (route) => {
+    if (++n === 1) await new Promise((r) => setTimeout(r, 1500));
     return route.continue();
   });
   // Hane kişili item: sınıflandıktan SONRA da İncele'de kalır (reclassify edilebilir).
@@ -160,22 +159,30 @@ test("P7 — pending ile tekrar tekrar reload → duplicate/yan etki yok", async
   expect(((await getFindata()).giderler || []).length).toBe(1); // öğe çoğalmadı
 });
 
-// ---- P9: server conflict — stale local snapshot server'ı sessizce ezmez ----
-test("P9 — server conflict: başka cihaz ilerlettiyse local stale overwrite YAPMAZ", async ({ page }) => {
+// ---- P9: server conflict — CAS no-clobber + controlled reconcile ----
+// Stale local pending server'ı KÖR EZMEZ (CAS 409). Bağımsız server değişikliği (farklı
+// top-level alan) KORUNUR; local pending taze server state üstüne YENİDEN UYGULANIR
+// (controlled reconcile — WAL preserved). Eski "conflict'te local'i at" davranışının yerine.
+test("P9 — server conflict: CAS no-clobber + controlled reconcile", async ({ page }) => {
   await seedSession(page, { ...BASE_FINDATA, giderler: [nrGider("c1", "Belirsiz EFT Conflict", 8000, "2026-08-05")] });
   const online = await offlineYap(page);
   await page.goto("/");
   await page.getByText("İşlemler").first().click();
   await page.getByRole("button", { name: /İncele/ }).click();
-  await page.getByRole("button", { name: "Gider (harcama)" }).click(); // journal (baseUpdated=U0), offline
+  await page.getByRole("button", { name: "Gider (harcama)" }).click(); // local pending: c1→gider (offline, base=Rs)
   await page.waitForTimeout(200);
-  // "Başka cihaz" server'ı ilerletir (updated → U1), FARKLI bir state (iade)
-  await setFindata({ ...BASE_FINDATA, giderler: [{ id: "c1", baslik: "Belirsiz EFT Conflict", miktar: 8000, kategori: "Gönderim", tarih: "2026-08-05", tur: "iade" }] });
+  // "Başka cihaz" server'ı CAS ile ilerletir: FARKLI top-level alan (gelirler) → srv geliri ekler.
+  await setFindata({
+    ...BASE_FINDATA,
+    giderler: [nrGider("c1", "Belirsiz EFT Conflict", 8000, "2026-08-05")],
+    gelirler: [...BASE_FINDATA.gelirler, { id: "srv1", baslik: "Server Gelir", miktar: 12345, kategori: "Maaş", tarih: "2026-08-10", kaynak: "elle" }],
+  });
   await online();
-  await page.reload(); // app fetch U1 ≠ journal.baseUpdated U0 → conflict
-  await page.waitForTimeout(2500); // olası (hatalı) re-persist penceresi geçsin
-  // Server EZİLMEDİ: diğer-cihaz değişikliği (iade) korunur; stale local (gider) uygulanmaz
-  expect(((await getFindata()).giderler || []).find((g) => g.id === "c1")?.tur).toBe("iade");
+  await page.reload(); // app fetch: serverRev ≠ journal.base → controlled reconcile (kör overwrite yok)
+  // No-clobber: bağımsız server değişikliği (srv1 geliri) korunur (stale kör PATCH bunu silerdi)
+  await expect.poll(async () => ((await getFindata()).gelirler || []).some((g) => g.id === "srv1"), { timeout: 20000 }).toBe(true);
+  // Controlled reconcile: local pending (c1→gider) taze state üstüne yeniden uygulanır
+  await expect.poll(async () => ((await getFindata()).giderler || []).find((g) => g.id === "c1")?.tur, { timeout: 20000 }).toBe("gider");
 });
 
 // ---- P6: CEK merge guard — hane modunda local pending varken cloud fetch pending'i EZMEZ ----

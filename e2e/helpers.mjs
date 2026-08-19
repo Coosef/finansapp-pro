@@ -23,14 +23,25 @@ export async function pbAuth() {
   return { token: d.token, userId: d.record.id };
 }
 
-// Her testin başında deterministik state: fixture user'ın findata'sını sıfırla.
+// Findata'yı server-owned revision'ı okuyup atomik CAS endpoint'i (/api/findata/kaydet)
+// ile yaz. Generic PATCH data GUARD tarafından 403'lenir → seed de gerçek write-path'i kullanır.
+export async function casKaydet(base, token, userId, findata, haneId) {
+  const yol = haneId ? `/api/collections/haneler/records/${haneId}` : `/api/collections/users/records/${userId}`;
+  const cur = await (await fetch(base + yol, { headers: { Authorization: token } })).json();
+  const rev = Number.isInteger(cur.revision) ? cur.revision : 0;
+  const govde = haneId ? { haneId, baseRevision: rev, data: findata } : { baseRevision: rev, data: findata };
+  const r = await fetch(base + "/api/findata/kaydet", {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: token },
+    body: JSON.stringify(govde),
+  });
+  if (!r.ok) throw new Error("E2E casKaydet başarısız: " + r.status);
+  return r.json();
+}
+
+// Her testin başında deterministik state: fixture user'ın findata'sını sıfırla (CAS ile).
 export async function setFindata(findata) {
   const { token, userId } = await pbAuth();
-  const r = await fetch(PB.base + `/api/collections/users/records/${userId}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json", Authorization: token },
-    body: JSON.stringify({ data: findata }),
-  });
-  if (!r.ok) throw new Error("E2E setFindata başarısız: " + r.status);
+  await casKaydet(PB.base, token, userId, findata);
   return { token, userId };
 }
 

@@ -1,6 +1,6 @@
 // Refresh sonrası bulunulan view'da kalma (güvenli nav state, sessionStorage, user-scoped).
 import { test, expect } from "@playwright/test";
-import { seedSession, BASE_FINDATA, pbAuth, PB } from "./helpers.mjs";
+import { seedSession, BASE_FINDATA, casKaydet, pbAuth, PB } from "./helpers.mjs";
 
 const heading = (page, ad) => page.getByRole("heading", { name: ad, level: 1 });
 
@@ -13,7 +13,7 @@ async function pbRegister(email, password) {
 }
 async function setFindataAs(email, password, findata) {
   const { token, userId } = await authAs(email, password);
-  await fetch(PB.base + `/api/collections/users/records/${userId}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: token }, body: JSON.stringify({ data: findata }) });
+  await casKaydet(PB.base, token, userId, findata); // guard: generic PATCH data yasak → CAS ile seed
 }
 
 test("N1 — İşlemler → refresh → İşlemler'de kal", async ({ page }) => {
