@@ -116,6 +116,23 @@ test("C6 — invalid/spoof revision reddedilir; revision server-owned", async ()
   expect(final.revision).toBe(base + 1); // 999999 DEĞİL — server-owned +1
 });
 
+// ---- VAL: CAS data doğrulama — array/primitive/null → 400; revision + server data DEĞİŞMEZ ----
+test("VAL — CAS data array/primitive/null → 400, revision+data değişmez", async () => {
+  const { token, userId } = await pbAuth();
+  const before = await readUser(token, userId);
+  const baseRev = before.revision || 0;
+
+  expect((await casPost(token, { baseRevision: baseRev, data: [] })).status).toBe(400);   // array
+  expect((await casPost(token, { baseRevision: baseRev, data: "x" })).status).toBe(400);  // string
+  expect((await casPost(token, { baseRevision: baseRev, data: 5 })).status).toBe(400);    // number
+  expect((await casPost(token, { baseRevision: baseRev, data: null })).status).toBe(400); // null
+
+  // Reddedilen write'lar server veri + revision'ı DEĞİŞTİRMEDİ
+  const after = await readUser(token, userId);
+  expect(after.revision).toBe(baseRev);
+  expect(after.data).toEqual(before.data);
+});
+
 // ---- C7: cross-user isolation — A'nın yazısı B'yi etkilemez; A B'yi yazamaz ----
 test("C7 — cross-user isolation: A B'nin verisini yazamaz/etkilemez", async () => {
   const aEmail = "c7a@finansapp.test", aPass = "c7password123";

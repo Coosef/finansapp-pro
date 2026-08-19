@@ -10,7 +10,7 @@ import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele, anahtarKaydet, anahtarDurum } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
-import { syncYukle, syncDurum, pbFindataCek, pbFindataGonder, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril, pbSifreDegistir } from "../lib/sync.js";
+import { syncYukle, syncDurum, pbFindataCek, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril, pbSifreDegistir } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -18,7 +18,7 @@ const baslik = { fontSize: "15px", fontWeight: 600, color: V.ink, fontFamily: SE
 const altYazi = { margin: "0 0 14px", fontSize: "12px", color: V.ink3, lineHeight: 1.5 };
 const etiket = { display: "block", fontSize: "11.5px", color: V.ink3, marginBottom: 8 };
 
-export function Ayarlar({ findata, setFindata, bildir, user, onLogout }) {
+export function Ayarlar({ findata, setFindata, bildir, user, onLogout, senkronlaSimdi }) {
   const ay = findata.ayarlar || {};
   const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
 
@@ -28,7 +28,7 @@ export function Ayarlar({ findata, setFindata, bildir, user, onLogout }) {
       <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 14 }}>
         <ProfilKart user={user} onLogout={onLogout} />
         <SifreKart bildir={bildir} />
-        <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} />
+        <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} senkronlaSimdi={senkronlaSimdi} />
         <PwaKart bildir={bildir} />
         <GorunumKart ay={ay} setAyar={setAyar} />
         <GuvenlikKart ay={ay} setAyar={setAyar} bildir={bildir} />
@@ -47,24 +47,20 @@ export function Ayarlar({ findata, setFindata, bildir, user, onLogout }) {
 
 // ---------- Profil ----------
 // ---------- Bulut Senkron (PocketBase) ----------
-function BulutKart({ findata, setFindata, bildir }) {
+function BulutKart({ findata, setFindata, bildir, senkronlaSimdi }) {
   const [durum, setDurum] = useState(() => syncYukle());
   const [mesgul, setMesgul] = useState(false);
   const [haneAd, setHaneAd] = useState("");
   const [katilKod, setKatilKod] = useState("");
   const [haneForm, setHaneForm] = useState(""); // "" | "olustur" | "katil"
 
-  async function simdiSenkronla() {
-    setMesgul(true);
-    try {
-      const b = await pbFindataCek(); // taze server revision → CAS base
-      await pbFindataGonder(findata, b?.revision ?? 0); // atomik CAS yaz (base = güncel revision)
-      bildir("Buluta yüklendi");
-    }
-    catch (e) {
-      bildir(e?.conflict ? "Sunucuda daha yeni bir sürüm var; sayfayı yenileyip tekrar dene." : (e?.message || "Gönderilemedi"), "err");
-    }
-    finally { setMesgul(false); }
+  // "Şimdi senkronla": DOĞRUDAN CAS write YOK. Stale local'ı taze server revision'a base'leyip
+  // göndermek server'ı ezerdi (lost-update). Persister'ın authoritative base'i + WAL/conflict
+  // yolunu tetikle (flush/retry). Sonuç üstteki senkron göstergesinde (kaydediliyor→kaydedildi/
+  // hata/çatışma); çatışmada controlled reconcile devreye girer, kör overwrite olmaz.
+  function simdiSenkronla() {
+    if (typeof senkronlaSimdi === "function") senkronlaSimdi();
+    bildir("Senkronizasyon tetiklendi");
   }
 
   async function haneOlustur() {

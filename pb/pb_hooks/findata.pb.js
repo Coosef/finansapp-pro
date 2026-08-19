@@ -15,7 +15,8 @@ routerAdd(
     const base = body.baseRevision;
     if (!Number.isInteger(base) || base < 0) throw new BadRequestError("baseRevision (tamsayı ≥0) gerekli.");
     const data = body.data;
-    if (data === null || typeof data !== "object") throw new BadRequestError("data (nesne) gerekli.");
+    // findata bir NESNE olmalı; array (data:[]) veya primitive reddedilir → server veri/revision bozulmaz.
+    if (data === null || typeof data !== "object" || Array.isArray(data)) throw new BadRequestError("data (nesne) gerekli.");
 
     let out = null;
     e.app.runInTransaction((txApp) => {

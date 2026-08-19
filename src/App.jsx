@@ -272,6 +272,12 @@ export default function FinansAppPro() {
     });
   }, [persister]);
 
+  // "Şimdi senkronla" (Ayarlar → Bulut): DOĞRUDAN pbFindataGonder YOK (stale local'ı taze
+  // revision'a base'leyip server'ı ezerdi). Persister'ın authoritative syncedRevision base'i +
+  // WAL/conflict yolu kullanılır: retry() hata durumunu, flush() bekleyen pending'i gönderir;
+  // stale ise CAS 409 → catisma → controlled reconcile (kör overwrite yok).
+  const senkronlaSimdi = useCallback(() => { persister.retry(); persister.flush(); }, [persister]);
+
   // Hata sonrası yeniden dene: pencere odağı + online + periyodik (persister status-guard'lı).
   useEffect(() => {
     if (!aktif) return undefined;
@@ -376,6 +382,7 @@ export default function FinansAppPro() {
         dark={dark}
         onLogout={cikisYap}
         senkron={senkron}
+        senkronlaSimdi={senkronlaSimdi}
       />
       {uyariModali}
     </>
@@ -413,7 +420,7 @@ function tarihUzun() {
   return `${d.getDate()} ${AY_UZUN[d.getMonth()]}`;
 }
 
-function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senkron }) {
+function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senkron, senkronlaSimdi }) {
   const [modal, setModal] = useState(null);
   const [guncelleme, setGuncelleme] = useState(null); // yeni sürüm bilgisi
   const [form, setForm] = useState({});
@@ -803,7 +810,7 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
             {tab === "takvim" && <Takvim findata={findata} onDuzenle={duzenleIslem} />}
             {tab === "hane" && <Hane findata={findata} />}
             {tab === "veri" && <Veri findata={findata} setFindata={setFindata} user={user} bildir={bildir} ekle={ekle} kategoriOgren={kategoriOgren} toplamGelir={toplamGelirTum} toplamGider={toplamGiderTum} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} netDeger={netDeger} guncelDeger={guncelDeger} />}
-            {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} onLogout={onLogout} />}
+            {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} onLogout={onLogout} senkronlaSimdi={senkronlaSimdi} />}
           </div>
         </div>
       </main>
