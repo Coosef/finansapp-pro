@@ -47,11 +47,12 @@ jobs:
       - name: Playwright browser + runtime deps
         run: npx playwright install --with-deps chromium
 
-      # --- İzole PB 0.39.10 (globalSetup docker) + fixture seed + preview + A–L ---
+      # --- İzole PB 0.39.10 (globalSetup docker) + fixture seed + preview + tüm suite ---
       # PocketBase E2E sürümü globalSetup içinde 0.39.10'a PIN'li (asla :latest).
       # AI (senaryo L) gerçek /pb/ai endpoint'ini page.route() ile mock eder → gerçek
       # AI credential / dış servis GEREKMEZ. Throwaway PB + fixture user; production yok.
-      - name: Browser E2E (A–L)
+      # Filtre YOK → tüm spec'ler: A–L + N1–N4 + P1–P9 + CAS C1–C8.
+      - name: Browser E2E (A–L + N + P + CAS C1–C8)
         run: npx playwright test --workers=1 --retries=0
 
       # --- Persistence race gate: P1–P9 suite'i 3× ardışık (retries=0) → yarış kararlılığı ---
@@ -60,6 +61,14 @@ jobs:
           for i in 1 2 3; do
             echo "== persistence race gate run $i/3 =="
             npx playwright test e2e/p-persistence.spec.mjs --workers=1 --retries=0
+          done
+
+      # --- CAS race gate: optimistic concurrency (C1–C8) suite'i 3× ardışık → CAS kararlılığı ---
+      - name: CAS race gate (C1–C8 ×3)
+        run: |
+          for i in 1 2 3; do
+            echo "== CAS race gate run $i/3 =="
+            npx playwright test e2e/c-cas-hardening.spec.mjs e2e/c2-cas.spec.mjs e2e/c3-cas.spec.mjs --workers=1 --retries=0
           done
 
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
