@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PB, BASE_FINDATA } from "./helpers.mjs";
+import { PB, BASE_FINDATA, casKaydet } from "./helpers.mjs";
 
 // PB sürümü production ile BİREBİR pinli (0.39.10); repo hooks/migrations mount edilir
 // (finansapp-pb container tanımının reuse'u). Throwaway data dir, run sonunda silinir.
@@ -14,8 +14,10 @@ export default async function globalSetup() {
   try { execSync(`docker rm -f ${CONTAINER}`, { stdio: "ignore" }); } catch { /* yoktu */ }
   const dataDir = mkdtempSync(join(tmpdir(), "fa-e2e-pb-"));
   writeFileSync(join(repo, "e2e", ".pb-datadir"), dataDir);
+  // Ana suite ENFORCE modunda koşar (guard aktif): C5 generic-PATCH-403 + seeder'lar CAS.
+  // Compatibility modu (enforce kapalı) ayrı bir throwaway PB ile c-cas-compat.spec test eder.
   execSync(
-    `docker run -d --name ${CONTAINER} -p 8090:8090 ` +
+    `docker run -d --name ${CONTAINER} -p 8090:8090 -e FINANSAPP_CAS_ENFORCE=1 ` +
       `-v "${repo}/pb/pb_hooks:/pb_hooks" -v "${repo}/pb/pb_migrations:/pb_migrations" -v "${dataDir}:/pb_data" ` +
       `${PB_IMAGE} serve --http=0.0.0.0:8090 --dir=/pb_data --migrationsDir=/pb_migrations --hooksDir=/pb_hooks`,
     { stdio: "ignore" }
@@ -35,9 +37,8 @@ export default async function globalSetup() {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ identity: PB.email, password: PB.password }),
   })).json();
-  await fetch(PB.base + `/api/collections/users/records/${auth.record.id}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json", Authorization: auth.token },
-    body: JSON.stringify({ data: BASE_FINDATA }),
-  });
-  console.log("[e2e] PocketBase 0.39.10 hazır + fixture user seed edildi");
+  // Seed generic PATCH data GUARD tarafından 403'lenir → atomik CAS endpoint'i ile yaz
+  // (yeni kullanıcı: revision null→0, base 0 eşleşir).
+  await casKaydet(PB.base, auth.token, auth.record.id, BASE_FINDATA);
+  console.log("[e2e] PocketBase 0.39.10 hazır + fixture user seed edildi (CAS)");
 }

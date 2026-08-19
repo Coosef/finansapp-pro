@@ -74,11 +74,12 @@ function SenkronRozet({ durum }) {
     kaydediliyor: { renk: "var(--ink3)", nokta: "var(--ink3)", metin: "Kaydediliyor…" },
     kaydedildi: { renk: "var(--pos)", nokta: "var(--pos)", metin: "Kaydedildi" },
     hata: { renk: "var(--neg)", nokta: "var(--neg)", metin: "Bağlantı yok" },
+    catisma: { renk: "var(--neg)", nokta: "var(--neg)", metin: "Çakışma" },
   };
   const s = harita[durum];
   if (!s) return null; // "bekliyor" → gösterme
   return (
-    <div className="fa-deskonly" title={durum === "hata" ? "Sunucuya ulaşılamıyor — yeniden deneniyor" : s.metin}
+    <div className="fa-deskonly" title={durum === "hata" ? "Sunucuya ulaşılamıyor — yeniden deneniyor" : durum === "catisma" ? "Sunucuda daha yeni bir sürüm var — değişikliklerin yerelde korunuyor" : s.metin}
       style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 11px", borderRadius: 9, border: "1px solid var(--border2)", background: "var(--card)", fontSize: 12, color: s.renk, whiteSpace: "nowrap" }}>
       <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.nokta, flex: "none", animation: durum === "kaydediliyor" ? "obfade 1s infinite alternate" : "none" }} />
       {s.metin}
@@ -127,11 +128,11 @@ export default function FinansAppPro() {
         // Token geçerli → veriyi DB'den çek, oturumu sürdür
         try { await pbHaneBul(); } catch { /* kişisel devam */ }
         const b = await pbFindataCek(); // 401 ise fırlatır → çıkışa düşülür
-        const veri = oturumVeriHazirla(b); // persister bind + journal replay/conflict
+        const { veri, pendingVar, catisma } = oturumVeriHazirla(b); // bind(revision) + replay/çakışma-surface
         const email = syncDurum().email || "";
         const u = { username: email, ad: email.split("@")[0], bulut: true };
         oturumSurdur();
-        girisTamamla(u, veri, !b?.data);
+        girisTamamla(u, veri, !b?.data, pendingVar, catisma);
       } catch { pbCikis(); oturumTemizle(); /* token geçersiz/expired → giriş ekranı */ }
       finally { setYukleniyor(false); }
     })();
@@ -158,7 +159,7 @@ export default function FinansAppPro() {
 
   // Veriyi hazırla (tekrarlar + hedef katkıları) ve oturumu aç. DB tek kaynak:
   // türetilmiş değişiklik veya boş DB varsa buluta yazılır, yerele yazılmaz.
-  function girisTamamla(u, veri, ilkBulutGonder) {
+  function girisTamamla(u, veri, ilkBulutGonder, pendingVar = false, catisma = false) {
     let { data, degisti } = tekrarlariUret(veri);
     const mg = maasGeliriUret(data, bugun()); // aylık maaş gelir satırlarını türet
     data = mg.data;
@@ -169,7 +170,13 @@ export default function FinansAppPro() {
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
-    if (degisti || ilkBulutGonder) pbFindataGonder(data).then((r) => r && persister.setSyncedUpdated(r.updated)).catch(() => {});
+    // TEK yazım noktası: türetilmiş değişiklik / ilk-gönderim / aynı-revision recovery → persister
+    // üzerinden CAS (syncedRevision base, single-flight, journal). Doğrudan PATCH DEĞİL.
+    // ÇAKIŞMA'da (server ilerlemiş) hiçbir otomatik yazım yapılmaz → server + WAL korunur.
+    if (!catisma && (degisti || ilkBulutGonder || pendingVar) && syncBagliMi()) {
+      const patch = {}; for (const k in data) patch[k] = data[k];
+      persister.schedule(data, patch);
+    }
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
@@ -198,9 +205,9 @@ export default function FinansAppPro() {
     try { await pbHaneBul(); } catch { /* kişisel devam */ }
     const b = await pbFindataCek();
     const bulutBos = !b?.data;
-    const veri = oturumVeriHazirla(b); // persister bind + journal replay/conflict
+    const { veri, pendingVar, catisma } = oturumVeriHazirla(b); // bind(revision) + replay/çakışma-surface
     oturumBaslat();
-    return girisTamamla({ username: e, ad: e.split("@")[0], bulut: true }, veri, bulutBos);
+    return girisTamamla({ username: e, ad: e.split("@")[0], bulut: true }, veri, bulutBos, pendingVar, catisma);
   }
   async function girisYap(email, sifre) {
     await pbGiris(syncDurum().url, (email || "").trim(), sifre);
@@ -227,24 +234,34 @@ export default function FinansAppPro() {
   // değişmediyse pending mutation'ı kurtar; başka cihaz/oturum ilerlettiyse stale local
   // snapshot ile OVERWRITE YAPMA (conflict → server kazanır, sessiz değil).
   function oturumVeriHazirla(b) {
-    let veri = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+    const serverData = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+    const serverRev = Number.isInteger(b?.revision) ? b.revision : 0;
     const uid = syncDurum().userId;
-    persister.bind(uid, b?.updated || null);
+    persister.bind(uid, serverRev, b?.updated || null); // CAS base = server revision
+    let veri = serverData;
+    let pendingVar = false; // yeniden persist gerekiyor mu? (yalnız aynı-revision recovery)
+    let catisma = false; // server ilerlemiş = çakışma (otomatik merge/write yok)
     const j = journalGet(uid);
     if (j) {
-      const eski = j.ts && Date.now() - j.ts > WAJ_TTL_MS; // terk edilmiş/çok eski pending
+      const eski = j.ts && Date.now() - j.ts > WAJ_TTL_MS; // terk edilmiş/çok eski pending (TTL)
       if (eski) {
-        journalClear(uid); // WAL kalıcı kopya değil → eski pending'i replay etme
-      } else if ((b?.updated || null) === j.baseUpdated) {
-        veri = { ...veri, ...j.patch }; // server aynı → pending'i uygula (recovery)
-        const rec = veri;
-        setTimeout(() => persister.schedule(rec, j.patch), 0); // arka planda re-persist → ACK'te journal temizlenir
+        journalClear(uid); // TTL politikası → eski pending'i replay etme (güvenli temizlik)
+      } else if (serverRev === j.baseUpdated) {
+        veri = { ...serverData, ...j.patch }; // server AYNI revizyon → pending'i uygula (recovery)
+        pendingVar = true; // yazımı girisTamamla TEK noktadan yapar (setTimeout sıra-yarışı yok)
       } else {
-        journalClear(uid); // stale local snapshot server'ı EZMEZ (conflict → server kazanır)
-        setSenkron("hata"); // sessiz değil: kaydedilemeyen değişiklik uyarısı
+        // Server İLERLEMİŞ (base uyuşmuyor) = ÇAKIŞMA. Bu increment'te OTOMATİK MERGE/WRITE YOK:
+        // {...server, ...patch} aynı top-level alanda (giderler/gelirler) server item'larını
+        // silerdi → lost-update. Güvenli: server canonical GÖSTERİLİR, WAL KORUNUR (SİLİNMEZ),
+        // otomatik schedule YOK, çakışma yüzeylenir. persister.catismaGir() KİLİDİ açar →
+        // bind server rev'ine yapılsa bile derivasyon/otomatik setFindata çakışmayı sessizce
+        // ezip base'i eşleşen bir write ile kaydedemez. Kullanıcı çözer (item-ID merge ayrı increment).
+        veri = serverData;
+        catisma = true;
+        persister.catismaGir();
       }
     }
-    return veri;
+    return { veri, pendingVar, catisma };
   }
 
   // Saf DB: değişiklik yalnız bellekte + persister (debounce/journal/single-flight) ile buluta.
@@ -262,6 +279,12 @@ export default function FinansAppPro() {
     });
   }, [persister]);
 
+  // "Şimdi senkronla" (Ayarlar → Bulut): DOĞRUDAN pbFindataGonder YOK (stale local'ı taze
+  // revision'a base'leyip server'ı ezerdi). Persister'ın authoritative syncedRevision base'i
+  // kullanılır: retry() hata durumunu, flush() bekleyen pending'i gönderir; stale ise CAS 409 →
+  // "catisma" (server + WAL korunur, otomatik merge/write YOK, çakışma yüzeylenir).
+  const senkronlaSimdi = useCallback(() => { persister.retry(); persister.flush(); }, [persister]);
+
   // Hata sonrası yeniden dene: pencere odağı + online + periyodik (persister status-guard'lı).
   useEffect(() => {
     if (!aktif) return undefined;
@@ -271,6 +294,13 @@ export default function FinansAppPro() {
     const iv = setInterval(retry, 20000);
     return () => { window.removeEventListener("focus", retry); window.removeEventListener("online", retry); clearInterval(iv); };
   }, [aktif, persister]);
+
+  // CAS çakışması (409 → "catisma"): server daha yeni revision'da. Bu increment'te OTOMATİK
+  // reconcile/merge/write YOK (journal yalnız top-level delta tutar; aynı alanı iki client
+  // değiştirirse {...server, ...patch} server item'larını silerdi → lost-update). Güvenli
+  // semantik: server canonical KORUNUR, WAL KORUNUR (persister journal'ı ACK'siz silmez),
+  // kör retry/auto-merge YOK, çakışma UI'da yüzeylenir (banner + rozet). Kullanıcı çözer;
+  // gerçek item-ID bazlı 3-way merge ayrı bir increment. (Otomatik reconcile effect'i kaldırıldı.)
 
   // Bulunulan ana view'ı (tab) güvenli şekilde sakla → refresh sonrası aynı view'da kal.
   useEffect(() => {
@@ -345,6 +375,7 @@ export default function FinansAppPro() {
         dark={dark}
         onLogout={cikisYap}
         senkron={senkron}
+        senkronlaSimdi={senkronlaSimdi}
       />
       {uyariModali}
     </>
@@ -382,7 +413,7 @@ function tarihUzun() {
   return `${d.getDate()} ${AY_UZUN[d.getMonth()]}`;
 }
 
-function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senkron }) {
+function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senkron, senkronlaSimdi }) {
   const [modal, setModal] = useState(null);
   const [guncelleme, setGuncelleme] = useState(null); // yeni sürüm bilgisi
   const [form, setForm] = useState({});
@@ -699,6 +730,11 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
             ⚠ Sunucuya ulaşılamıyor — değişiklikler kaydedilemedi, yeniden deneniyor…
           </div>
         )}
+        {senkron === "catisma" && (
+          <div style={{ background: "var(--neg)", color: "#fff", fontSize: 12.5, fontWeight: 600, textAlign: "center", padding: "7px 12px" }}>
+            ⚠ Çakışma — sunucuda daha yeni bir sürüm var; değişikliklerin kaydedilmedi ve yerelde korunuyor.
+          </div>
+        )}
         <header className="fa-header">
           <div>
             <div style={{ fontSize: 12.5, color: "var(--ink3)" }}>{selamMetni()}, {user.ad?.split(" ")[0] || user.username} · {tarihUzun()}</div>
@@ -772,7 +808,7 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
             {tab === "takvim" && <Takvim findata={findata} onDuzenle={duzenleIslem} />}
             {tab === "hane" && <Hane findata={findata} />}
             {tab === "veri" && <Veri findata={findata} setFindata={setFindata} user={user} bildir={bildir} ekle={ekle} kategoriOgren={kategoriOgren} toplamGelir={toplamGelirTum} toplamGider={toplamGiderTum} toplamAbonelik={toplamAbonelik} yatirimDeger={yatirimDeger} yatirimKar={yatirimKar} netDeger={netDeger} guncelDeger={guncelDeger} />}
-            {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} onLogout={onLogout} />}
+            {tab === "ayar" && <Ayarlar findata={findata} setFindata={setFindata} bildir={bildir} user={user} onLogout={onLogout} senkronlaSimdi={senkronlaSimdi} />}
           </div>
         </div>
       </main>
