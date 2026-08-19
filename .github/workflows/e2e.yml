@@ -52,7 +52,7 @@ jobs:
       # AI (senaryo L) gerçek /pb/ai endpoint'ini page.route() ile mock eder → gerçek
       # AI credential / dış servis GEREKMEZ. Throwaway PB + fixture user; production yok.
       # Filtre YOK → tüm spec'ler: A–L + N1–N4 + P1–P9 + CAS C1–C8 + M1(sync buton) + compat/enforce.
-      - name: Browser E2E (full suite: A–L + N + P + CAS + M1 + compat)
+      - name: "Browser E2E full suite (A–L + N + P + CAS + M1 + compat)"
         run: npx playwright test --workers=1 --retries=0
 
       # --- Persistence race gate: P1–P9 suite'i 3× ardışık (retries=0) → yarış kararlılığı ---
