@@ -78,15 +78,37 @@ describe("createPersister (CAS)", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("cozumle: fresh revision + patch yeniden uygulanır, yeni base ile gönderilir", async () => {
-    const send = vi.fn(async () => ({ revision: 9, updated: "U9" }));
-    const p = createPersister({ send, journal: mockJournal(), delay: 1200 });
+  it("409 çakışma → KİLİT: sonraki schedule WAL'a yazar ama GÖNDERMEZ, durum catisma kalır", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => { throw conflictErr(7); }); // ilk gönderim çakışır (server rev=7)
+    const p = createPersister({ send, journal: j, delay: 1200 });
     p.bind("u1", 3);
     p.schedule({ giderler: [1] }, { giderler: [1] });
-    const yeni = p.cozumle({ giderler: [], gelirler: [5] }, 8, { giderler: [1] }); // taze server rev=8
-    expect(yeni).toEqual({ giderler: [1], gelirler: [5] }); // patch taze veriye uygulandı
-    await vi.advanceTimersByTimeAsync(0);
-    expect(send).toHaveBeenLastCalledWith({ giderler: [1], gelirler: [5] }, 8); // base=8 (taze)
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenLastCalledWith({ giderler: [1] }, 3);
+    expect(p.getStatus()).toBe("catisma");
+    expect(j.get("u1")).not.toBe(null); // WAL KORUNDU (ACK yok)
+    // Kilit: yeni mutation WAL'a işlenir ama GÖNDERİLMEZ, durum catisma KALIR (otomatik write yok)
+    p.schedule({ giderler: [1, 2] }, { giderler: [1, 2] });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(send).toHaveBeenCalledTimes(1); // ikinci schedule göndermedi (kilit)
+    expect(p.getStatus()).toBe("catisma");
+    expect(j.get("u1").patch).toEqual({ giderler: [1, 2] }); // yeni mutation WAL'a işlendi
+  });
+
+  it("catismaGir (load-path kilidi): schedule WAL'a yazar ama GÖNDERMEZ, durum catisma", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({ revision: 5, updated: "U" }));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.catismaGir();
+    expect(p.getStatus()).toBe("catisma");
+    p.schedule({ x: 1 }, { x: 1 });     // reload sonrası derivasyon/otomatik setFindata simülasyonu
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(send).not.toHaveBeenCalled(); // kilitli → gönderim yok (çakışma sessizce ezilmez)
+    expect(p.getStatus()).toBe("catisma");
+    expect(j.get("u1")).not.toBe(null);  // WAL'a yazıldı (kayıp yok)
   });
 
   it("ağ hatası → status hata, journal KORUNUR; retry başarılı → temizlenir", async () => {

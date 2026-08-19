@@ -53,6 +53,14 @@ export async function getFindata() {
   return d.data || {};
 }
 
+// Ham kayıt: { data, revision } — çakışma testlerinde "revision ilerlemedi" (auto-write yok) kanıtı.
+export async function getRecordRaw() {
+  const { token, userId } = await pbAuth();
+  const r = await fetch(PB.base + `/api/collections/users/records/${userId}`, { headers: { Authorization: token } });
+  const d = await r.json();
+  return { data: d.data || {}, revision: Number.isInteger(d.revision) ? d.revision : 0 };
+}
+
 // Login UI'ını atlayıp oturumu localStorage'a enjekte et (B–L için hız + izolasyon).
 export async function seedSession(page, findata) {
   const { token, userId } = await setFindata(findata);

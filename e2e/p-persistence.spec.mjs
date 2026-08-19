@@ -3,7 +3,7 @@
 // olarak yarış durumunu sınamak. Kurtarma kullanıcı-görünür (UI) olarak doğrulanır.
 // (Reconnect/ACK SONRASI PB/journal doğrulaması için poll meşrudur — yarışı gizlemez.)
 import { test, expect } from "@playwright/test";
-import { seedSession, BASE_FINDATA, getFindata, setFindata, casKaydet, pbAuth, PB } from "./helpers.mjs";
+import { seedSession, BASE_FINDATA, getFindata, getRecordRaw, setFindata, casKaydet, pbAuth, PB } from "./helpers.mjs";
 import { panele } from "./ui.mjs";
 
 const nrGider = (id, baslik, miktar, tarih) => ({ id, baslik, miktar, kategori: "Gönderim", tarih, tur: "needs_review" });
@@ -159,30 +159,36 @@ test("P7 — pending ile tekrar tekrar reload → duplicate/yan etki yok", async
   expect(((await getFindata()).giderler || []).length).toBe(1); // öğe çoğalmadı
 });
 
-// ---- P9: server conflict — CAS no-clobber + controlled reconcile ----
-// Stale local pending server'ı KÖR EZMEZ (CAS 409). Bağımsız server değişikliği (farklı
-// top-level alan) KORUNUR; local pending taze server state üstüne YENİDEN UYGULANIR
-// (controlled reconcile — WAL preserved). Eski "conflict'te local'i at" davranışının yerine.
-test("P9 — server conflict: CAS no-clobber + controlled reconcile", async ({ page }) => {
+// ---- P9: server conflict (reload) — 409 → server+WAL korunur, çakışma yüzeyde, otomatik merge YOK ----
+// Stale local base'i KÖR EZMEZ (CAS 409). Bu increment'te OTOMATİK reconcile/merge YOK: journal
+// yalnız top-level delta tuttuğundan aynı alanı iki client değiştirirse merge server item'larını
+// silerdi (lost-update). Güvenli: server canonical KORUNUR, WAL KORUNUR, çakışma yüzeylenir.
+test("P9 — server conflict (reload): 409 → server+WAL korunur, çakışma yüzeyde, otomatik merge yok", async ({ page }) => {
+  const { userId } = await pbAuth();
   await seedSession(page, { ...BASE_FINDATA, giderler: [nrGider("c1", "Belirsiz EFT Conflict", 8000, "2026-08-05")] });
   const online = await offlineYap(page);
   await page.goto("/");
   await page.getByText("İşlemler").first().click();
   await page.getByRole("button", { name: /İncele/ }).click();
   await page.getByRole("button", { name: "Gider (harcama)" }).click(); // local pending: c1→gider (offline, base=Rs)
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(1500); // debounce offline → status hata, WAL KORUNUR
+  expect(await journalOku(page, userId)).not.toBeNull();
   // "Başka cihaz" server'ı CAS ile ilerletir: FARKLI top-level alan (gelirler) → srv geliri ekler.
   await setFindata({
     ...BASE_FINDATA,
     giderler: [nrGider("c1", "Belirsiz EFT Conflict", 8000, "2026-08-05")],
     gelirler: [...BASE_FINDATA.gelirler, { id: "srv1", baslik: "Server Gelir", miktar: 12345, kategori: "Maaş", tarih: "2026-08-10", kaynak: "elle" }],
   });
+  const afterB = await getRecordRaw();
   await online();
-  await page.reload(); // app fetch: serverRev ≠ journal.base → controlled reconcile (kör overwrite yok)
-  // No-clobber: bağımsız server değişikliği (srv1 geliri) korunur (stale kör PATCH bunu silerdi)
-  await expect.poll(async () => ((await getFindata()).gelirler || []).some((g) => g.id === "srv1"), { timeout: 20000 }).toBe(true);
-  // Controlled reconcile: local pending (c1→gider) taze state üstüne yeniden uygulanır
-  await expect.poll(async () => ((await getFindata()).giderler || []).find((g) => g.id === "c1")?.tur, { timeout: 20000 }).toBe("gider");
+  await page.reload(); // load-path: serverRev ≠ journal.base → çakışma-surface (merge YOK)
+  await expect(page.getByText(/Çakışma/).first()).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(1500); // olası (hatalı) otomatik yazım penceresi geçsin
+  const son = await getRecordRaw();
+  expect(son.revision).toBe(afterB.revision);                               // otomatik write YOK
+  expect((son.data.gelirler || []).some((g) => g.id === "srv1")).toBe(true); // server KORUNDU (no-clobber)
+  expect((son.data.giderler || []).find((g) => g.id === "c1")?.tur).toBe("needs_review"); // local YAZILMADI
+  expect(await journalOku(page, userId)).not.toBeNull();                    // WAL KORUNDU
 });
 
 // ---- P6: CEK merge guard — hane modunda local pending varken cloud fetch pending'i EZMEZ ----

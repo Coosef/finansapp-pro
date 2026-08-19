@@ -16,11 +16,12 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
   let inFlight = false;
   let timer = null;
   let status = "kaydedildi";
+  let conflicted = false; // CAS çakışma kilidi: açıkken hiçbir otomatik gönderim/durum değişimi yok
 
   const durum = (s) => { status = s; onStatus && onStatus(s); };
 
   async function _send() {
-    if (inFlight || rev <= sentRev) return; // gönderilecek yeni bir şey yok / uçuşta
+    if (inFlight || rev <= sentRev || conflicted) return; // yeni yok / uçuşta / çakışma kilidi
     inFlight = true;
     const myRev = rev;
     const data = pendingData;
@@ -36,8 +37,10 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
     } catch (err) {
       inFlight = false;
       if (err && err.conflict) {
-        // CAS çakışması: server daha yeni revision'da. KÖR RETRY YOK; WAL KORUNUR.
-        // App fresh no-store fetch + controlled reconcile (cozumle) yapar.
+        // CAS çakışması: server daha yeni revision'da. KÖR RETRY/AUTO-MERGE YOK; WAL KORUNUR
+        // (journal.ack ÇAĞRILMAZ → pending silinmez). Çakışma kilidi açılır → sonraki mutation'lar
+        // WAL'a yazılır ama gönderilmez. App çakışmayı UI'da yüzeyler; kullanıcı çözer.
+        conflicted = true;
         durum("catisma");
       } else {
         durum("hata"); // ağ/geçici → focus/online retry; journal korunur
@@ -52,28 +55,23 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
     getSyncedUpdated() { return syncedUpdated; },
 
     // UI mutation → journal (delta + base revision) → debounced single-flight CAS persist.
+    // ÇAKIŞMA kilidi açıkken: mutation yalnız WAL'a yazılır (kayıp olmasın) ama GÖNDERİLMEZ ve
+    // durum "catisma" KALIR (yüzeyde). Böylece bir derivasyon/otomatik setFindata çakışmayı ezip
+    // base'i eşleşen bir write ile sessizce kaydedemez (reload'da server rev'ine bind edilse bile).
     schedule(next, patch) {
       rev += 1;
       pendingData = next;
       if (patch && Object.keys(patch).length) journal.merge(userId, patch, rev, syncedRevision);
+      if (conflicted) return; // kilit: WAL'a yazıldı, gönderme yok, durum korunur
       durum("kaydediliyor");
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = null; _send(); }, delay);
     },
 
-    // Controlled reconcile (C4): fresh server state alındıktan SONRA pending mutation'ı
-    // taze veriye açıkça yeniden uygula + yeni baseRevision ile save. Kör auto-merge DEĞİL;
-    // çağıran (App) fresh no-store GET yapıp bunu çağırır. Reconcile edilmiş veriyi döner.
-    cozumle(freshData, freshRevision, patch) {
-      if (Number.isInteger(freshRevision)) syncedRevision = freshRevision;
-      const p = patch || journal.get(userId)?.patch || null;
-      pendingData = p ? { ...freshData, ...p } : freshData;
-      rev += 1;
-      if (p) journal.merge(userId, p, rev, syncedRevision);
-      durum("kaydediliyor");
-      _send();
-      return pendingData;
-    },
+    // Çakışmayı DIŞARIDAN işaretle (load-path: serverRevision !== journal.baseRevision). Kilit açılır;
+    // otomatik reconcile/merge/write YOK. NOT: journal yalnız top-level delta tuttuğundan
+    // {...server, ...patch} aynı alanı iki client değiştirirse server item'larını silerdi (lost-update).
+    catismaGir() { conflicted = true; durum("catisma"); },
 
     // Bekleyen (ACK edilmemiş) yerel değişiklik var mı? — CEK/merge guard için.
     hasPending() { return inFlight || rev > sentRev; },
@@ -81,14 +79,14 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
     // Debounce'u atla, pending'i hemen gönder. HATA/ÇATIŞMA durumunda göndermez (guard).
     flush() {
       if (timer) { clearTimeout(timer); timer = null; }
-      if (!inFlight && status !== "hata" && status !== "catisma") _send();
+      if (!inFlight && !conflicted && status !== "hata") _send();
     },
 
     // Yalnız ağ/geçici hatada yeniden dene (çatışmada DEĞİL — kör retry yok).
-    retry() { if (status === "hata") _send(); },
+    retry() { if (status === "hata" && !conflicted) _send(); },
 
     getStatus() { return status; },
 
-    _reset() { userId = null; syncedRevision = 0; syncedUpdated = null; rev = 0; sentRev = 0; pendingData = null; inFlight = false; if (timer) clearTimeout(timer); timer = null; status = "kaydedildi"; },
+    _reset() { userId = null; syncedRevision = 0; syncedUpdated = null; rev = 0; sentRev = 0; pendingData = null; inFlight = false; if (timer) clearTimeout(timer); timer = null; status = "kaydedildi"; conflicted = false; },
   };
 }
