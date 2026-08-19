@@ -14,8 +14,10 @@ export default async function globalSetup() {
   try { execSync(`docker rm -f ${CONTAINER}`, { stdio: "ignore" }); } catch { /* yoktu */ }
   const dataDir = mkdtempSync(join(tmpdir(), "fa-e2e-pb-"));
   writeFileSync(join(repo, "e2e", ".pb-datadir"), dataDir);
+  // Ana suite ENFORCE modunda koşar (guard aktif): C5 generic-PATCH-403 + seeder'lar CAS.
+  // Compatibility modu (enforce kapalı) ayrı bir throwaway PB ile c-cas-compat.spec test eder.
   execSync(
-    `docker run -d --name ${CONTAINER} -p 8090:8090 ` +
+    `docker run -d --name ${CONTAINER} -p 8090:8090 -e FINANSAPP_CAS_ENFORCE=1 ` +
       `-v "${repo}/pb/pb_hooks:/pb_hooks" -v "${repo}/pb/pb_migrations:/pb_migrations" -v "${dataDir}:/pb_data" ` +
       `${PB_IMAGE} serve --http=0.0.0.0:8090 --dir=/pb_data --migrationsDir=/pb_migrations --hooksDir=/pb_hooks`,
     { stdio: "ignore" }
