@@ -154,20 +154,38 @@ export async function pbFindataCek() {
   if (res.status === 401) { pbCikis(); throw new Error("Oturum süresi doldu, tekrar giriş yap."); }
   if (!res.ok) throw new Error(`Veri çekilemedi (${res.status}).`);
   const d = await res.json();
-  return { data: d.data && Object.keys(d.data).length ? d.data : null, updated: d.updated || null };
+  return { data: d.data && Object.keys(d.data).length ? d.data : null, updated: d.updated || null, revision: Number.isInteger(d.revision) ? d.revision : 0 };
 }
 
-// findata'yı buluta yaz → { updated } (server revizyon damgası; persistence guard için)
-export async function pbFindataGonder(data) {
+// Sunucudaki findata daha yeni bir revision'da (CAS çakışması). Kör retry YOK.
+export class ConflictError extends Error {
+  constructor(revision, updated) {
+    super("Çakışma: sunucuda daha yeni bir sürüm var.");
+    this.name = "ConflictError";
+    this.conflict = true;
+    this.revision = revision;
+    this.updated = updated;
+  }
+}
+
+// findata'yı ATOMİK CAS ile yaz → { revision, updated }. Generic PATCH DEĞİL; yalnız CAS endpoint.
+// baseRevision == server revision değilse endpoint 409 döner → ConflictError (yazma olmaz).
+export async function pbFindataGonder(data, baseRevision) {
   if (!syncBagliMi()) return null;
-  const res = await pbFetch(_url, veriYolu(), {
-    method: "PATCH",
+  const govde = { baseRevision: Number.isInteger(baseRevision) ? baseRevision : 0, data };
+  if (_haneId) govde.haneId = _haneId;
+  const res = await pbFetch(_url, "/api/findata/kaydet", {
+    method: "POST",
     headers: { Authorization: _token, "Content-Type": "application/json" },
-    body: JSON.stringify({ data }),
+    body: JSON.stringify(govde),
   });
   if (res.status === 401) { pbCikis(); throw new Error("Oturum süresi doldu, tekrar giriş yap."); }
+  if (res.status === 409) {
+    let d = {}; try { d = await res.json(); } catch { /* yoksay */ }
+    throw new ConflictError(Number.isInteger(d.revision) ? d.revision : null, d.updated || null);
+  }
   if (!res.ok) throw new Error(`Veri gönderilemedi (${res.status}).`);
-  try { const d = await res.json(); return { updated: d?.updated || null }; } catch { return { updated: null }; }
+  try { const d = await res.json(); return { revision: Number.isInteger(d.revision) ? d.revision : null, updated: d.updated || null }; } catch { return { revision: null, updated: null }; }
 }
 
 // ============================================================

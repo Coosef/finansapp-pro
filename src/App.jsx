@@ -127,11 +127,11 @@ export default function FinansAppPro() {
         // Token geçerli → veriyi DB'den çek, oturumu sürdür
         try { await pbHaneBul(); } catch { /* kişisel devam */ }
         const b = await pbFindataCek(); // 401 ise fırlatır → çıkışa düşülür
-        const veri = oturumVeriHazirla(b); // persister bind + journal replay/conflict
+        const { veri, pendingVar } = oturumVeriHazirla(b); // bind(revision) + journal replay/reconcile
         const email = syncDurum().email || "";
         const u = { username: email, ad: email.split("@")[0], bulut: true };
         oturumSurdur();
-        girisTamamla(u, veri, !b?.data);
+        girisTamamla(u, veri, !b?.data, pendingVar);
       } catch { pbCikis(); oturumTemizle(); /* token geçersiz/expired → giriş ekranı */ }
       finally { setYukleniyor(false); }
     })();
@@ -158,7 +158,7 @@ export default function FinansAppPro() {
 
   // Veriyi hazırla (tekrarlar + hedef katkıları) ve oturumu aç. DB tek kaynak:
   // türetilmiş değişiklik veya boş DB varsa buluta yazılır, yerele yazılmaz.
-  function girisTamamla(u, veri, ilkBulutGonder) {
+  function girisTamamla(u, veri, ilkBulutGonder, pendingVar = false) {
     let { data, degisti } = tekrarlariUret(veri);
     const mg = maasGeliriUret(data, bugun()); // aylık maaş gelir satırlarını türet
     data = mg.data;
@@ -169,7 +169,12 @@ export default function FinansAppPro() {
     const hk = hedefKatkilariUret(data);
     data = hk.data;
     degisti = degisti || hk.degisti;
-    if (degisti || ilkBulutGonder) pbFindataGonder(data).then((r) => r && persister.setSyncedUpdated(r.updated)).catch(() => {});
+    // TEK yazım noktası: türetilmiş değişiklik / ilk-gönderim / recovery-reconcile → persister
+    // üzerinden CAS (syncedRevision base, single-flight, journal). Doğrudan PATCH DEĞİL.
+    if ((degisti || ilkBulutGonder || pendingVar) && syncBagliMi()) {
+      const patch = {}; for (const k in data) patch[k] = data[k];
+      persister.schedule(data, patch);
+    }
     setAktif(u);
     setFindataState(data);
     setKilitli(!!data.ayarlar?.pin);
@@ -198,9 +203,9 @@ export default function FinansAppPro() {
     try { await pbHaneBul(); } catch { /* kişisel devam */ }
     const b = await pbFindataCek();
     const bulutBos = !b?.data;
-    const veri = oturumVeriHazirla(b); // persister bind + journal replay/conflict
+    const { veri, pendingVar } = oturumVeriHazirla(b); // bind(revision) + journal replay/reconcile
     oturumBaslat();
-    return girisTamamla({ username: e, ad: e.split("@")[0], bulut: true }, veri, bulutBos);
+    return girisTamamla({ username: e, ad: e.split("@")[0], bulut: true }, veri, bulutBos, pendingVar);
   }
   async function girisYap(email, sifre) {
     await pbGiris(syncDurum().url, (email || "").trim(), sifre);
@@ -227,24 +232,29 @@ export default function FinansAppPro() {
   // değişmediyse pending mutation'ı kurtar; başka cihaz/oturum ilerlettiyse stale local
   // snapshot ile OVERWRITE YAPMA (conflict → server kazanır, sessiz değil).
   function oturumVeriHazirla(b) {
-    let veri = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+    const serverData = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+    const serverRev = Number.isInteger(b?.revision) ? b.revision : 0;
     const uid = syncDurum().userId;
-    persister.bind(uid, b?.updated || null);
+    persister.bind(uid, serverRev, b?.updated || null); // CAS base = server revision
+    let veri = serverData;
+    let pendingVar = false; // yeniden persist gerekiyor mu? (recovery / reconcile)
     const j = journalGet(uid);
     if (j) {
       const eski = j.ts && Date.now() - j.ts > WAJ_TTL_MS; // terk edilmiş/çok eski pending
       if (eski) {
         journalClear(uid); // WAL kalıcı kopya değil → eski pending'i replay etme
-      } else if ((b?.updated || null) === j.baseUpdated) {
-        veri = { ...veri, ...j.patch }; // server aynı → pending'i uygula (recovery)
-        const rec = veri;
-        setTimeout(() => persister.schedule(rec, j.patch), 0); // arka planda re-persist → ACK'te journal temizlenir
+      } else if (serverRev === j.baseUpdated) {
+        veri = { ...serverData, ...j.patch }; // server aynı revizyon → pending'i uygula (recovery)
+        pendingVar = true; // yazımı girisTamamla TEK noktadan yapar (setTimeout sıra-yarışı yok)
       } else {
-        journalClear(uid); // stale local snapshot server'ı EZMEZ (conflict → server kazanır)
-        setSenkron("hata"); // sessiz değil: kaydedilemeyen değişiklik uyarısı
+        // Server ilerlemiş (base uyuşmuyor). KÖR overwrite YOK, WAL KORUNUR: pending patch'i
+        // TAZE server verisine yeniden uygula; stale-base kaydı temizle → yeni base ile tek yazım.
+        veri = { ...serverData, ...j.patch };
+        journalClear(uid);
+        pendingVar = true;
       }
     }
-    return veri;
+    return { veri, pendingVar };
   }
 
   // Saf DB: değişiklik yalnız bellekte + persister (debounce/journal/single-flight) ile buluta.
@@ -271,6 +281,27 @@ export default function FinansAppPro() {
     const iv = setInterval(retry, 20000);
     return () => { window.removeEventListener("focus", retry); window.removeEventListener("online", retry); clearInterval(iv); };
   }, [aktif, persister]);
+
+  // CAS çakışması (409): server daha yeni revision'da. KÖR retry/merge YOK. Taze no-store
+  // canonical state çek → pending patch'i ÜSTÜNE yeniden uygula → yeni base ile CAS yaz
+  // (controlled reconcile). Çevrimdışıysa yazma; sonraki mutation/focus tekrar dener.
+  useEffect(() => {
+    if (senkron !== "catisma") return undefined;
+    let iptal = false;
+    (async () => {
+      try {
+        const b = await pbFindataCek(); // sync.js → cache:no-store (taze canonical)
+        if (iptal || !b) return; // çıkış/çevrimdışı → boş overwrite yapma
+        const uid = syncDurum().userId;
+        const patch = journalGet(uid)?.patch || null;
+        const freshData = b?.data ? { ...bosVeri(), ...b.data } : bosVeri();
+        const freshRev = Number.isInteger(b?.revision) ? b.revision : 0;
+        const reconciled = persister.cozumle(freshData, freshRev, patch);
+        if (!iptal) setFindataState(reconciled);
+      } catch { /* çevrimdışı → sonraki mutation/focus yeniden dener */ }
+    })();
+    return () => { iptal = true; };
+  }, [senkron, persister]);
 
   // Bulunulan ana view'ı (tab) güvenli şekilde sakla → refresh sonrası aynı view'da kal.
   useEffect(() => {

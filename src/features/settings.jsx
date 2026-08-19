@@ -56,8 +56,14 @@ function BulutKart({ findata, setFindata, bildir }) {
 
   async function simdiSenkronla() {
     setMesgul(true);
-    try { await pbFindataGonder(findata); bildir("Buluta yüklendi"); }
-    catch (e) { bildir(e?.message || "Gönderilemedi", "err"); }
+    try {
+      const b = await pbFindataCek(); // taze server revision → CAS base
+      await pbFindataGonder(findata, b?.revision ?? 0); // atomik CAS yaz (base = güncel revision)
+      bildir("Buluta yüklendi");
+    }
+    catch (e) {
+      bildir(e?.conflict ? "Sunucuda daha yeni bir sürüm var; sayfayı yenileyip tekrar dene." : (e?.message || "Gönderilemedi"), "err");
+    }
     finally { setMesgul(false); }
   }
 
