@@ -71,6 +71,18 @@ jobs:
             npx playwright test e2e/c-cas-hardening.spec.mjs e2e/c2-cas.spec.mjs e2e/c3-cas.spec.mjs e2e/m1-sync-button.spec.mjs e2e/m2-m3-samefield-conflict.spec.mjs --workers=1 --retries=0
           done
 
+      # --- REAL-PWA E2E: GERÇEK service worker (serviceWorkers:"allow") ile sync-correctness ---
+      # Ayrı config (playwright.pwa.config.js, *.pwa.mjs); normal suite (serviceWorkers:"block")
+      # DEĞİŞMEZ. 3× ardışık (determinizm). İnvariant: geçerli server ACK yoksa "Kaydedildi" YOK,
+      # WAL korunur, PB değişmez; /pb asla SW-cache'ten servis edilmez. Aynı izole PB 0.39.10
+      # (globalSetup docker) + preview (dist zaten build edildi). Production yok.
+      - name: "REAL-PWA E2E (PW1–PW12 + trigger ×3)"
+        run: |
+          for i in 1 2 3; do
+            echo "== PWA suite run $i/3 =="
+            npx playwright test --config=playwright.pwa.config.js --workers=1 --retries=0
+          done
+
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
       # HTML report + trace.zip (console + network dahil) + screenshot + video.
       # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.
@@ -81,6 +93,7 @@ jobs:
           name: playwright-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             playwright-report/
+            playwright-report-pwa/
             test-results/
           retention-days: 14
           if-no-files-found: ignore
