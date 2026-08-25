@@ -27,11 +27,17 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
     const data = pendingData;
     try {
       const res = await send(data, syncedRevision); // CAS: baseRevision == syncedRevision
-      if (res && Number.isInteger(res.revision)) syncedRevision = res.revision;
-      if (res && res.updated) syncedUpdated = res.updated;
+      inFlight = false;
+      // ACK KONTRATI: "Kaydedildi" YALNIZ doğrulanmış server ACK sonrası. Geçerli ACK =
+      // res mevcut && Number.isInteger(res.revision) && res.revision >= 0. Aksi halde
+      // (null / eksik / geçersiz revision) BAŞARI DEĞİL: sentRev İLERLEMEZ, journal
+      // ACK'LENMEZ (WAL korunur), durum "hata" → retry/flush mümkün, sessiz veri kaybı yok.
+      const gecerliAck = res && Number.isInteger(res.revision) && res.revision >= 0;
+      if (!gecerliAck) { durum("hata"); return; }
+      syncedRevision = res.revision;
+      if (res.updated) syncedUpdated = res.updated;
       sentRev = myRev;
       journal.ack(userId, myRev); // pending gitti → ACK sonrası atomik temizlik
-      inFlight = false;
       if (rev > sentRev) { _send(); }            // trailing: bu sırada gelen daha yeni değişiklik
       else durum("kaydedildi");
     } catch (err) {

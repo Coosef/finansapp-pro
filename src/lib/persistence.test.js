@@ -142,3 +142,62 @@ describe("createPersister (CAS)", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 });
+
+// ============================================================
+// ACK KONTRATI — "Kaydedildi" YALNIZ doğrulanmış server ACK sonrası.
+// send() geçerli bir { revision:int>=0 } döndürmedikçe (null / {revision:null}
+// / eksik-revision) BAŞARI SAYILMAZ: journal ACK'lenmez, sentRev ilerlemez,
+// pending korunur, status "kaydedildi" OLMAZ. (False-positive save fix.)
+// ============================================================
+describe("createPersister — ACK kontratı (server ACK olmadan Kaydedildi YOK)", () => {
+  it("R1 — send()→null: ACK YOK, kaydedildi DEĞİL, WAL korunur, pending kalır", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => null); // istek gitmedi / geçerli ACK yok
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    expect(j.get("u1")).not.toBe(null);
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).not.toBe("kaydedildi"); // FALSE "Kaydedildi" olmamalı
+    expect(j.get("u1")).not.toBe(null);           // WAL KORUNMALI (ACK/clear yok)
+    expect(p.hasPending()).toBe(true);            // pending mutation kalır → retry mümkün
+    expect(p.getSyncedRevision()).toBe(3);        // server revision ilerlememeli
+  });
+
+  it("R2 — send()→{revision:null}: geçersiz ACK, kaydedildi DEĞİL, WAL korunur", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({ revision: null, updated: null }));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).not.toBe("kaydedildi");
+    expect(j.get("u1")).not.toBe(null);
+    expect(p.hasPending()).toBe(true);
+    expect(p.getSyncedRevision()).toBe(3);
+  });
+
+  it("R2b — send()→{} (revision alanı yok): geçersiz ACK, kaydedildi DEĞİL", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({}));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).not.toBe("kaydedildi");
+    expect(j.get("u1")).not.toBe(null);
+    expect(p.hasPending()).toBe(true);
+  });
+
+  it("kontrol: geçerli ACK {revision:4} → kaydedildi + WAL temizlenir (regresyon değil)", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({ revision: 4, updated: "U" }));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("kaydedildi");
+    expect(j.get("u1")).toBe(null);
+    expect(p.getSyncedRevision()).toBe(4);
+  });
+});
