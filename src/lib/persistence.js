@@ -17,6 +17,8 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
   let timer = null;
   let status = "kaydedildi";
   let conflicted = false; // CAS çakışma kilidi: açıkken hiçbir otomatik gönderim/durum değişimi yok
+  let lastAckRevision = null; // en son DOĞRULANMIŞ server ACK revision'ı (diagnostics)
+  let lastAckAt = null; // en son geçerli ACK zamanı (ms) — stale-tab teşhisi
 
   const durum = (s) => { status = s; onStatus && onStatus(s); };
 
@@ -36,6 +38,8 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
       if (!gecerliAck) { durum("hata"); return; }
       syncedRevision = res.revision;
       if (res.updated) syncedUpdated = res.updated;
+      lastAckRevision = res.revision; // diagnostics: yalnız geçerli ACK'te güncellenir
+      lastAckAt = Date.now();
       sentRev = myRev;
       journal.ack(userId, myRev); // pending gitti → ACK sonrası atomik temizlik
       if (rev > sentRev) { _send(); }            // trailing: bu sırada gelen daha yeni değişiklik
@@ -82,6 +86,15 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
     // Bekleyen (ACK edilmemiş) yerel değişiklik var mı? — CEK/merge guard için.
     hasPending() { return inFlight || rev > sentRev; },
 
+    // Kaydedilmemiş değişiklik VAR mı? (pending || çakışma) — SW güncelleme reload
+    // guard'ı için: kirliyken otomatik reload ERTELENİR (veri güvenliği).
+    hasUnsaved() { return inFlight || rev > sentRev || conflicted; },
+
+    // Salt-okunur teşhis anlık görüntüsü (Ayarlar/Hakkında). Token/veri İÇERMEZ.
+    getDiagnostics() {
+      return { status, pending: (inFlight || rev > sentRev), inFlight, conflicted, syncedRevision, lastAckRevision, lastAckAt };
+    },
+
     // Debounce'u atla, pending'i hemen gönder. HATA/ÇATIŞMA durumunda göndermez (guard).
     flush() {
       if (timer) { clearTimeout(timer); timer = null; }
@@ -93,6 +106,6 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
 
     getStatus() { return status; },
 
-    _reset() { userId = null; syncedRevision = 0; syncedUpdated = null; rev = 0; sentRev = 0; pendingData = null; inFlight = false; if (timer) clearTimeout(timer); timer = null; status = "kaydedildi"; conflicted = false; },
+    _reset() { userId = null; syncedRevision = 0; syncedUpdated = null; rev = 0; sentRev = 0; pendingData = null; inFlight = false; if (timer) clearTimeout(timer); timer = null; status = "kaydedildi"; conflicted = false; lastAckRevision = null; lastAckAt = null; },
   };
 }

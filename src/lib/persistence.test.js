@@ -201,3 +201,45 @@ describe("createPersister — ACK kontratı (server ACK olmadan Kaydedildi YOK)"
     expect(p.getSyncedRevision()).toBe(4);
   });
 });
+
+// ============================================================
+// State modeli / diagnostics — lastAckRevision & lastAckAt YALNIZ geçerli
+// server ACK sonrası set olur; hasUnsaved() pending veya çakışmayı yansıtır.
+// (Stale-tab teşhisi + SW-reload güvenlik guard'ı için.)
+// ============================================================
+describe("createPersister — diagnostics & hasUnsaved", () => {
+  it("lastAckRevision/lastAckAt YALNIZ geçerli ACK sonrası set olur", async () => {
+    const j = mockJournal();
+    let ok = false;
+    const send = vi.fn(async () => (ok ? { revision: 6, updated: "U" } : null));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 5);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    // null ACK → başarı değil: lastAck set OLMAZ, pending kalır, durum hata
+    expect(p.getDiagnostics().lastAckRevision).toBe(null);
+    expect(p.getDiagnostics().status).toBe("hata");
+    expect(p.getDiagnostics().pending).toBe(true);
+    ok = true;
+    p.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    const d = p.getDiagnostics();
+    expect(d.lastAckRevision).toBe(6);
+    expect(Number.isInteger(d.lastAckAt)).toBe(true);
+    expect(d.pending).toBe(false);
+    expect(d.status).toBe("kaydedildi");
+  });
+
+  it("hasUnsaved: pending veya çakışma açıkken true, temizken false", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => { throw conflictErr(9); });
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    expect(p.hasUnsaved()).toBe(false);
+    p.schedule({ n: 1 }, { n: 1 });
+    expect(p.hasUnsaved()).toBe(true); // pending
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("catisma");
+    expect(p.hasUnsaved()).toBe(true); // çakışma kilidi
+  });
+});
