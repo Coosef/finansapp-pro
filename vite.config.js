@@ -14,7 +14,10 @@ function gitSha() {
   catch { return ""; }
 }
 const buildSha = process.env.BUILD_SHA || gitSha() || "dev";
-const buildTime = process.env.BUILD_TIME || new Date().toISOString();
+// BUILD_TIME yalnız EXPLICIT env'den gelir (yoksa boş). new Date() fallback YOK: aksi halde
+// multi-arch (amd64+arm64) build'ler farklı zaman damgası → farklı bundle üretirdi. Authoritative
+// kimlik SHA'dır; zaman opsiyonel/deterministik (workflow tek değer geçirir).
+const buildTime = process.env.BUILD_TIME || "";
 
 export default defineConfig({
   define: {

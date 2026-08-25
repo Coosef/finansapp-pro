@@ -33,6 +33,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Build identity: yalnız frontend (finansapp-pro) için exact git short SHA + tek zaman
+      # damgası (bir kez hesaplanır → her iki platform aynı bundle). PB build'ine arg GÖNDERİLMEZ.
+      - name: Frontend build args (yalnız finansapp-pro)
+        id: fe
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          if [ "$IMAGE" = "finansapp-pro" ]; then
+            {
+              echo "args<<EOF"
+              echo "BUILD_SHA=$(git rev-parse --short HEAD)"
+              echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Meta (etiketler)
         id: meta
         uses: docker/metadata-action@v5
@@ -49,6 +67,7 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: ${{ steps.fe.outputs.args }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

@@ -741,7 +741,7 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
             title={`v${SURUM} · build ${BUILD_SHA} · yüklendi ${new Date(buildKimligi().loadedAt).toLocaleString("tr-TR")}`}
             style={{ fontSize: 9, color: "#546B5E", marginTop: 1, letterSpacing: "0.02em" }}
           >
-            build {BUILD_SHA}
+            build {BUILD_SHA.slice(0, 7)}
           </div>
         </div>
       </aside>
