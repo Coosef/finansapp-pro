@@ -15,7 +15,7 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
   let pendingData = null;
   let inFlight = false;
   let timer = null;
-  let status = "kaydedildi";
+  let status = "bekliyor"; // başlangıç: henüz hiçbir server ACK yok → "kaydedildi" İDDİA EDİLMEZ
   let conflicted = false; // CAS çakışma kilidi: açıkken hiçbir otomatik gönderim/durum değişimi yok
   let lastAckRevision = null; // en son DOĞRULANMIŞ server ACK revision'ı (diagnostics)
   let lastAckAt = null; // en son geçerli ACK zamanı (ms) — stale-tab teşhisi
@@ -106,6 +106,6 @@ export function createPersister({ send, journal, onStatus, delay = 1200 }) {
 
     getStatus() { return status; },
 
-    _reset() { userId = null; syncedRevision = 0; syncedUpdated = null; rev = 0; sentRev = 0; pendingData = null; inFlight = false; if (timer) clearTimeout(timer); timer = null; status = "kaydedildi"; conflicted = false; lastAckRevision = null; lastAckAt = null; },
+    _reset() { userId = null; syncedRevision = 0; syncedUpdated = null; rev = 0; sentRev = 0; pendingData = null; inFlight = false; if (timer) clearTimeout(timer); timer = null; status = "bekliyor"; conflicted = false; lastAckRevision = null; lastAckAt = null; },
   };
 }

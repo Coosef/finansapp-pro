@@ -207,6 +207,44 @@ describe("createPersister — ACK kontratı (server ACK olmadan Kaydedildi YOK)"
 // server ACK sonrası set olur; hasUnsaved() pending veya çakışmayı yansıtır.
 // (Stale-tab teşhisi + SW-reload güvenlik guard'ı için.)
 // ============================================================
+describe("createPersister — başlangıç/reset durumu 'bekliyor' (false 'kaydedildi' YOK)", () => {
+  it("taze persister: status 'bekliyor', lastAckRevision/lastAckAt null (henüz hiçbir ACK yok)", () => {
+    const p = createPersister({ send: vi.fn(), journal: mockJournal(), delay: 1200 });
+    expect(p.getStatus()).toBe("bekliyor");
+    const d = p.getDiagnostics();
+    expect(d.status).toBe("bekliyor");
+    expect(d.lastAckRevision).toBe(null);
+    expect(d.lastAckAt).toBe(null);
+  });
+
+  it("_reset sonrası: status 'bekliyor', lastAck null (logout → ACK iddiası taşınmaz)", async () => {
+    const send = vi.fn(async () => ({ revision: 5, updated: "U" }));
+    const p = createPersister({ send, journal: mockJournal(), delay: 1200 });
+    p.bind("u1", 4);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("kaydedildi");
+    expect(p.getDiagnostics().lastAckRevision).toBe(5);
+    p._reset();
+    expect(p.getStatus()).toBe("bekliyor");
+    const d = p.getDiagnostics();
+    expect(d.lastAckRevision).toBe(null);
+    expect(d.lastAckAt).toBe(null);
+  });
+
+  it("kaydedildi YALNIZ geçerli ACK sonrası: taze→bekliyor, ACK→kaydedildi+lastAck set", async () => {
+    const send = vi.fn(async () => ({ revision: 7, updated: "U" }));
+    const p = createPersister({ send, journal: mockJournal(), delay: 1200 });
+    p.bind("u1", 6);
+    expect(p.getStatus()).toBe("bekliyor"); // bind tek başına kaydedildi ÜRETMEZ
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("kaydedildi");
+    expect(p.getDiagnostics().lastAckRevision).toBe(7);
+    expect(Number.isInteger(p.getDiagnostics().lastAckAt)).toBe(true);
+  });
+});
+
 describe("createPersister — diagnostics & hasUnsaved", () => {
   it("lastAckRevision/lastAckAt YALNIZ geçerli ACK sonrası set olur", async () => {
     const j = mockJournal();
