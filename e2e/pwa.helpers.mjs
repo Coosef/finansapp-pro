@@ -32,11 +32,12 @@ export async function kaydedildiGorunmedi(page, ms = 2500) {
 }
 
 // İşlemler → İncele → "Gider (harcama)" — bir needs_review kaydını sınıflandırır
-// (findata mutation → persister CAS write). p-persistence akışıyla aynı.
+// (findata mutation → persister CAS write). Birden çok needs_review olabileceğinden
+// .first() (herhangi bir sınıflandırma mutation'ı yeterli).
 export async function inceleGiderYap(page) {
   await page.getByText("İşlemler").first().click();
-  await page.getByRole("button", { name: /İncele/ }).click();
-  await page.getByRole("button", { name: "Gider (harcama)" }).click();
+  await page.getByRole("button", { name: /İncele/ }).first().click();
+  await page.getByRole("button", { name: "Gider (harcama)" }).first().click();
 }
 
 export const journalOku = async (page, uid) => page.evaluate((u) => localStorage.getItem("finansapp:waj:" + u), uid);
