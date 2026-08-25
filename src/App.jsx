@@ -24,7 +24,7 @@ import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { tryeCevir } from "./lib/parabirimi.js";
 import { bildirimOzeti } from "./lib/bildirim.js";
-import { SURUM, sonSurumKontrol, SURUM_URL, BUILD_SHA, buildKimligi } from "./lib/surum.js";
+import { SURUM, sonSurumKontrol, SURUM_URL, BUILD_SHA, buildKimligi, swKontrolluMu } from "./lib/surum.js";
 import { Icon, IK } from "./components/icons.jsx";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -238,8 +238,9 @@ export default function FinansAppPro() {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     window.__finansappKirli = () => persister.hasUnsaved();
-    window.__finansappBuild = buildKimligi(); // statik build kimliği (token/veri YOK)
-    window.__finansappTani = () => ({ ...buildKimligi(), sync: persister.getDiagnostics() });
+    window.__finansappBuild = buildKimligi(); // STATİK build kimliği (token/veri YOK)
+    // Canlı tanı: statik kimlik + o anki swControlled + sync durumu (stale-tab teşhisi).
+    window.__finansappTani = () => ({ ...buildKimligi(), swControlled: swKontrolluMu(), sync: persister.getDiagnostics() });
     return () => { window.__finansappKirli = undefined; window.__finansappTani = undefined; };
   }, [persister]);
 

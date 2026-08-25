@@ -7,12 +7,12 @@ describe("build kimliği (diagnostics — stale-tab teşhisi)", () => {
     expect(BUILD_SHA.length).toBeGreaterThan(0); // en az "dev"
     expect(typeof BUILD_TIME).toBe("string");
   });
-  it("buildKimligi appVersion/buildSha/loadedAt/swControlled döner; hassas alan YOK", () => {
+  it("buildKimligi appVersion/buildSha/loadedAt döner (statik); hassas alan YOK", () => {
     const b = buildKimligi();
     expect(b.appVersion).toBe(SURUM);
     expect(b.buildSha).toBe(BUILD_SHA);
     expect(Number.isInteger(b.loadedAt)).toBe(true);
-    expect(typeof b.swControlled).toBe("boolean");
+    expect("swControlled" in b).toBe(false); // swControlled statik değil → canlı sorgulanır
     expect("token" in b).toBe(false);
     expect("data" in b).toBe(false);
   });

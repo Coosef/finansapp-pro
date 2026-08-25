@@ -18,9 +18,11 @@ export function swKontrolluMu() {
   catch { return false; }
 }
 
-// Salt-okunur build kimliği anlık görüntüsü (Ayarlar/Hakkında). Token/veri İÇERMEZ.
+// Salt-okunur STATİK build kimliği (Ayarlar/Hakkında). Token/veri İÇERMEZ.
+// swControlled BURADA DEĞİL: runtime'da değişir (mount anında henüz false olabilir),
+// bu yüzden canlı swKontrolluMu() ile ayrı sorgulanır (statik snapshot yanıltmasın).
 export function buildKimligi() {
-  return { appVersion: SURUM, buildSha: BUILD_SHA, buildTime: BUILD_TIME, loadedAt: LOADED_AT, swControlled: swKontrolluMu() };
+  return { appVersion: SURUM, buildSha: BUILD_SHA, buildTime: BUILD_TIME, loadedAt: LOADED_AT };
 }
 
 const REPO = "Coosef/finansapp-pro";
