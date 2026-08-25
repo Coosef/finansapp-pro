@@ -1,5 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { surumKarsilastir, SURUM } from "./surum.js";
+import { surumKarsilastir, SURUM, BUILD_SHA, BUILD_TIME, buildKimligi, swKontrolluMu } from "./surum.js";
+
+describe("build kimliği (diagnostics — stale-tab teşhisi)", () => {
+  it("BUILD_SHA/BUILD_TIME inject edilmese bile güvenli string fallback", () => {
+    expect(typeof BUILD_SHA).toBe("string");
+    expect(BUILD_SHA.length).toBeGreaterThan(0); // en az "dev"
+    expect(typeof BUILD_TIME).toBe("string");
+  });
+  it("buildKimligi appVersion/buildSha/loadedAt döner (statik); hassas alan YOK", () => {
+    const b = buildKimligi();
+    expect(b.appVersion).toBe(SURUM);
+    expect(b.buildSha).toBe(BUILD_SHA);
+    expect(Number.isInteger(b.loadedAt)).toBe(true);
+    expect("swControlled" in b).toBe(false); // swControlled statik değil → canlı sorgulanır
+    expect("token" in b).toBe(false);
+    expect("data" in b).toBe(false);
+  });
+  it("swKontrolluMu navigator yoksa/patlarsa güvenli boolean döner", () => {
+    expect(typeof swKontrolluMu()).toBe("boolean");
+  });
+});
 
 describe("surumKarsilastir", () => {
   it("büyük/küçük/eşit sürümleri doğru sıralar", () => {

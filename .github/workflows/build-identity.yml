@@ -1,0 +1,46 @@
+name: Build identity
+
+# Prod frontend Docker imajının build kimliğini (BUILD_SHA) GERÇEKTEN gömdüğünü kanıtlar.
+# .dockerignore .git'i dışladığından derleme içinde `git rev-parse` çalışmaz → SHA build-arg
+# ile gelmezse "dev"e düşer. Bu gate, docker.yml ile AYNI wiring'i (build-arg) kullanıp
+# üretilen dist bundle'ında exact commit SHA'nın bulunduğunu (ve "dev" OLMADIĞINI) doğrular.
+# YALNIZ doğrulama — imaj push ETMEZ (PR'da güvenli koşar).
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Frontend build SHA injected (not "dev")
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build frontend image with BUILD_SHA + assert in bundle
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse --short HEAD)"
+          echo "Expected build SHA: $SHA"
+          docker build --build-arg BUILD_SHA="$SHA" --build-arg BUILD_TIME="ci-verify" \
+            -t fe-buildid:"$SHA" .
+          echo "== production bundle assets =="
+          docker run --rm fe-buildid:"$SHA" sh -c 'ls -1 /usr/share/nginx/html/assets/*.js'
+          echo "== assert exact commit SHA present in bundle (identity != 'dev') =="
+          if docker run --rm fe-buildid:"$SHA" \
+               sh -c "grep -rl \"$SHA\" /usr/share/nginx/html/assets/*.js"; then
+            echo "OK: build identity '$SHA' injected into production bundle (not 'dev')."
+          else
+            echo "FAIL: SHA '$SHA' NOT in bundle — build identity fell back to 'dev'."
+            exit 1
+          fi

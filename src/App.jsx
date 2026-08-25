@@ -24,7 +24,7 @@ import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { tryeCevir } from "./lib/parabirimi.js";
 import { bildirimOzeti } from "./lib/bildirim.js";
-import { SURUM, sonSurumKontrol, SURUM_URL } from "./lib/surum.js";
+import { SURUM, sonSurumKontrol, SURUM_URL, BUILD_SHA, buildKimligi, swKontrolluMu } from "./lib/surum.js";
 import { Icon, IK } from "./components/icons.jsx";
 
 import { Login, PinGate, Onboarding } from "./features/auth.jsx";
@@ -225,10 +225,24 @@ export default function FinansAppPro() {
     persisterRef.current = createPersister({
       send: pbFindataGonder,
       journal: { merge: journalMerge, ack: journalAck, clear: journalClear, get: journalGet },
-      onStatus: setSenkron,
+      // ACK sonrası ("kaydedildi") SW güncelleme yöneticisine "artık temiz" nudge'ı ver →
+      // pending yüzünden ertelenmiş bir reload varsa güvenle uygulanır (Step 5).
+      onStatus: (s) => { setSenkron(s); if (s === "kaydedildi" && typeof window !== "undefined") window.__finansappSwNudge?.(); },
     });
   }
   const persister = persisterRef.current;
+
+  // SW güncelleme guard'ı: pencereye kaydedilmemiş-değişiklik durumunu bildir.
+  // main.jsx controllerchange reload'unu kirliyken (pending/çakışma) erteler.
+  // Ayrıca salt-okunur build+sync teşhisini pencereye ver (Ayarlar/Hakkında + tanı).
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.__finansappKirli = () => persister.hasUnsaved();
+    window.__finansappBuild = buildKimligi(); // STATİK build kimliği (token/veri YOK)
+    // Canlı tanı: statik kimlik + o anki swControlled + sync durumu (stale-tab teşhisi).
+    window.__finansappTani = () => ({ ...buildKimligi(), swControlled: swKontrolluMu(), sync: persister.getDiagnostics() });
+    return () => { window.__finansappKirli = undefined; window.__finansappTani = undefined; };
+  }, [persister]);
 
   // Oturum verisini hazırla: persister'ı bağla + write-ahead journal replay. Server
   // değişmediyse pending mutation'ı kurtar; başka cihaz/oturum ilerlettiyse stale local
@@ -720,6 +734,15 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
             </a>
           )}
           <div className="num" style={{ fontSize: 10.5, color: "#6E8B7C" }}>v{SURUM}</div>
+          {/* Build kimliği (diagnostics): stale-tab teşhisi. Tooltip'te tam kimlik. */}
+          <div
+            className="num"
+            data-build-sha={BUILD_SHA}
+            title={`v${SURUM} · build ${BUILD_SHA} · yüklendi ${new Date(buildKimligi().loadedAt).toLocaleString("tr-TR")}`}
+            style={{ fontSize: 9, color: "#546B5E", marginTop: 1, letterSpacing: "0.02em" }}
+          >
+            build {BUILD_SHA.slice(0, 7)}
+          </div>
         </div>
       </aside>
 

@@ -142,3 +142,142 @@ describe("createPersister (CAS)", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 });
+
+// ============================================================
+// ACK KONTRATI — "Kaydedildi" YALNIZ doğrulanmış server ACK sonrası.
+// send() geçerli bir { revision:int>=0 } döndürmedikçe (null / {revision:null}
+// / eksik-revision) BAŞARI SAYILMAZ: journal ACK'lenmez, sentRev ilerlemez,
+// pending korunur, status "kaydedildi" OLMAZ. (False-positive save fix.)
+// ============================================================
+describe("createPersister — ACK kontratı (server ACK olmadan Kaydedildi YOK)", () => {
+  it("R1 — send()→null: ACK YOK, kaydedildi DEĞİL, WAL korunur, pending kalır", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => null); // istek gitmedi / geçerli ACK yok
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    expect(j.get("u1")).not.toBe(null);
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).not.toBe("kaydedildi"); // FALSE "Kaydedildi" olmamalı
+    expect(j.get("u1")).not.toBe(null);           // WAL KORUNMALI (ACK/clear yok)
+    expect(p.hasPending()).toBe(true);            // pending mutation kalır → retry mümkün
+    expect(p.getSyncedRevision()).toBe(3);        // server revision ilerlememeli
+  });
+
+  it("R2 — send()→{revision:null}: geçersiz ACK, kaydedildi DEĞİL, WAL korunur", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({ revision: null, updated: null }));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).not.toBe("kaydedildi");
+    expect(j.get("u1")).not.toBe(null);
+    expect(p.hasPending()).toBe(true);
+    expect(p.getSyncedRevision()).toBe(3);
+  });
+
+  it("R2b — send()→{} (revision alanı yok): geçersiz ACK, kaydedildi DEĞİL", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({}));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).not.toBe("kaydedildi");
+    expect(j.get("u1")).not.toBe(null);
+    expect(p.hasPending()).toBe(true);
+  });
+
+  it("kontrol: geçerli ACK {revision:4} → kaydedildi + WAL temizlenir (regresyon değil)", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => ({ revision: 4, updated: "U" }));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("kaydedildi");
+    expect(j.get("u1")).toBe(null);
+    expect(p.getSyncedRevision()).toBe(4);
+  });
+});
+
+// ============================================================
+// State modeli / diagnostics — lastAckRevision & lastAckAt YALNIZ geçerli
+// server ACK sonrası set olur; hasUnsaved() pending veya çakışmayı yansıtır.
+// (Stale-tab teşhisi + SW-reload güvenlik guard'ı için.)
+// ============================================================
+describe("createPersister — başlangıç/reset durumu 'bekliyor' (false 'kaydedildi' YOK)", () => {
+  it("taze persister: status 'bekliyor', lastAckRevision/lastAckAt null (henüz hiçbir ACK yok)", () => {
+    const p = createPersister({ send: vi.fn(), journal: mockJournal(), delay: 1200 });
+    expect(p.getStatus()).toBe("bekliyor");
+    const d = p.getDiagnostics();
+    expect(d.status).toBe("bekliyor");
+    expect(d.lastAckRevision).toBe(null);
+    expect(d.lastAckAt).toBe(null);
+  });
+
+  it("_reset sonrası: status 'bekliyor', lastAck null (logout → ACK iddiası taşınmaz)", async () => {
+    const send = vi.fn(async () => ({ revision: 5, updated: "U" }));
+    const p = createPersister({ send, journal: mockJournal(), delay: 1200 });
+    p.bind("u1", 4);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("kaydedildi");
+    expect(p.getDiagnostics().lastAckRevision).toBe(5);
+    p._reset();
+    expect(p.getStatus()).toBe("bekliyor");
+    const d = p.getDiagnostics();
+    expect(d.lastAckRevision).toBe(null);
+    expect(d.lastAckAt).toBe(null);
+  });
+
+  it("kaydedildi YALNIZ geçerli ACK sonrası: taze→bekliyor, ACK→kaydedildi+lastAck set", async () => {
+    const send = vi.fn(async () => ({ revision: 7, updated: "U" }));
+    const p = createPersister({ send, journal: mockJournal(), delay: 1200 });
+    p.bind("u1", 6);
+    expect(p.getStatus()).toBe("bekliyor"); // bind tek başına kaydedildi ÜRETMEZ
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("kaydedildi");
+    expect(p.getDiagnostics().lastAckRevision).toBe(7);
+    expect(Number.isInteger(p.getDiagnostics().lastAckAt)).toBe(true);
+  });
+});
+
+describe("createPersister — diagnostics & hasUnsaved", () => {
+  it("lastAckRevision/lastAckAt YALNIZ geçerli ACK sonrası set olur", async () => {
+    const j = mockJournal();
+    let ok = false;
+    const send = vi.fn(async () => (ok ? { revision: 6, updated: "U" } : null));
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 5);
+    p.schedule({ n: 1 }, { n: 1 });
+    await vi.advanceTimersByTimeAsync(1200);
+    // null ACK → başarı değil: lastAck set OLMAZ, pending kalır, durum hata
+    expect(p.getDiagnostics().lastAckRevision).toBe(null);
+    expect(p.getDiagnostics().status).toBe("hata");
+    expect(p.getDiagnostics().pending).toBe(true);
+    ok = true;
+    p.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    const d = p.getDiagnostics();
+    expect(d.lastAckRevision).toBe(6);
+    expect(Number.isInteger(d.lastAckAt)).toBe(true);
+    expect(d.pending).toBe(false);
+    expect(d.status).toBe("kaydedildi");
+  });
+
+  it("hasUnsaved: pending veya çakışma açıkken true, temizken false", async () => {
+    const j = mockJournal();
+    const send = vi.fn(async () => { throw conflictErr(9); });
+    const p = createPersister({ send, journal: j, delay: 1200 });
+    p.bind("u1", 3);
+    expect(p.hasUnsaved()).toBe(false);
+    p.schedule({ n: 1 }, { n: 1 });
+    expect(p.hasUnsaved()).toBe(true); // pending
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(p.getStatus()).toBe("catisma");
+    expect(p.hasUnsaved()).toBe(true); // çakışma kilidi
+  });
+});

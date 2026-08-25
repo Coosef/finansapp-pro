@@ -2,12 +2,28 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { readFileSync } from "fs";
+import { execFileSync } from "child_process";
 
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url)));
+
+// Build kimliği (stale-client teşhisi). Docker/CI'da git yoksa BUILD_SHA env veya
+// "dev" fallback; runtime davranışını ETKİLEMEZ, yalnız diagnostics içindir.
+// execFileSync + argüman dizisi: shell yok → komut enjeksiyonu riski yok (sabit komut).
+function gitSha() {
+  try { return execFileSync("git", ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); }
+  catch { return ""; }
+}
+const buildSha = process.env.BUILD_SHA || gitSha() || "dev";
+// BUILD_TIME yalnız EXPLICIT env'den gelir (yoksa boş). new Date() fallback YOK: aksi halde
+// multi-arch (amd64+arm64) build'ler farklı zaman damgası → farklı bundle üretirdi. Authoritative
+// kimlik SHA'dır; zaman opsiyonel/deterministik (workflow tek değer geçirir).
+const buildTime = process.env.BUILD_TIME || "";
 
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version), // uygulamada SURUM olarak okunur
+    __BUILD_SHA__: JSON.stringify(buildSha),
+    __BUILD_TIME__: JSON.stringify(buildTime),
   },
   plugins: [
     react(),

@@ -171,7 +171,10 @@ export class ConflictError extends Error {
 // findata'yı ATOMİK CAS ile yaz → { revision, updated }. Generic PATCH DEĞİL; yalnız CAS endpoint.
 // baseRevision == server revision değilse endpoint 409 döner → ConflictError (yazma olmaz).
 export async function pbFindataGonder(data, baseRevision) {
-  if (!syncBagliMi()) return null;
+  // ACK kontratı: bağlı DEĞİLKEN sessiz null DÖNMEZ. Sessiz null, persister'da
+  // false "Kaydedildi" + WAL'ın ACK'siz silinmesine (sessiz veri kaybı) yol açardı.
+  // Bağlantı yoksa hata fırlat → persister "hata"ya düşer, WAL korunur, retry mümkün.
+  if (!syncBagliMi()) throw new Error("Bulut oturumu yok — değişiklik gönderilemedi (giriş gerekli).");
   const govde = { baseRevision: Number.isInteger(baseRevision) ? baseRevision : 0, data };
   if (_haneId) govde.haneId = _haneId;
   const res = await pbFetch(_url, "/api/findata/kaydet", {
@@ -185,7 +188,15 @@ export async function pbFindataGonder(data, baseRevision) {
     throw new ConflictError(Number.isInteger(d.revision) ? d.revision : null, d.updated || null);
   }
   if (!res.ok) throw new Error(`Veri gönderilemedi (${res.status}).`);
-  try { const d = await res.json(); return { revision: Number.isInteger(d.revision) ? d.revision : null, updated: d.updated || null }; } catch { return { revision: null, updated: null }; }
+  // ACK kontratı: HTTP 2xx TEK BAŞINA başarı değildir. Gövde geçerli bir server
+  // revision (tam sayı >= 0) içermeli; aksi halde (bozuk JSON / eksik / geçersiz
+  // revision) sessiz "başarı" DÖNMEZ, hata fırlatır → persister ACK'lemez, WAL korunur.
+  let d;
+  try { d = await res.json(); } catch { throw new Error("Sunucu yanıtı çözümlenemedi (geçersiz kayıt onayı)."); }
+  if (!d || !Number.isInteger(d.revision) || d.revision < 0) {
+    throw new Error("Sunucu geçerli bir kayıt onayı (revision) döndürmedi.");
+  }
+  return { revision: d.revision, updated: d.updated || null };
 }
 
 // ============================================================

@@ -4,8 +4,26 @@
 // sonSurumKontrol: GitHub main'deki package.json sürümünü çeker; yenisi varsa bildirir.
 // ============================================================
 
-/* global __APP_VERSION__ */
+/* global __APP_VERSION__, __BUILD_SHA__, __BUILD_TIME__ */
 export const SURUM = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
+
+// Build kimliği (stale-client teşhisi). vite define ile enjekte edilir; yoksa fallback.
+export const BUILD_SHA = typeof __BUILD_SHA__ !== "undefined" ? __BUILD_SHA__ : "dev";
+export const BUILD_TIME = typeof __BUILD_TIME__ !== "undefined" ? __BUILD_TIME__ : "";
+export const LOADED_AT = Date.now(); // bu sekmenin bu paketle yüklendiği an (ms)
+
+// Bu sekme bir service worker tarafından kontrol ediliyor mu? (HTTP/LAN'de olmayabilir)
+export function swKontrolluMu() {
+  try { return typeof navigator !== "undefined" && "serviceWorker" in navigator && !!navigator.serviceWorker.controller; }
+  catch { return false; }
+}
+
+// Salt-okunur STATİK build kimliği (Ayarlar/Hakkında). Token/veri İÇERMEZ.
+// swControlled BURADA DEĞİL: runtime'da değişir (mount anında henüz false olabilir),
+// bu yüzden canlı swKontrolluMu() ile ayrı sorgulanır (statik snapshot yanıltmasın).
+export function buildKimligi() {
+  return { appVersion: SURUM, buildSha: BUILD_SHA, buildTime: BUILD_TIME, loadedAt: LOADED_AT };
+}
 
 const REPO = "Coosef/finansapp-pro";
 export const SURUM_URL = `https://github.com/${REPO}/releases`;
