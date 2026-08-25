@@ -115,24 +115,29 @@ test("PW7 — pending WAL ile reload: kurtarma + Kaydedildi YOK; reconnect → p
   await expect.poll(async () => journalOku(page, userId), { timeout: 10000 }).toBeNull();
 });
 
-// ---- PW9: offline reload — gerçek offline + reload → ACK yoksa "kaydedilmiş" değil ----
-test("PW9 — offline reload: ACK olmadan kalıcı görünmez, pending/WAL korunur", async ({ page, context }) => {
+// ---- PW9: sync-offline reload — yazma yolu kesikken reload → ACK yoksa "kaydedilmiş" değil ----
+// "Offline" = sync YAZMA yolu (CAS) sunucuya ulaşamıyor (route-abort → deterministik). GET'ler
+// geçer → oturum korunur, app reload sonrası authenticated remount olur. (context.setOffline
+// KULLANILMAZ: SW/reload ile yarışıp bir write geçirebiliyor VE oturum doğrulamasını offline'da
+// düşürüp Login ekranı gösteriyordu — non-deterministik.) İnvariant: geçerli ACK olmadan reload
+// boyunca UI "Kaydedildi" göstermez, WAL korunur, PB revision İLERLEMEZ.
+test("PW9 — sync-offline reload: ACK olmadan kalıcı görünmez, pending/WAL korunur", async ({ page }) => {
   const { userId } = await pbAuth();
   await seedSession(page, { ...BASE_FINDATA, giderler: [nrGider("p9", "Belirsiz EFT", 4500, "2026-08-05")] });
-  await swHazir(page); // online: SW kabuğu precache'lenir
+  await page.route("**/pb/api/findata/kaydet", (route) => route.abort("failed")); // CAS yazma yolu kesik
+  await swHazir(page);
   const revOnce = (await getRecordRaw()).revision;
 
-  await context.setOffline(true);            // mutation'dan ÖNCE offline → write server'a gidemez
   await inceleGiderYap(page);
-  await expect(rozetMetni(page, "Bağlantı yok")).toBeVisible({ timeout: 15000 }); // offline yüzeyde
-  await kaydedildiGorunmedi(page);           // offline'da ASLA Kaydedildi
+  await expect(rozetMetni(page, "Bağlantı yok")).toBeVisible({ timeout: 15000 });
+  await kaydedildiGorunmedi(page);           // ASLA Kaydedildi
 
-  await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); // SW kabuğu offline yüklenir
-  await expect(page.getByText("FinansApp").first()).toBeVisible({ timeout: 25000 }); // app remount
+  await page.reload({ waitUntil: "domcontentloaded" }); // yazma yolu hâlâ kesik (route korunur)
+  await expect(page.getByText("FinansApp").first()).toBeVisible({ timeout: 25000 });
   await kaydedildiGorunmedi(page);           // reload sonrası da Kaydedildi YOK
   expect(await journalOku(page, userId)).not.toBeNull(); // pending korunuyor
-  expect((await getRecordRaw()).revision).toBe(revOnce); // PB'ye hiçbir şey yazılmadı
-  await context.setOffline(false);
+  expect((await getRecordRaw()).revision).toBe(revOnce); // PB'ye hiçbir şey yazılmadı (route-abort garanti)
+  await page.unroute("**/pb/api/findata/kaydet");
 });
 
 // ---- PW10: CAS 409 conflict → Çakışma, WAL korunur, otomatik write/kör retry YOK ----
