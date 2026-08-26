@@ -15,3 +15,7 @@ test-results/
 playwright-report/
 playwright/.cache/
 blob-report/
+
+# Telegram T1A E2E runtime (throwaway secrets/datadir — never commit)
+e2e/.tg-runtime.json
+e2e/.tg-datadir
