@@ -28,6 +28,7 @@ async function svc(path, body = {}, opts = {}) {
 async function pairCode(token, extraBody) { const r = await fetch(BASE + "/api/tg/user/pair-code", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(extraBody || {}) }); return (await r.json()).code; }
 async function adminList(coll, filter) { const q = filter ? `?filter=${encodeURIComponent(filter)}&perPage=200` : "?perPage=200"; const r = await fetch(BASE + `/api/collections/${coll}/records${q}`, { headers: { Authorization: ADMIN } }); return ((await r.json()).items) || []; }
 async function adminPatch(coll, id, data) { return fetch(BASE + `/api/collections/${coll}/records/${id}`, { method: "PATCH", headers: { Authorization: ADMIN, "Content-Type": "application/json" }, body: JSON.stringify(data) }); }
+async function adminCreate(coll, data) { const r = await fetch(BASE + `/api/collections/${coll}/records`, { method: "POST", headers: { Authorization: ADMIN, "Content-Type": "application/json" }, body: JSON.stringify(data) }); return r.json(); }
 async function usersRecord(id) { const r = await fetch(BASE + `/api/collections/users/records/${id}`, { headers: { Authorization: ADMIN } }); return r.json(); }
 async function wipe() { for (const c of ["telegram_links", "telegram_pair_codes", "telegram_service_requests", "telegram_updates", "telegram_state"]) { for (const it of await adminList(c)) await fetch(BASE + `/api/collections/${c}/records/${it.id}`, { method: "DELETE", headers: { Authorization: ADMIN } }); } }
 const pastIso = () => new Date(Date.now() - 600000).toISOString().replace("T", " ");
@@ -168,30 +169,52 @@ test("TG-A29 generic REST cannot read Telegram internal collections", async () =
   }
 });
 
-// ---- durable offset / idempotency ----
-test("TG-A30/A31 explicit next_offset (not max); non-monotonic ids don't corrupt", async () => {
-  await svc("/api/tg/service/update/claim", { update_id: "1000" });
-  await svc("/api/tg/service/update/complete", { update_id: "1000", next_offset: "1001" });
-  expect((await svc("/api/tg/service/state/get", {})).json.next_offset).toBe("1001");
-  await svc("/api/tg/service/update/claim", { update_id: "5" });               // lower historical id
-  await svc("/api/tg/service/update/complete", { update_id: "5", next_offset: "6" });
-  expect((await svc("/api/tg/service/state/get", {})).json.next_offset).toBe("6"); // explicit, not max(1000)
+// ---- durable offset / idempotency / lease fencing ----
+const claim = (uid) => svc("/api/tg/service/update/claim", { update_id: uid });
+const complete = (uid, token, extra) => svc("/api/tg/service/update/complete", { update_id: uid, lease_token: token, ...(extra || {}) });
+const offset = async () => (await svc("/api/tg/service/state/get", {})).json.next_offset;
+
+test("TG-A30/A31 + TG-R03/R04 server-derived next_offset = update_id+1; non-monotonic derives its own +1", async () => {
+  const c1 = await claim("1000"); await complete("1000", c1.json.lease_token);
+  expect(await offset()).toBe("1001"); // TG-R03: update_id+1
+  const c2 = await claim("5"); await complete("5", c2.json.lease_token); // lower/week-gap id
+  expect(await offset()).toBe("6");    // TG-R04: its own +1, NOT max(1000)
 });
 test("TG-A32 duplicate update claim idempotent", async () => {
-  await svc("/api/tg/service/update/claim", { update_id: "42" });
-  await svc("/api/tg/service/update/complete", { update_id: "42", next_offset: "43" });
-  const r = await svc("/api/tg/service/update/claim", { update_id: "42" });
+  const c = await claim("42"); await complete("42", c.json.lease_token);
+  const r = await claim("42");
   expect(r.json.claimed).toBe(false); expect(r.json.duplicate).toBe(true);
 });
-test("TG-A33 processing lease reclaimable after expiry", async () => {
-  const r1 = await svc("/api/tg/service/update/claim", { update_id: "77" });
-  expect(r1.json.claimed).toBe(true);
-  const busy = await svc("/api/tg/service/update/claim", { update_id: "77" });
-  expect(busy.json.claimed).toBe(false); expect(busy.json.busy).toBe(true);   // taze lease → busy
+test("TG-A33/TG-R07 lease reclaim: fresh→busy; expired→reclaim with NEW token", async () => {
+  const r1 = await claim("77"); expect(r1.json.claimed).toBe(true);
+  const busy = await claim("77"); expect(busy.json.busy).toBe(true); // taze lease → busy (fencing)
   const row = (await adminList("telegram_updates", `update_id = "77"`))[0];
-  await adminPatch("telegram_updates", row.id, { lease_until: pastIso() });     // lease expired
-  const r2 = await svc("/api/tg/service/update/claim", { update_id: "77" });
+  await adminPatch("telegram_updates", row.id, { lease_until: pastIso() });
+  const r2 = await claim("77");
   expect(r2.json.claimed).toBe(true); expect(r2.json.reclaimed).toBe(true);
+  expect(r2.json.lease_token).not.toBe(r1.json.lease_token); // yeni token
+});
+test("TG-R01 complete without claim → 409, offset unchanged", async () => {
+  const before = await offset();
+  const r = await complete("9999", "sometoken");
+  expect(r.status).toBe(409); expect(r.json.error).toBe("no_claim");
+  expect(await offset()).toBe(before);
+});
+test("TG-R02 failed processing cannot advance offset", async () => {
+  const before = await offset();
+  const c = await claim("500"); const r = await complete("500", c.json.lease_token, { status: "failed" });
+  expect(r.status).toBe(200); expect(r.json.status).toBe("failed");
+  expect(await offset()).toBe(before); // offset İLERLEMEDİ
+});
+test("TG-R05/R06 stale lease token cannot complete after reclaim; current token completes", async () => {
+  const c1 = await claim("88");
+  const row = (await adminList("telegram_updates", `update_id = "88"`))[0];
+  await adminPatch("telegram_updates", row.id, { lease_until: pastIso() });
+  const c2 = await claim("88"); // reclaim → new token
+  const stale = await complete("88", c1.json.lease_token); // R05: eski token
+  expect(stale.status).toBe(409); expect(stale.json.error).toBe("lease_mismatch");
+  const ok = await complete("88", c2.json.lease_token);    // R06: güncel token
+  expect(ok.status).toBe(200); expect(ok.json.next_offset).toBe("89");
 });
 
 // ---- fail-closed + log hygiene ----
@@ -209,13 +232,81 @@ test("TG-A03 gateway secret missing → fail closed (503) [isolated container]",
     expect(res.status).toBe(503); // FAIL CLOSED (gateway secret yok)
   } finally { try { execSync(`docker rm -f ${C}`, { stdio: "ignore" }); } catch {} }
 });
-test("TG-A34 secret/token/data absent from PB logs", async () => {
+test("TG-A34/TG-R07 secrets/token absent from logs; financial-data marker absent from logs", async () => {
   const a = await authUser(RT.userA); const tg = nextTgid();
+  const marker = "FINMARK-" + crypto.randomBytes(8).toString("hex");
+  await adminPatch("users", a.id, { data: { note: marker } }); // superuser guard-exempt
   await svc("/api/tg/service/pair-consume", { telegram_user_id: tg, code: await pairCode(a.token) });
-  await svc("/api/tg/service/data", { telegram_user_id: tg });
-  const logs = execSync(`docker logs finansapp-tg-pb 2>&1 | tail -400`).toString();
-  expect(logs).not.toContain(RT.gwSecret);
-  expect(logs).not.toContain(RT.pepper);
-  expect(logs).not.toContain(RT.gwPrevSecret);
-  expect(logs).not.toContain(a.token);
+  const d = await svc("/api/tg/service/data", { telegram_user_id: tg });
+  expect(JSON.stringify(d.json.data || {})).toContain(marker); // data endpoint marker'ı döndürür
+  const logs = execSync(`docker logs finansapp-tg-pb 2>&1 | tail -600`).toString();
+  for (const s of [RT.gwSecret, RT.pepper, RT.gwPrevSecret, a.token, marker]) expect(logs, `log leak: ${s.slice(0, 6)}…`).not.toContain(s);
+});
+
+test("TG-R05b previous pair code deterministically invalidated when new one generated", async () => {
+  const a = await authUser(RT.userA);
+  const codeA = await pairCode(a.token);
+  const codeB = await pairCode(a.token); // B üretimi A'yı geçersiz kılar
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: nextTgid(), code: codeA })).status).toBe(400); // A fail
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: nextTgid(), code: codeB })).status).toBe(200); // B ok
+});
+
+test("TG-R04 retention criteria: terminal/expired selectable; processing NEVER selected", async () => {
+  const doneRow = await adminCreate("telegram_updates", { update_id: "rt-done-" + Date.now(), status: "done", completed_at: pastIso() });
+  const procRow = await adminCreate("telegram_updates", { update_id: "rt-proc-" + Date.now(), status: "processing" });
+  const future = new Date(Date.now() + 86400000).toISOString().replace("T", " ");
+  const term = await adminList("telegram_updates", `(status = "done" || status = "failed") && updated < "${future}"`);
+  expect(term.some((r) => r.id === doneRow.id)).toBe(true);   // terminal seçilir
+  expect(term.some((r) => r.id === procRow.id)).toBe(false);  // processing ASLA
+  // expired service_request + pair_code seçilebilir (expires_at ayarlanabilir DateField)
+  await adminCreate("telegram_service_requests", { nonce: "rt-" + crypto.randomBytes(6).toString("hex"), endpoint: "x", expires_at: pastIso() });
+  const now = new Date().toISOString().replace("T", " ");
+  expect((await adminList("telegram_service_requests", `expires_at < "${now}"`)).length).toBeGreaterThan(0);
+});
+
+test("TG-R06 UPGRADE migration gate: apply 1735000400 onto DB with prior data → collections created, users/haneler data+revision unchanged, CAS still works", async () => {
+  test.setTimeout(120000);
+  const C = "finansapp-tg-upgrade", PORT = 8095, B = `http://localhost:${PORT}`, repo = process.cwd();
+  const gw = crypto.randomBytes(24).toString("hex"), pep = crypto.randomBytes(24).toString("hex");
+  try { execSync(`docker rm -f ${C}`, { stdio: "ignore" }); } catch { /* yok */ }
+  const dd = mkdtempSync(join(tmpdir(), "tg-up-"));
+  const migBefore = mkdtempSync(join(tmpdir(), "tg-mig-"));
+  // Yalnız 1735000000..300 migration'ları (1735000400 HARİÇ) — mevcut prod şeması.
+  execSync(`cp ${repo}/pb/pb_migrations/1735000000_users_data.js ${repo}/pb/pb_migrations/1735000100_haneler.js ${repo}/pb/pb_migrations/1735000200_ai_keys.js ${repo}/pb/pb_migrations/1735000300_findata_revision.js ${migBefore}/`, { stdio: "ignore" });
+  const run = (mig) => execSync(`docker run -d --name ${C} -p ${PORT}:8090 -e FINANSAPP_CAS_ENFORCE=1 -e TG_GATEWAY_SECRET=${gw} -e TG_PAIRING_PEPPER=${pep} -v "${repo}/pb/pb_hooks:/pb_hooks" -v "${mig}:/pb_migrations" -v "${dd}:/pb_data" ghcr.io/muchobien/pocketbase:0.39.10 serve --http=0.0.0.0:8090 --dir=/pb_data --migrationsDir=/pb_migrations --hooksDir=/pb_hooks`, { stdio: "ignore" });
+  const waitHealth = async () => { for (let i = 0; i < 30; i++) { try { if ((await fetch(B + "/api/health")).ok) return true; } catch { /* */ } await new Promise((s) => setTimeout(s, 1000)); } return false; };
+  const sign = (path, body) => signHeaders({ secret: gw, method: "POST", path, rawBody: JSON.stringify(body) });
+  try {
+    run(migBefore);
+    expect(await waitHealth()).toBe(true);
+    // seed user + CAS write (revision 0→1, data marker)
+    await fetch(B + "/api/collections/users/records", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "up@t.test", password: "uppassword123", passwordConfirm: "uppassword123" }) });
+    const auth = await (await fetch(B + "/api/collections/users/auth-with-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identity: "up@t.test", password: "uppassword123" }) })).json();
+    const seed = { note: "UPGRADE-MARK", giderler: [{ id: "g1", miktar: 42 }] };
+    const w = await fetch(B + "/api/findata/kaydet", { method: "POST", headers: { Authorization: auth.token, "Content-Type": "application/json" }, body: JSON.stringify({ baseRevision: 0, data: seed }) });
+    expect(w.status).toBe(200);
+    const before = await (await fetch(B + `/api/collections/users/records/${auth.record.id}`, { headers: { Authorization: auth.token } })).json();
+    expect(before.revision).toBe(1);
+    execSync(`docker rm -f ${C}`, { stdio: "ignore" });
+
+    // UPGRADE: aynı data dir, TAM migrations (1735000400 dahil) → yeni migration uygulanır.
+    run(`${repo}/pb/pb_migrations`);
+    expect(await waitHealth()).toBe(true);
+    const adminPass = "up-adm-" + crypto.randomBytes(8).toString("hex");
+    execSync(`docker exec ${C} /usr/local/bin/pocketbase superuser upsert up-admin@t.test ${adminPass} --dir=/pb_data`, { stdio: "ignore" });
+    const admTok = (await (await fetch(B + "/api/collections/_superusers/auth-with-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identity: "up-admin@t.test", password: adminPass }) })).json()).token;
+    // 5 tg koleksiyonu var mı
+    for (const c of ["telegram_links", "telegram_pair_codes", "telegram_state", "telegram_updates", "telegram_service_requests"]) {
+      const r = await fetch(B + `/api/collections/${c}`, { headers: { Authorization: admTok } });
+      expect(r.status, `collection ${c} exists`).toBe(200);
+    }
+    // prior users data/revision EXACT unchanged
+    const after = await (await fetch(B + `/api/collections/users/records/${auth.record.id}`, { headers: { Authorization: admTok } })).json();
+    expect(after.revision).toBe(before.revision);
+    expect(JSON.stringify(after.data)).toBe(JSON.stringify(before.data));
+    // existing CAS endpoint still works (revision 1→2)
+    const w2 = await fetch(B + "/api/findata/kaydet", { method: "POST", headers: { Authorization: auth.token, "Content-Type": "application/json" }, body: JSON.stringify({ baseRevision: 1, data: { ...seed, extra: true } }) });
+    expect(w2.status).toBe(200);
+    expect((await w2.json()).revision).toBe(2);
+  } finally { try { execSync(`docker rm -f ${C}`, { stdio: "ignore" }); } catch { /* */ } }
 });

@@ -60,6 +60,7 @@ migrate(
     updates.fields.add(new SelectField({ name: "status", required: true, maxSelect: 1, values: ["received", "processing", "done", "failed"] }));
     updates.fields.add(new NumberField({ name: "attempts", onlyInt: true, min: 0 }));
     updates.fields.add(new DateField({ name: "lease_until" }));
+    updates.fields.add(new TextField({ name: "lease_token" })); // opaque fencing token
     updates.fields.add(new DateField({ name: "completed_at" }));
     updates.fields.add(new AutodateField({ name: "created", onCreate: true }));
     updates.fields.add(new AutodateField({ name: "updated", onCreate: true, onUpdate: true }));

@@ -25,9 +25,10 @@ routerAdd("POST", "/api/tg/user/pair-code", (e) => {
   const expIso = T.isoAt(T.CODE_TTL_MS);
 
   e.app.runInTransaction((tx) => {
-    // Aynı user'ın önceki kullanılmamış kodlarını geçersiz kıl.
-    const eski = tx.findRecordsByFilter("telegram_pair_codes", "user = {:u} && used_at = null", "-created", 50, 0, { u: auth.id });
-    for (const r of eski) { r.set("used_at", T.isoAt(0)); tx.save(r); }
+    // R5: aynı user'ın TÜM kullanılmamış kodlarını deterministik geçersiz kıl (isZero — ambiguous
+    // null-filter DEĞİL). Limit 500 gerçekçi üstünde (her üretim öncekileri zaten geçersiz kılar).
+    const eski = tx.findRecordsByFilter("telegram_pair_codes", "user = {:u}", "-created", 500, 0, { u: auth.id });
+    for (const r of eski) { if (r.getDateTime("used_at").isZero()) { r.set("used_at", T.isoAt(0)); tx.save(r); } }
     const rec = new Record(tx.findCollectionByNameOrId("telegram_pair_codes"));
     rec.set("user", auth.id);
     rec.set("code_mac", codeMac);
@@ -148,13 +149,14 @@ routerAdd("POST", "/api/tg/service/state/get", (e) => {
   return e.json(200, { next_offset: st.get("next_offset") || "" });
 });
 
-// Update claim — idempotent + crash-recovery lease.
+// Update claim — idempotent + crash-recovery lease + opaque lease_token (fencing).
 routerAdd("POST", "/api/tg/service/update/claim", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   const { body, tgid } = T.serviceAuth(e, "/api/tg/service/update/claim");
   const uid = String((body && body.update_id) || "");
-  if (!uid) throw new BadRequestError("update_id gerekli.");
+  if (!T.validUpdateId(uid)) throw new BadRequestError("Geçersiz update_id.");
   const kind = String((body && body.kind) || "");
+  const leaseToken = $security.randomString(40);
   let out = null;
   e.app.runInTransaction((tx) => {
     let rec = null;
@@ -163,13 +165,15 @@ routerAdd("POST", "/api/tg/service/update/claim", (e) => {
       const st = rec.get("status");
       if (st === "done") { out = { claimed: false, duplicate: true }; return; }
       if (st === "processing" && !rec.getDateTime("lease_until").isZero() && rec.getDateTime("lease_until").after(new DateTime())) { out = { claimed: false, busy: true }; return; }
+      // received/failed veya stale lease → yeni token ile yeniden claim (eski claimant fenced).
       rec.set("status", "processing");
       rec.set("attempts", (rec.getInt("attempts") || 0) + 1);
       rec.set("lease_until", T.isoAt(T.UPDATE_LEASE_MS));
+      rec.set("lease_token", leaseToken);
       if (tgid) rec.set("telegram_user_id", tgid);
       if (kind) rec.set("kind", kind);
       tx.save(rec);
-      out = { claimed: true, reclaimed: true };
+      out = { claimed: true, reclaimed: true, lease_token: leaseToken };
       return;
     }
     rec = new Record(tx.findCollectionByNameOrId("telegram_updates"));
@@ -179,35 +183,49 @@ routerAdd("POST", "/api/tg/service/update/claim", (e) => {
     rec.set("status", "processing");
     rec.set("attempts", 1);
     rec.set("lease_until", T.isoAt(T.UPDATE_LEASE_MS));
-    try { tx.save(rec); out = { claimed: true }; }
-    catch (_) { out = { claimed: false, duplicate: true }; } // yarış: unique(update_id)
+    rec.set("lease_token", leaseToken);
+    try { tx.save(rec); out = { claimed: true, lease_token: leaseToken }; }
+    catch (err) {
+      // R2: kör "duplicate" YOK. Kayıt gerçekten var mı? → durumuna göre çöz; yoksa hatayı YAY.
+      let exist = null;
+      try { exist = tx.findFirstRecordByFilter("telegram_updates", "update_id = {:u}", { u: uid }); } catch (_) { exist = null; }
+      if (!exist) throw err; // gerçek DB/validation hatası
+      out = exist.get("status") === "done" ? { claimed: false, duplicate: true } : { claimed: false, busy: true };
+    }
   });
   return e.json(200, out);
 });
 
-// Update complete — status=done + explicit next_offset.
+// Update complete — YALNIZ mevcut+processing+lease_token eşleşen claim'i tamamlar.
+// next_offset SERVER-DERIVED = update_id + 1 (gateway keyfi değeri YOK). failed → offset İLERLEMEZ.
 routerAdd("POST", "/api/tg/service/update/complete", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   const { body } = T.serviceAuth(e, "/api/tg/service/update/complete");
   const uid = String((body && body.update_id) || "");
-  if (!uid) throw new BadRequestError("update_id gerekli.");
-  const nextOffset = body && body.next_offset != null ? String(body.next_offset) : "";
-  const status = body && body.status === "failed" ? "failed" : "done";
+  if (!T.validUpdateId(uid)) throw new BadRequestError("Geçersiz update_id.");
+  const leaseToken = String((body && body.lease_token) || "");
+  if (!leaseToken) throw new BadRequestError("lease_token gerekli.");
+  const failed = body && body.status === "failed";
+  let http = 200, out = { ok: true };
   e.app.runInTransaction((tx) => {
     let rec = null;
     try { rec = tx.findFirstRecordByFilter("telegram_updates", "update_id = {:u}", { u: uid }); } catch (_) { rec = null; }
-    if (rec) {
-      rec.set("status", status);
-      if (status === "done") { rec.set("completed_at", T.isoAt(0)); rec.set("lease_until", null); }
+    if (!rec) { http = 409; out = { error: "no_claim" }; return; }                     // R1: claim yok → offset dokunulmaz
+    if (rec.get("status") !== "processing") { http = 409; out = { error: "not_processing" }; return; }
+    if (!$security.equal(String(rec.get("lease_token") || ""), leaseToken)) { http = 409; out = { error: "lease_mismatch" }; return; } // R3 fencing
+    if (failed) {
+      rec.set("status", "failed"); rec.set("lease_until", null); rec.set("lease_token", null);
       tx.save(rec);
+      out = { ok: true, status: "failed" }; return;                                    // R1: failed → offset İLERLEMEZ
     }
-    if (nextOffset) {
-      let st = null;
-      try { st = tx.findFirstRecordByFilter("telegram_state", "key = {:k}", { k: "main" }); } catch (_) { st = null; }
-      if (!st) { st = new Record(tx.findCollectionByNameOrId("telegram_state")); st.set("key", "main"); }
-      st.set("next_offset", nextOffset); // EXPLICIT
-      tx.save(st);
-    }
+    rec.set("status", "done"); rec.set("completed_at", T.isoAt(0)); rec.set("lease_until", null); rec.set("lease_token", null);
+    tx.save(rec);
+    const nextOffset = T.deriveNextOffset(uid);                                         // R1: server-derived update_id+1
+    let st = null;
+    try { st = tx.findFirstRecordByFilter("telegram_state", "key = {:k}", { k: "main" }); } catch (_) { st = null; }
+    if (!st) { st = new Record(tx.findCollectionByNameOrId("telegram_state")); st.set("key", "main"); }
+    st.set("next_offset", nextOffset); tx.save(st);
+    out = { ok: true, next_offset: nextOffset };
   });
-  return e.json(200, { ok: true });
+  return e.json(http, out);
 });

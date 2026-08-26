@@ -23,6 +23,12 @@ function tgSecret(ad) {
   return v ? String(v).trim() : "";
 }
 
+// Telegram update_id: pozitif decimal integer (≤19 hane, 64-bit güvenli aralık).
+const UPDATE_ID_RE = /^[0-9]{1,19}$/;
+function validUpdateId(s) { return UPDATE_ID_RE.test(String(s || "")); }
+// next_offset SERVER-DERIVED: tamamlanan update_id + 1 (BigInt, historical MAX değil).
+function deriveNextOffset(uid) { return (BigInt(uid) + 1n).toString(); }
+
 function nowSec() { return Math.floor(Date.now() / 1000); }
 // PB DateField "YYYY-MM-DD HH:MM:SS.sssZ" bekler (DateTime().string() formatı).
 function isoAt(msFromNow) { return new Date(Date.now() + (msFromNow || 0)).toISOString().replace("T", " "); }
@@ -86,4 +92,5 @@ function rateLimitAsildi(app, tgid, endpoint) {
 module.exports = {
   TGID_RE, PAIR_ALFABE, CODE_TTL_MS, UPDATE_LEASE_MS, CODE_GENERIC,
   tgSecret, nowSec, isoAt, serviceAuth, rateLimitAsildi,
+  validUpdateId, deriveNextOffset,
 };
