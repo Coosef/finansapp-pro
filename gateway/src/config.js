@@ -35,17 +35,28 @@ export function yapilandir(env = process.env) {
   if (!pbUrl) eksik.push("PB_URL");
   if (eksik.length) throw new Error(`Yapılandırma eksik (fail-closed): ${eksik.join(", ")}`);
 
+  // R5: Telegram API tabanı ÜRETİMDE sabit (resmi). Token URL'de taşındığından keyfi TG_API_BASE
+  // bir exfiltration/token-sızma kanalı olurdu. Override YALNIZ üretim-dışında (test/dev) veya
+  // testlerde constructor DI ile. Üretimde resmi-olmayan TG_API_BASE → FAIL-CLOSED.
+  const RESMI_TG = "https://api.telegram.org";
+  const uretim = env.NODE_ENV === "production";
+  const istenen = env.TG_API_BASE ? env.TG_API_BASE.trim().replace(/\/+$/, "") : "";
+  let tgApiBase = RESMI_TG;
+  if (uretim) {
+    if (istenen && istenen !== RESMI_TG) throw new Error("Üretimde TG_API_BASE resmi Telegram API'sinden farklı olamaz (fail-closed).");
+  } else if (istenen) {
+    tgApiBase = istenen; // test/dev override (fake Telegram)
+  }
+
   return {
     botToken,
     gwSecret,
     pbUrl,
-    // Telegram Bot API tabanı — testte fake sunucuya yönlendirilebilir.
-    tgApiBase: (env.TG_API_BASE || "https://api.telegram.org").trim().replace(/\/+$/, ""),
+    tgApiBase,
     pollTimeout: sayi(env, "TG_POLL_TIMEOUT", 25), // getUpdates long-poll saniye
     pollLimit: sayi(env, "TG_POLL_LIMIT", 50),
     pbTimeoutMs: sayi(env, "PB_TIMEOUT_MS", 15000),
     heartbeatFile: (env.HEARTBEAT_FILE || "/tmp/tg-gateway-heartbeat").trim(),
-    poisonMax: sayi(env, "TG_POISON_MAX", 3), // aynı update geçici hatada en çok N deneme → skip
     buildSha: (env.BUILD_SHA || "dev").trim(),
   };
 }

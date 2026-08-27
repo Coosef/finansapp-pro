@@ -1,52 +1,66 @@
 // ============================================================
-// Telegram Bot API istemcisi — OUTBOUND-ONLY (getUpdates long-poll + sendMessage).
-// Webhook YOK, gelen port YOK. Bot token URL'de taşınır → token ASLA log'lanmaz
-// (hata mesajları URL/token içermez; yalnız yöntem adı + durum).
-// apiBase testte fake Telegram sunucusuna yönlendirilebilir.
+// Telegram Bot API istemcisi — OUTBOUND-ONLY (getMe + getUpdates long-poll + sendMessage).
+// Webhook YOK, gelen port YOK. Bot token URL'de → token ASLA log/hata mesajına GİRMEZ.
+// Hata taksonomisi (R4): 401→FatalConfigError (geçersiz token); 429→TransientError(retry_after);
+// 5xx/ağ/timeout→TransientError; sendMessage 400/403 (teslim edilemez)→PermanentUpdateError.
+// Shutdown signal (R12) getUpdates fetch'ine iletilir → uzun poll anında iptal edilir.
 // ============================================================
-
-async function fetchZamanAsimli(url, opts, ms, fetchImpl) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), ms);
-  try { return await fetchImpl(url, { ...opts, signal: ac.signal }); }
-  finally { clearTimeout(t); }
-}
+import { TransientError, FatalConfigError, PermanentUpdateError } from "./errors.js";
 
 export function tgIstemci({ apiBase, botToken, fetchImpl = fetch }) {
   const kok = `${apiBase}/bot${botToken}`;
-  async function cagir(metot, body, timeoutMs) {
-    const res = await fetchZamanAsimli(`${kok}/${metot}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {}),
-    }, timeoutMs, fetchImpl);
-    let json = null;
-    try { json = await res.json(); } catch { /* boş */ }
-    if (!res.ok || !json || json.ok !== true) {
-      // Token URL'de → mesaja URL EKLEME. Yalnız yöntem + durum + TG description.
-      const desc = json && json.description ? String(json.description) : `HTTP ${res.status}`;
-      const err = new Error(`Telegram ${metot} başarısız: ${desc}`);
-      err.status = res.status;
-      throw err;
-    }
-    return json.result;
+  async function ham(metot, body, timeoutMs, extSignal) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new Error("timeout")), timeoutMs);
+    const sig = extSignal ? AbortSignal.any([ac.signal, extSignal]) : ac.signal;
+    let res;
+    try {
+      res = await fetchImpl(`${kok}/${metot}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}), signal: sig });
+    } catch (e) {
+      if (extSignal && extSignal.aborted) throw e;                 // shutdown → yukarı
+      throw new TransientError(`Telegram ${metot} ağ/timeout`);     // token/URL İÇERMEZ
+    } finally { clearTimeout(timer); }
+    let json = null; try { json = await res.json(); } catch { /* boş */ }
+    return { status: res.status, ok: res.ok, json };
+  }
+  function kodDesc(r) {
+    return { kod: (r.json && r.json.error_code) || r.status, desc: (r.json && r.json.description) || `HTTP ${r.status}`, retryAfter: r.json && r.json.parameters && r.json.parameters.retry_after };
+  }
+  // getMe/getUpdates sınıflandırma.
+  function cagriSonuc(r, metot) {
+    if (r.ok && r.json && r.json.ok === true) return r.json.result;
+    const { kod, desc, retryAfter } = kodDesc(r);
+    if (kod === 401) throw new FatalConfigError(`Telegram ${metot} yetkisiz (geçersiz bot token): ${desc}`);
+    if (kod === 429) throw new TransientError(`Telegram ${metot} 429`, retryAfter ? retryAfter * 1000 : 1000);
+    throw new TransientError(`Telegram ${metot} ${kod}: ${desc}`); // 5xx + diğer 4xx → geçici (token içermez)
   }
   return {
-    // Long-poll: sunucu en çok `timeout` sn bekler; fetch abort'u timeout+10 sn.
-    getUpdates: ({ offset, timeout = 25, limit = 50 } = {}) => {
+    getMe: (extSignal) => ham("getMe", {}, 15000, extSignal).then((r) => cagriSonuc(r, "getMe")),
+    getUpdates: ({ offset, timeout = 25, limit = 50, signal } = {}) => {
       const body = { timeout, limit, allowed_updates: ["message"] };
       if (offset != null) body.offset = offset;
-      return cagir("getUpdates", body, (timeout + 10) * 1000);
+      return ham("getUpdates", body, (timeout + 10) * 1000, signal).then((r) => cagriSonuc(r, "getUpdates"));
     },
     sendMessage: (chatId, text, opts = {}) =>
-      cagir("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true, ...opts }, 15000),
+      ham("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true, ...opts }, 15000, opts.signal).then((r) => {
+        if (r.ok && r.json && r.json.ok === true) return r.json.result;
+        const { kod, desc, retryAfter } = kodDesc(r);
+        if (kod === 401) throw new FatalConfigError(`Telegram sendMessage yetkisiz: ${desc}`);
+        if (kod === 429) throw new TransientError("Telegram sendMessage 429", retryAfter ? retryAfter * 1000 : 1000);
+        if (kod >= 500) throw new TransientError(`Telegram sendMessage ${kod}`);
+        if (kod === 400 || kod === 403) throw new PermanentUpdateError(`Telegram sendMessage teslim edilemez ${kod}: ${desc}`); // bot blocked / chat not found / bad request
+        throw new TransientError(`Telegram sendMessage ${kod}: ${desc}`);
+      }),
   };
 }
 
-// Telegram getUpdates offset kuralı: next_offset (T1A: son tamamlanan update_id + 1).
-// Boş/geçersizse offset atlanır (bekleyen tüm update'ler döner).
+// Telegram getUpdates offset (T1A: son tamamlanan update_id + 1). Boş/geçersiz→null (offset atlanır).
+// R6: 19-haneli sözleşme için GÜVENLİ tamsayı sınırı — MAX_SAFE_INTEGER üstü değeri Number'a
+// ÇEVİRME (hassasiyet kaybı); sınır aşımında null→tüm bekleyenleri getir (güvenli fallback).
 export function offsetSayi(nextOffset) {
   const s = String(nextOffset || "").trim();
   if (!/^[0-9]{1,19}$/.test(s)) return null;
-  return Number(s);
+  const n = Number(s);
+  if (!Number.isSafeInteger(n)) return null; // Telegram update_id ≤ 2^53 (JSON number); sınır aşımı → fallback
+  return n;
 }

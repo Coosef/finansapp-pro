@@ -1,13 +1,17 @@
 // ============================================================
 // Komut yönlendirme + işleyiciler. Kimlik = NUMERİK telegram_user_id (username'e GÜVENİLMEZ).
-// ÖZEL SOHBET zorunlu: grup/kanal/supergroup → finansal veri ÇÖZÜLMEZ.
-// READ-ONLY: yalnız T1A okuma endpoint'leri (pair-consume/unlink hariç); /api/findata/kaydet YOK.
+// ÖZEL SOHBET zorunlu: grup/kanal → finansal veri/işlem YOK.
+// READ-ONLY: /api/findata/kaydet YOK. Link-varlık kontrolleri /status (metadata); /data YALNIZ
+// gerçek finansal okuma komutları için (R8). Hata sınıfları (Transient/Fatal/Permanent/UserInput)
+// yukarı fırlar → loop.js taksonomisi yönetir.
 // ============================================================
 import { bugun as bugunBul } from "../../src/lib/format.js";
 import { bakiyeOzeti, buAyOzeti, bugunOzeti, hesaplarOzeti } from "./summary.js";
 import * as M from "./messages.js";
 
-// "/link ABC" → { cmd:"/link", arg:"ABC" }; "📊 Bugün" → { cmd:"📊 Bugün", arg:"" }
+const KOD_ALFABE = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // pairing alfabesi (pb migration ile aynı)
+const KOD_RE = new RegExp(`^[${KOD_ALFABE}]{8}$`);
+
 export function komutCoz(text) {
   const t = String(text || "").trim();
   if (!t) return { cmd: "", arg: "" };
@@ -15,44 +19,43 @@ export function komutCoz(text) {
     const bosluk = t.indexOf(" ");
     let cmd = bosluk === -1 ? t : t.slice(0, bosluk);
     const arg = bosluk === -1 ? "" : t.slice(bosluk + 1).trim();
-    cmd = cmd.split("@")[0].toLowerCase(); // /bakiye@Bot → /bakiye
+    cmd = cmd.split("@")[0].toLowerCase();
     return { cmd, arg };
   }
-  return { cmd: t, arg: "" }; // menü butonu metni
+  return { cmd: t, arg: "" };
 }
 
-// Bir güncellemeyi işle. deps: { pb, tg, bugunStr? }. Yan etki: tg.sendMessage.
 export async function isle(update, deps) {
   const { pb, tg } = deps;
   const bugunStr = deps.bugunStr || bugunBul();
   const msg = update && update.message;
-  if (!msg) return { skip: "no_message" };                 // yalnız message türü
+  if (!msg) return { skip: "no_message" };
   const chat = msg.chat || {};
   const from = msg.from || {};
-  if (from.is_bot) return { skip: "from_bot" };            // botlardan gelen mesajı işleme
+  if (from.is_bot) return { skip: "from_bot" };
 
-  // ÖZEL SOHBET zorunlu — grup/kanalda finansal veri sızdırma.
-  if (chat.type !== "private") {
+  if (chat.type !== "private") {                          // ÖZEL SOHBET zorunlu → sızıntı yok
     await tg.sendMessage(chat.id, M.ozelDegilMesaji());
     return { skip: "not_private" };
   }
   const tgid = String(from.id);
   const chatId = chat.id;
   const { cmd, arg } = komutCoz(msg.text);
+  const gonder = (text, extra) => tg.sendMessage(chatId, M.uzunlukGuvenli(text), extra); // R11 generic guard
 
-  // Bağlıysa findata getir; değilse null + kullanıcıya "önce bağlan" der (fin. komutları için).
+  // /status ile bağlı mı? (metadata; finansal veri YOK) — R8.
+  const bagliMi = async () => (await pb.statusGet(tgid)).linked;
+  // Finansal veri getir (YALNIZ finansal komutlar). 401 → bağlı değil.
   async function findataGetir() {
     const r = await pb.getData(tgid);
-    if (r.status === 200 && r.json) return r.json; // { data, revision, updated, scope }
-    if (r.status === 401) { await tg.sendMessage(chatId, M.bagliDegilMesaji()); return null; }
-    throw new Error(`getData beklenmeyen durum: ${r.status}`); // → geçici hata (retry)
+    if (r.status === 200 && r.json) return r.json;
+    await gonder(M.bagliDegilMesaji());
+    return null;
   }
-  const gonder = (text, extra) => tg.sendMessage(chatId, text, extra);
 
   switch (cmd) {
     case "/start": {
-      const r = await pb.getData(tgid);
-      const bagli = r.status === 200;
+      const bagli = await bagliMi();                      // R7/R8: /status, /data DEĞİL
       await gonder(M.karsilamaMesaji(bagli), bagli ? { reply_markup: M.ANA_MENU } : undefined);
       return { ok: "start" };
     }
@@ -61,29 +64,36 @@ export async function isle(update, deps) {
       return { ok: "help" };
 
     case "/link": {
-      if (!arg) { await gonder(M.linkKullanimMesaji()); return { ok: "link_usage" }; }
-      const r = await pb.pairConsume(tgid, arg.split(/\s+/)[0]);
+      const kod = String(arg || "").split(/\s+/)[0].toUpperCase();
+      if (!kod) { await gonder(M.linkKullanimMesaji()); return { ok: "link_usage" }; }
+      // R15: yerel doğrulama — 8 haneli, doğru alfabe. Geçersiz → güvenli mesaj + pair-consume YOK.
+      if (!KOD_RE.test(kod)) { await gonder(M.linkGecersizFormatMesaji()); return { ok: "link_badformat" }; } // kod LOGLANMAZ
+      const r = await pb.pairConsume(tgid, kod);
       if (r.status === 200) { await gonder(M.linkBasariMesaji(), { reply_markup: M.ANA_MENU }); return { ok: "link" }; }
       if (r.status === 429) { await gonder(M.cokFazlaDenemeMesaji()); return { ok: "link_rl" }; }
       if (r.status === 409) { await gonder(M.linkHataMesaji("Bağlantı çakışması. Tekrar dene.")); return { ok: "link_conflict" }; }
-      if (r.status === 400) { await gonder(M.linkHataMesaji(r.json && r.json.message)); return { ok: "link_bad" }; }
-      throw new Error(`pairConsume beklenmeyen durum: ${r.status}`);
+      if (r.status === 400) {
+        // R2: commit-then-reply crash penceresi — kod "used" ama tgid ZATEN doğru bağlıysa
+        // replay idempotent BAŞARI'dır; yanlış "kod geçersiz" DEME.
+        if (await bagliMi()) { await gonder(M.linkBasariMesaji(), { reply_markup: M.ANA_MENU }); return { ok: "link_idem" }; }
+        await gonder(M.linkHataMesaji(r.json && r.json.message));
+        return { ok: "link_bad" };
+      }
+      // beklenmeyen 2xx/4xx → güvenli fallback
+      await gonder(M.linkHataMesaji());
+      return { ok: "link_unexpected" };
     }
     case "/unlink":
-      await pb.unlink(tgid);
+      await pb.unlink(tgid);                               // 5xx→Transient throw → yalan yok (R7)
       await gonder(M.unlinkMesaji());
       return { ok: "unlink" };
 
     case "/durum":
     case M.BTN.BAGLANTI: {
-      const r = await pb.getData(tgid);
-      if (r.status === 200 && r.json) {
-        const mesaj = cmd === "/durum" ? M.durumMesaji({ tgid, scope: r.json.scope, updated: r.json.updated }) : M.baglantiMesaji({ tgid, scope: r.json.scope });
-        await gonder(mesaj);
-        return { ok: "durum" };
-      }
-      if (r.status === 401) { await gonder(M.bagliDegilMesaji()); return { ok: "durum_unlinked" }; }
-      throw new Error(`getData beklenmeyen durum: ${r.status}`);
+      const s = await pb.statusGet(tgid);                 // R8 metadata; R9 iç ID gösterilmez
+      if (s.linked) { await gonder(cmd === "/durum" ? M.durumMesaji() : M.baglantiMesaji()); return { ok: "durum" }; }
+      await gonder(M.bagliDegilMesaji());
+      return { ok: "durum_unlinked" };
     }
 
     case "/bakiye": {

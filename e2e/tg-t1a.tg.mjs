@@ -215,6 +215,19 @@ test("TG-F08 concurrent pair-code generation → at most one UNUSED code per use
   expect(all.filter((r) => !r.used_at).length).toBeLessThanOrEqual(1); // ≤1 kullanılmamış
 });
 
+// ---- service/status (metadata-only, R2/R8) ----
+test("TG-S01 service/status: HMAC gerekli; linked/unlinked; finansal veri/user-id YOK; 200 (401 değil)", async () => {
+  const a = await authUser(RT.userA); const tg = nextTgid();
+  const u0 = await svc("/api/tg/service/status", { telegram_user_id: tg });
+  expect(u0.status).toBe(200); expect(u0.json.linked).toBe(false);          // linksiz → 200 {linked:false}
+  await svc("/api/tg/service/pair-consume", { telegram_user_id: tg, code: await pairCode(a.token) });
+  const u1 = await svc("/api/tg/service/status", { telegram_user_id: tg });
+  expect(u1.status).toBe(200); expect(u1.json.linked).toBe(true); expect(u1.json.scope).toBe("personal");
+  expect(Object.keys(u1.json).sort()).toEqual(["linked", "scope"]);         // data/revision/user id YOK
+  const bad = await svc("/api/tg/service/status", { telegram_user_id: tg }, { mut: (h) => { h["X-TG-Signature"] = "0".repeat(64); } });
+  expect(bad.status).toBe(401);                                              // HMAC olmadan reddedilir
+});
+
 // ---- data + revision immutability ----
 test("TG-A24 unlinked service data rejected", async () => { expect((await svc("/api/tg/service/data", { telegram_user_id: nextTgid() })).status).toBe(401); });
 test("TG-A25/A26 linked service data resolves PB identity server-side; personal-only", async () => {

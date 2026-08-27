@@ -160,6 +160,19 @@ routerAdd("POST", "/api/tg/service/data", (e) => {
   return e.json(200, { data: user.get("data") || {}, revision: user.getInt("revision"), updated: user.get("updated"), scope: "personal" });
 });
 
+// Service status — METADATA-ONLY link kontrolü (R2/R8). PB tgid'i kendi çözer. Finansal veri YOK,
+// PB user id YOK, mutation YOK. linked=false için de 200 döner (HMAC 401 = saf auth hatası →
+// gateway'de FatalConfig). /link crash-window replay ve /start,/durum,Bağlantı bunu kullanır.
+routerAdd("POST", "/api/tg/service/status", (e) => {
+  const T = require(`${__hooks}/tg_lib.js`);
+  const { tgid } = T.serviceAuth(e, "/api/tg/service/status");
+  if (!T.TGID_RE.test(tgid)) throw new BadRequestError("Geçersiz telegram_user_id.");
+  let link = null;
+  try { link = e.app.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); } catch (_) { link = null; }
+  if (!link) return e.json(200, { linked: false });
+  return e.json(200, { linked: true, scope: link.get("scope") || "personal" });
+});
+
 // Durable state — explicit next_offset (max(update_id) DEĞİL). Yoksa oluştur.
 routerAdd("POST", "/api/tg/service/state/get", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
