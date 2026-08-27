@@ -83,6 +83,16 @@ jobs:
             npx playwright test --config=playwright.pwa.config.js --workers=1 --retries=0
           done
 
+      # --- Telegram T1A internal security API E2E (TG-A01–A34) ---
+      # Ayrı config (playwright.tg.config.js, *.tg.mjs); browser YOK — PB endpoint'lerine
+      # HMAC ile doğrudan fetch. İzole throwaway PB (TG secret'ları runtime-random). 3× determinizm.
+      - name: "Telegram T1A E2E (TG-A01–A34 ×3)"
+        run: |
+          for i in 1 2 3; do
+            echo "== TG suite run $i/3 =="
+            npx playwright test --config=playwright.tg.config.js --workers=1 --retries=0
+          done
+
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
       # HTML report + trace.zip (console + network dahil) + screenshot + video.
       # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.
