@@ -11,6 +11,11 @@ migrate(
     const kilitle = (c) => { c.listRule = null; c.viewRule = null; c.createRule = null; c.updateRule = null; c.deleteRule = null; };
 
     // A) telegram_links
+    // F1: benzersizlik YALNIZ AKTİF link'ler için (partial unique index). Pasif tarihsel
+    // satırlar bir kimliği SONSUZA reserve ETMEZ → açık unlink'ten sonra başka PB user aynı
+    // Telegram ID'yi (veya user başka bir ID'yi) yeniden bağlayabilir. Invariant: en fazla BİR
+    // aktif link / PB user, en fazla BİR aktif link / telegram_user_id. `WHERE active = 1`
+    // PB 0.39.10/SQLite'ta bool=1 depolamasıyla ENFORCE edilir (probe ile doğrulandı).
     const links = new Collection({ type: "base", name: "telegram_links" });
     kilitle(links);
     links.fields.add(new RelationField({ name: "user", required: true, maxSelect: 1, collectionId: users.id, cascadeDelete: true }));
@@ -22,8 +27,10 @@ migrate(
     links.fields.add(new AutodateField({ name: "created", onCreate: true }));
     links.fields.add(new AutodateField({ name: "updated", onCreate: true, onUpdate: true }));
     links.indexes = [
-      "CREATE UNIQUE INDEX idx_tg_links_user ON telegram_links (user)",
-      "CREATE UNIQUE INDEX idx_tg_links_tgid ON telegram_links (telegram_user_id)",
+      "CREATE UNIQUE INDEX idx_tg_links_user_active ON telegram_links (user) WHERE active = 1",
+      "CREATE UNIQUE INDEX idx_tg_links_tgid_active ON telegram_links (telegram_user_id) WHERE active = 1",
+      "CREATE INDEX idx_tg_links_user ON telegram_links (user)",
+      "CREATE INDEX idx_tg_links_tgid ON telegram_links (telegram_user_id)",
     ];
     app.save(links);
 
@@ -37,6 +44,10 @@ migrate(
     codes.fields.add(new AutodateField({ name: "created", onCreate: true }));
     codes.indexes = [
       "CREATE UNIQUE INDEX idx_tg_codes_mac ON telegram_pair_codes (code_mac)",
+      // DB invariant: her PB user için EN FAZLA BİR kullanılmamış (current) kod. Boş DateField
+      // SQLite'ta '' saklanır (probe ile doğrulandı) → yeni kod üretmeden önce eskiyi used
+      // işaretlemek zorunlu; keyfi 500 limitine korrektlik bağımlılığı kalmaz.
+      "CREATE UNIQUE INDEX idx_tg_codes_user_unused ON telegram_pair_codes (user) WHERE used_at = ''",
       "CREATE INDEX idx_tg_codes_user ON telegram_pair_codes (user)",
       "CREATE INDEX idx_tg_codes_exp ON telegram_pair_codes (expires_at)",
     ];

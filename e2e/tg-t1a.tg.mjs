@@ -142,6 +142,79 @@ test("TG-A22/A23 browser status + unlink own only", async () => {
   expect((await adminList("telegram_links", `user = "${a.id}" && active = true`)).length).toBe(0);
 });
 
+// ---- F1: active-link uniqueness / relink lifecycle ----
+test("TG-F01 A links TG-X → exactly one active link (A,X)", async () => {
+  const a = await authUser(RT.userA); const X = nextTgid();
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(a.token) })).status).toBe(200);
+  const active = await adminList("telegram_links", `active = true`);
+  expect(active.length).toBe(1);
+  expect(active[0].user).toBe(a.id);
+  expect(active[0].telegram_user_id).toBe(X);
+});
+test("TG-F02 A unlink → no active link remains (inactive history kept, reserves nothing)", async () => {
+  const a = await authUser(RT.userA); const X = nextTgid();
+  await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(a.token) });
+  await fetch(BASE + "/api/tg/user/unlink", { method: "POST", headers: { Authorization: a.token, "Content-Type": "application/json" }, body: "{}" });
+  expect((await adminList("telegram_links", `active = true`)).length).toBe(0);
+  expect((await adminList("telegram_links", `user = "${a.id}"`)).length).toBe(1); // pasif tarihsel satır duruyor
+});
+test("TG-F03 B can link SAME TG-X after A explicitly unlinked (no perpetual reservation)", async () => {
+  const a = await authUser(RT.userA), b = await authUser(RT.userB); const X = nextTgid();
+  await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(a.token) });
+  await fetch(BASE + "/api/tg/user/unlink", { method: "POST", headers: { Authorization: a.token, "Content-Type": "application/json" }, body: "{}" });
+  const r = await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(b.token) });
+  expect(r.status).toBe(200); // ESKİDEN 400 validation_not_unique → artık başarılı devir
+  const active = await adminList("telegram_links", `active = true`);
+  expect(active.length).toBe(1);
+  expect(active[0].user).toBe(b.id);
+  expect(active[0].telegram_user_id).toBe(X);
+});
+test("TG-F04 A can relink TG-X after unlink (fresh active row, not reactivated history)", async () => {
+  const a = await authUser(RT.userA); const X = nextTgid();
+  await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(a.token) });
+  await fetch(BASE + "/api/tg/user/unlink", { method: "POST", headers: { Authorization: a.token, "Content-Type": "application/json" }, body: "{}" });
+  const r = await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(a.token) });
+  expect(r.status).toBe(200);
+  const active = await adminList("telegram_links", `user = "${a.id}" && active = true`);
+  expect(active.length).toBe(1);
+  expect(active[0].telegram_user_id).toBe(X);
+});
+test("TG-F05 two users cannot simultaneously own same TG-X; concurrent → controlled, exactly one active, no 5xx", async () => {
+  const a = await authUser(RT.userA), b = await authUser(RT.userB); const X = nextTgid();
+  const codeA = await pairCode(a.token), codeB = await pairCode(b.token);
+  const rs = await Promise.all([
+    svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: codeA }),
+    svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: codeB }),
+  ]);
+  expect(rs.filter((r) => r.status === 200).length).toBe(1); // tam olarak biri kazanır
+  for (const r of rs) expect(r.status).toBeLessThan(500);    // ham 5xx YOK — kontrollü 400/409
+  expect((await adminList("telegram_links", `active = true && telegram_user_id = "${X}"`)).length).toBe(1);
+});
+test("TG-F06 one PB user cannot hold two simultaneous active Telegram IDs", async () => {
+  const a = await authUser(RT.userA); const X = nextTgid(), Y = nextTgid();
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: X, code: await pairCode(a.token) })).status).toBe(200);
+  const r = await svc("/api/tg/service/pair-consume", { telegram_user_id: Y, code: await pairCode(a.token) });
+  expect(r.status).toBe(400); // user zaten aktif başka tgid'e bağlı
+  const active = await adminList("telegram_links", `user = "${a.id}" && active = true`);
+  expect(active.length).toBe(1);
+  expect(active[0].telegram_user_id).toBe(X);
+});
+test("TG-F07 nonce 401 is tied to ACTUAL existence (replay), not blanket auth-fail", async () => {
+  const ts = Math.floor(Date.now() / 1000), nonce = "cls-" + crypto.randomBytes(8).toString("hex");
+  expect((await svc("/api/tg/service/state/get", {}, { ts, nonce })).status).toBe(200);
+  expect((await adminList("telegram_service_requests", `nonce = "${nonce}"`)).length).toBe(1);
+  const replay = await svc("/api/tg/service/state/get", {}, { ts, nonce });
+  expect(replay.status).toBe(401);                                                        // gerçek replay
+  expect((await adminList("telegram_service_requests", `nonce = "${nonce}"`)).length).toBe(1); // phantom kayıt yok
+  expect((await svc("/api/tg/service/state/get", {}, { ts, nonce: "cls-" + crypto.randomBytes(8).toString("hex") })).status).toBe(200); // auth global bozulmadı
+});
+test("TG-F08 concurrent pair-code generation → at most one UNUSED code per user (DB invariant)", async () => {
+  const a = await authUser(RT.userA);
+  await Promise.all([pairCode(a.token), pairCode(a.token), pairCode(a.token)]);
+  const all = await adminList("telegram_pair_codes", `user = "${a.id}"`);
+  expect(all.filter((r) => !r.used_at).length).toBeLessThanOrEqual(1); // ≤1 kullanılmamış
+});
+
 // ---- data + revision immutability ----
 test("TG-A24 unlinked service data rejected", async () => { expect((await svc("/api/tg/service/data", { telegram_user_id: nextTgid() })).status).toBe(401); });
 test("TG-A25/A26 linked service data resolves PB identity server-side; personal-only", async () => {
@@ -287,6 +360,16 @@ test("TG-R06 UPGRADE migration gate: apply 1735000400 onto DB with prior data �
     expect(w.status).toBe(200);
     const before = await (await fetch(B + `/api/collections/users/records/${auth.record.id}`, { headers: { Authorization: auth.token } })).json();
     expect(before.revision).toBe(1);
+    // F3: GERÇEK haneler kaydı seed et — data marker + revision + member relation → yükseltme
+    // sonrası TAM olarak değişmediğini kanıtla (sadece users değil).
+    const hc = await fetch(B + "/api/collections/haneler/records", { method: "POST", headers: { Authorization: auth.token, "Content-Type": "application/json" }, body: JSON.stringify({ kod: "UPHANE", ad: "Up Hane", members: [auth.record.id], data: {} }) });
+    expect(hc.ok, "hane create").toBe(true);
+    const hane = await hc.json();
+    const hseed = { note: "UPGRADE-HANE-MARK", ortak: [{ id: "h1", tutar: 99 }] };
+    const hw = await fetch(B + "/api/findata/kaydet", { method: "POST", headers: { Authorization: auth.token, "Content-Type": "application/json" }, body: JSON.stringify({ haneId: hane.id, baseRevision: 0, data: hseed }) });
+    expect(hw.status).toBe(200);
+    const hbefore = await (await fetch(B + `/api/collections/haneler/records/${hane.id}`, { headers: { Authorization: auth.token } })).json();
+    expect(hbefore.revision).toBe(1);
     execSync(`docker rm -f ${C}`, { stdio: "ignore" });
 
     // UPGRADE: aynı data dir, TAM migrations (1735000400 dahil) → yeni migration uygulanır.
@@ -304,9 +387,16 @@ test("TG-R06 UPGRADE migration gate: apply 1735000400 onto DB with prior data �
     const after = await (await fetch(B + `/api/collections/users/records/${auth.record.id}`, { headers: { Authorization: admTok } })).json();
     expect(after.revision).toBe(before.revision);
     expect(JSON.stringify(after.data)).toBe(JSON.stringify(before.data));
-    // existing CAS endpoint still works (revision 1→2)
+    // prior haneler data/revision EXACT unchanged (F3)
+    const hafter = await (await fetch(B + `/api/collections/haneler/records/${hane.id}`, { headers: { Authorization: admTok } })).json();
+    expect(hafter.revision).toBe(hbefore.revision);
+    expect(JSON.stringify(hafter.data)).toBe(JSON.stringify(hbefore.data));
+    // existing CAS endpoint still works — users (revision 1→2) ve haneler (revision 1→2)
     const w2 = await fetch(B + "/api/findata/kaydet", { method: "POST", headers: { Authorization: auth.token, "Content-Type": "application/json" }, body: JSON.stringify({ baseRevision: 1, data: { ...seed, extra: true } }) });
     expect(w2.status).toBe(200);
     expect((await w2.json()).revision).toBe(2);
+    const hw2 = await fetch(B + "/api/findata/kaydet", { method: "POST", headers: { Authorization: auth.token, "Content-Type": "application/json" }, body: JSON.stringify({ haneId: hane.id, baseRevision: 1, data: { ...hseed, extra: true } }) });
+    expect(hw2.status).toBe(200);
+    expect((await hw2.json()).revision).toBe(2);
   } finally { try { execSync(`docker rm -f ${C}`, { stdio: "ignore" }); } catch { /* */ } }
 });

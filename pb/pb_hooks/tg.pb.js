@@ -25,10 +25,17 @@ routerAdd("POST", "/api/tg/user/pair-code", (e) => {
   const expIso = T.isoAt(T.CODE_TTL_MS);
 
   e.app.runInTransaction((tx) => {
-    // R5: aynı user'ın TÜM kullanılmamış kodlarını deterministik geçersiz kıl (isZero — ambiguous
-    // null-filter DEĞİL). Limit 500 gerçekçi üstünde (her üretim öncekileri zaten geçersiz kılar).
-    const eski = tx.findRecordsByFilter("telegram_pair_codes", "user = {:u}", "-created", 500, 0, { u: auth.id });
-    for (const r of eski) { if (r.getDateTime("used_at").isZero()) { r.set("used_at", T.isoAt(0)); tx.save(r); } }
+    // R5+F: aynı user'ın TÜM kullanılmamış kodlarını geçersiz kıl — DETERMİNİSTİK TAM İTERASYON.
+    // Sayfa boyutu üzerinden offset ile tüm geçmiş taranır (keyfi 500 KORREKTLİK limiti YOK);
+    // used_at boşsa (isZero) used işaretlenir. DB invariant (partial unique WHERE used_at='')
+    // zaten ≤1 kullanılmamış kod garanti eder — iterasyon yine de eksiksizdir.
+    const SAYFA = 200;
+    for (let ofs = 0; ; ofs += SAYFA) {
+      const sayfa = tx.findRecordsByFilter("telegram_pair_codes", "user = {:u}", "created", SAYFA, ofs, { u: auth.id });
+      if (!sayfa.length) break;
+      for (const r of sayfa) { if (r.getDateTime("used_at").isZero()) { r.set("used_at", T.isoAt(0)); tx.save(r); } }
+      if (sayfa.length < SAYFA) break;
+    }
     const rec = new Record(tx.findCollectionByNameOrId("telegram_pair_codes"));
     rec.set("user", auth.id);
     rec.set("code_mac", codeMac);
@@ -76,36 +83,45 @@ routerAdd("POST", "/api/tg/service/pair-consume", (e) => {
   const codeMac = $security.hs256(code, pepper);
 
   let sonuc = null;
-  e.app.runInTransaction((tx) => {
-    let kod = null;
-    try { kod = tx.findFirstRecordByFilter("telegram_pair_codes", "code_mac = {:m}", { m: codeMac }); } catch (_) { kod = null; }
-    if (!kod) { sonuc = { hata: T.CODE_GENERIC }; return; }
-    if (!kod.getDateTime("used_at").isZero()) { sonuc = { hata: T.CODE_GENERIC }; return; }        // single-use
-    if (kod.getDateTime("expires_at").before(new DateTime())) { sonuc = { hata: T.CODE_GENERIC }; return; } // expiry
-    const userId = kod.get("user");
+  try {
+    e.app.runInTransaction((tx) => {
+      let kod = null;
+      try { kod = tx.findFirstRecordByFilter("telegram_pair_codes", "code_mac = {:m}", { m: codeMac }); } catch (_) { kod = null; }
+      if (!kod) { sonuc = { hata: T.CODE_GENERIC }; return; }
+      if (!kod.getDateTime("used_at").isZero()) { sonuc = { hata: T.CODE_GENERIC }; return; }        // single-use
+      if (kod.getDateTime("expires_at").before(new DateTime())) { sonuc = { hata: T.CODE_GENERIC }; return; } // expiry
+      const userId = kod.get("user");
 
-    let tgLink = null;
-    try { tgLink = tx.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); } catch (_) { tgLink = null; }
-    if (tgLink && tgLink.get("user") !== userId) { sonuc = { hata: "Bu Telegram hesabı başka bir kullanıcıya bağlı." }; return; }
+      // F1: YALNIZ AKTİF link'lere göre karar ver; keyfi bir pasif tarihsel satır YENİDEN KULLANILMAZ.
+      // Aktif link tgid'i BAŞKA bir user'a mı ait? → reddet (en fazla bir aktif link / tgid).
+      let tgActive = null;
+      try { tgActive = tx.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); } catch (_) { tgActive = null; }
+      if (tgActive && tgActive.get("user") !== userId) { sonuc = { hata: "Bu Telegram hesabı başka bir kullanıcıya bağlı." }; return; }
+      // User'ın aktif link'i BAŞKA bir tgid'e mi bağlı? → reddet (en fazla bir aktif link / user).
+      let userActive = null;
+      try { userActive = tx.findFirstRecordByFilter("telegram_links", "user = {:u} && active = true", { u: userId }); } catch (_) { userActive = null; }
+      if (userActive && String(userActive.get("telegram_user_id")) !== tgid) { sonuc = { hata: "Kullanıcı zaten başka bir Telegram hesabına bağlı." }; return; }
 
-    let uLink = null;
-    try { uLink = tx.findFirstRecordByFilter("telegram_links", "user = {:u}", { u: userId }); } catch (_) { uLink = null; }
-    if (uLink && uLink.get("active") && String(uLink.get("telegram_user_id")) !== tgid) {
-      sonuc = { hata: "Kullanıcı zaten başka bir Telegram hesabına bağlı." }; return;
-    }
-    if (!uLink) uLink = new Record(tx.findCollectionByNameOrId("telegram_links"));
-    uLink.set("user", userId);
-    uLink.set("telegram_user_id", tgid);
-    uLink.set("scope", "personal"); // T1 HARDCODE
-    uLink.set("active", true);
-    uLink.set("linked_at", T.isoAt(0));
-    uLink.set("unlinked_at", null);
-    tx.save(uLink);
+      // Idempotent: user zaten AYNI tgid'e aktif bağlıysa mevcut aktif satırı tazele; aksi halde
+      // YENİ aktif satır oluştur (pasif geçmiş satırlarını asla reaktive etme).
+      let link = userActive && String(userActive.get("telegram_user_id")) === tgid ? userActive : new Record(tx.findCollectionByNameOrId("telegram_links"));
+      link.set("user", userId);
+      link.set("telegram_user_id", tgid);
+      link.set("scope", "personal"); // T1 HARDCODE
+      link.set("active", true);
+      link.set("linked_at", T.isoAt(0));
+      link.set("unlinked_at", null);
+      tx.save(link); // partial unique (active) index backstop; yarış → constraint → dış catch
 
-    kod.set("used_at", T.isoAt(0)); // consume
-    tx.save(kod);
-    sonuc = { ok: true };
-  });
+      kod.set("used_at", T.isoAt(0)); // consume
+      tx.save(kod);
+      sonuc = { ok: true };
+    });
+  } catch (err) {
+    // Aktif-link partial unique index ihlali (nadir yarış) → KONTROLLÜ 409, ham 4xx/5xx DEĞİL.
+    // Kod tüketilmez (transaction rollback) → yeniden denenebilir.
+    return e.json(409, { message: "Bağlantı çakışması. Tekrar dene." });
+  }
   if (sonuc && sonuc.hata) return e.json(400, { message: sonuc.hata });
   return e.json(200, { ok: true, scope: "personal" });
 });

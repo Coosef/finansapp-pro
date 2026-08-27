@@ -73,7 +73,13 @@ function serviceAuth(e, path) {
     rec.set("expires_at", isoAt(NONCE_TTL_MS));
     e.app.save(rec);
   } catch (err) {
-    throw new UnauthorizedError("Nonce tekrar kullanıldı."); // replay
+    // F2: HER save hatasını replay/401 SAYMA. Yalnız nonce GERÇEKTEN varsa (unique çakışması
+    // veya eşzamanlı yarışta kaybeden) → replay 401. Aksi (bilinmeyen DB/validation/storage
+    // hatası) → orijinal hatayı YAY (yanlış kimlik-doğrulama sınıflandırması yok).
+    let exist = null;
+    try { exist = e.app.findFirstRecordByFilter("telegram_service_requests", "nonce = {:n}", { n: nonce }); } catch (_) { exist = null; }
+    if (exist) throw new UnauthorizedError("Nonce tekrar kullanıldı."); // gerçek replay
+    throw err; // gerçek DB/validation/storage hatası — sınıflandırma yok, ham hata yüzeye çıkar
   }
   return { body, tgid, ts };
 }
