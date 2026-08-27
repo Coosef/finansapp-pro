@@ -20,6 +20,7 @@ function navOku(uid) { try { return sessionStorage.getItem(NAV_KEY(uid)); } catc
 function navTemizle(uid) { try { sessionStorage.removeItem(NAV_KEY(uid)); } catch { /* yoksay */ } }
 import { oturumBaslat, oturumSurdur, oturumDokun, oturumTemizle, oturumDurum, IDLE_VARSAYILAN_DK, UYARI_ESIK_MS } from "./lib/oturum.js";
 import { bosVeri, tekrarlariUret, kurallariUygula, giderKategorileri, gelirKategorileri, hesabaUygula, hedefKatkilariUret, yaklasanOdemeler, donemFiltre, netGecmisGuncelle } from "./lib/finance.js";
+import { yatirimGuncelDeger, yatirimDegeri, nakitToplam, netVarlik, hesapNet as hesapNetHesap } from "./lib/ozet.js";
 import { maasGeliriUret, maasCiftGuard } from "./lib/maas.js";
 import { fiyatCek, configureAI, aiBildirimAyarla } from "./lib/ai.js";
 import { tryeCevir } from "./lib/parabirimi.js";
@@ -445,8 +446,9 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
   const accent = !rawAccent || ACCENT_ESKI.includes(rawAccent) ? "#C79A4B" : rawAccent;
 
   // ---- Tüm-zaman toplamlar (net varlık, hesaplar) ----
-  const guncelDeger = (y) => y.adet * (y.guncelFiyat || y.alisFiyati);
-  const yatirimDeger = findata.yatirimlar.reduce((s, y) => s + guncelDeger(y), 0);
+  // Net varlık/nakit/yatırım TEK doğruluk kaynağı lib/ozet.js'te (gateway ile ortak).
+  const guncelDeger = yatirimGuncelDeger;
+  const yatirimDeger = yatirimDegeri(findata);
   const yatirimMaliyet = findata.yatirimlar.reduce((s, y) => s + y.adet * y.alisFiyati, 0);
   const yatirimKar = yatirimDeger - yatirimMaliyet;
   const toplamGelirTum = findata.gelirler.reduce((s, x) => s + x.miktar, 0);
@@ -455,12 +457,10 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
   // Net nakit/varlık: HESAP VARSA gerçek bakiyelerden (varlık − kart borcu);
   // hesap yoksa eski akış modeline (gelir − gider) düşülür. Böylece ekstreden
   // gelen ama başka hesaba aktarılan para "elimde varmış" gibi görünmez.
-  const hesapVarlik = (findata.hesaplar || []).filter((h) => h.tip !== "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
-  const hesapBorc = (findata.hesaplar || []).filter((h) => h.tip === "kart").reduce((s, h) => s + (+h.bakiye || 0), 0);
-  const hesapNet = hesapVarlik - hesapBorc;
   const hesapVarMi = (findata.hesaplar || []).length > 0;
-  const nakitTum = hesapVarMi ? hesapNet : toplamGelirTum - toplamGiderTum - toplamAbonelik;
-  const netDeger = nakitTum + yatirimDeger;
+  const hesapNetTum = hesapNetHesap(findata);
+  const nakitTum = nakitToplam(findata);
+  const netDeger = netVarlik(findata);
 
   // Net varlık geçmişini günlük besle (grafik zamanla dolsun) — açılışta bir kez
   const netKaydedildi = useRef(false);
@@ -485,7 +485,7 @@ function Uygulama({ user, findata, setFindata, tab, setTab, dark, onLogout, senk
   const toplamGelir = fd.gelirler.reduce((s, x) => s + x.miktar, 0);
   const toplamGider = fd.giderler.reduce((s, x) => s + x.miktar, 0);
   // "Net Nakit" kartı: hesap varsa gerçek bakiye, yoksa dönem akışı
-  const nakit = hesapVarMi ? hesapNet : toplamGelir - toplamGider - toplamAbonelik;
+  const nakit = hesapVarMi ? hesapNetTum : toplamGelir - toplamGider - toplamAbonelik;
 
   const bildirimTimer = useRef(null);
   function bildir(msg, tip = "ok", action = null) {

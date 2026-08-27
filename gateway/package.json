@@ -1,0 +1,12 @@
+{
+  "name": "finansapp-telegram-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FinansApp Telegram Finance Gateway (T1B) — read-only, outbound long-poll, HMAC to PocketBase.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/"
+  }
+}

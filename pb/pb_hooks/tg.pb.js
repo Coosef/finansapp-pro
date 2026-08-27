@@ -118,9 +118,18 @@ routerAdd("POST", "/api/tg/service/pair-consume", (e) => {
       sonuc = { ok: true };
     });
   } catch (err) {
-    // Aktif-link partial unique index ihlali (nadir yarış) → KONTROLLÜ 409, ham 4xx/5xx DEĞİL.
-    // Kod tüketilmez (transaction rollback) → yeniden denenebilir.
-    return e.json(409, { message: "Bağlantı çakışması. Tekrar dene." });
+    // T1B error taxonomy: GERÇEK active-link uniqueness yarışı mı, İLGİSİZ operasyonel hata mı?
+    // Re-query ile sınıflandır (F2 nonce deseniyle aynı): bu tgid'e BAŞKA user aktif bağlı VEYA
+    // kodun user'ı BAŞKA tgid'e aktif bağlıysa → yarış → KONTROLLÜ 409 (kod tüketilmez, retry).
+    // Aksi (bilinmeyen DB/storage/operasyonel hata) → YAY: conflict diye YANLIŞ sınıflandırma
+    // YOK; transaction rollback + fail-closed davranışı korunur.
+    let cakisma = false;
+    let uid2 = null;
+    try { const kod2 = e.app.findFirstRecordByFilter("telegram_pair_codes", "code_mac = {:m}", { m: codeMac }); uid2 = kod2 ? kod2.get("user") : null; } catch (_) { uid2 = null; }
+    try { const tgA = e.app.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); if (tgA && tgA.get("user") !== uid2) cakisma = true; } catch (_) { /* yok */ }
+    if (uid2) { try { const uA = e.app.findFirstRecordByFilter("telegram_links", "user = {:u} && active = true", { u: uid2 }); if (uA && String(uA.get("telegram_user_id")) !== tgid) cakisma = true; } catch (_) { /* yok */ } }
+    if (cakisma) return e.json(409, { message: "Bağlantı çakışması. Tekrar dene." });
+    throw err; // ilgisiz hata — yanlış 409 sınıflandırması YOK
   }
   if (sonuc && sonuc.hata) return e.json(400, { message: sonuc.hata });
   return e.json(200, { ok: true, scope: "personal" });
