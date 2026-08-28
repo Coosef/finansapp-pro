@@ -31,6 +31,9 @@ export function tgIstemci({ apiBase, botToken, fetchImpl = fetch }) {
     if (r.ok && r.json && r.json.ok === true) return r.json.result;
     const { kod, desc, retryAfter } = kodDesc(r);
     if (kod === 401) throw new FatalConfigError(`Telegram ${metot} yetkisiz (geçersiz bot token): ${desc}`);
+    // F4: getUpdates 409 = webhook conflict. Bu gateway long-poll-only; webhook YASAK →
+    // yapılandırma çatışması. Sessiz sonsuz retry YOK → FatalConfigError (fail-closed).
+    if (kod === 409) throw new FatalConfigError(`Telegram ${metot} 409 (webhook conflict — gateway long-poll-only): ${desc}`);
     if (kod === 429) throw new TransientError(`Telegram ${metot} 429`, retryAfter ? retryAfter * 1000 : 1000);
     throw new TransientError(`Telegram ${metot} ${kod}: ${desc}`); // 5xx + diğer 4xx → geçici (token içermez)
   }

@@ -10,7 +10,7 @@
 // ============================================================
 import { offsetSayi } from "./telegram.js";
 import { isle } from "./router.js";
-import { FatalConfigError, TransientError, PermanentUpdateError, UserInputError } from "./errors.js";
+import { FatalConfigError, TransientError, PermanentUpdateError, UserInputError, LeaseConflictError } from "./errors.js";
 
 // Tek update: claim → işle → complete. Dönüş: {done|duplicate|busy|permanent|failed(+transient)}.
 export async function updateIsle(u, deps) {
@@ -39,6 +39,10 @@ async function hataYonet(e, u, uid, leaseToken, deps) {
   const { pb, tg } = deps;
   if (e instanceof FatalConfigError) throw e; // → fail-closed exit (offset dokunulmaz)
 
+  // F1: complete 409 (fencing kaybı) — done DEĞİL, offset varsayımı YOK, complete(failed)
+  // DENENMEZ (lease bizde değil). failed döner → batch durur → bounded backoff (üst döngü).
+  if (e instanceof LeaseConflictError) return { failed: true, transient: e };
+
   if (e instanceof UserInputError) {
     // Güvenli deterministik yanıt; başarılı gönderim → done. Gönderim hatası → alt sınıfa düş.
     try {
@@ -48,8 +52,8 @@ async function hataYonet(e, u, uid, leaseToken, deps) {
     } catch (e2) { return await hataYonet(e2, u, uid, leaseToken, deps); }
   }
   if (e instanceof PermanentUpdateError) { // teslim edilemez / güvenle yok say → done
-    await pb.updateComplete(uid, leaseToken);
-    return { permanent: true };
+    try { await pb.updateComplete(uid, leaseToken); return { permanent: true }; }
+    catch (e2) { return await hataYonet(e2, u, uid, leaseToken, deps); } // complete hatası da sınıflandırılır
   }
   // TransientError (veya beklenmeyen) → failed; offset İLERLEMEZ. complete(failed) de başarısızsa
   // lease expiry reclaim eder. Backoff üst döngüde (transient geri döner).
@@ -70,7 +74,9 @@ export async function pollOnce(deps) {
     const r = await updateIsle(u, deps);
     if (r.done || r.permanent) islenmis++;
     if (r.failed) { transient = r.transient; break; }   // tamamlanmayanın ötesine geçme + backoff sinyali
-    if (r.busy) break;
+    // F3: busy (aktif/stale lease) → sıra korunur, sonraki update İŞLENMEZ ve üst döngü
+    // bounded backoff uygular (temiz poll gibi reset YOK) → hot-loop yok, keyfi skip yok.
+    if (r.busy) { transient = new TransientError(`update ${u.update_id} claim busy (aktif lease)`); break; }
   }
   return { adet: (updates || []).length, islenmis, transient };
 }

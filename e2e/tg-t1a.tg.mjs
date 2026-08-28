@@ -229,7 +229,25 @@ test("TG-S01 service/status: HMAC gerekli; linked/unlinked; finansal veri/user-i
 });
 
 // ---- data + revision immutability ----
-test("TG-A24 unlinked service data rejected", async () => { expect((await svc("/api/tg/service/data", { telegram_user_id: nextTgid() })).status).toBe(401); });
+// F2-05: GERÇEK "bağlı değil" = İŞ yanıtı 404 + sabit payload (401/403 YALNIZ servis HMAC/auth için).
+test("TG-A24/F2-05 unlinked service data → business 404 {error:not_linked} (401 değil)", async () => {
+  const r = await svc("/api/tg/service/data", { telegram_user_id: nextTgid() });
+  expect(r.status).toBe(404);
+  expect(r.json.error).toBe("not_linked");
+});
+// F2-03: service/unlink — gerçek "link yok" → idempotent 200; aktif link → save sonrası 200 + pasif.
+test("TG-F08/F2-03 service/unlink idempotent (no-link 200) + gerçek unlink 200 sonrası pasif", async () => {
+  const r0 = await svc("/api/tg/service/unlink", { telegram_user_id: nextTgid() }); // hiç link yok
+  expect(r0.status).toBe(200); expect(r0.json.ok).toBe(true);
+  const a = await authUser(RT.userA); const tg = nextTgid();
+  await svc("/api/tg/service/pair-consume", { telegram_user_id: tg, code: await pairCode(a.token) });
+  const r1 = await svc("/api/tg/service/unlink", { telegram_user_id: tg });
+  expect(r1.status).toBe(200);
+  const s = await svc("/api/tg/service/status", { telegram_user_id: tg });
+  expect(s.json.linked).toBe(false); // gerçekten pasifleşti (yalan 200 değil)
+  const r2 = await svc("/api/tg/service/unlink", { telegram_user_id: tg }); // tekrar → idempotent
+  expect(r2.status).toBe(200);
+});
 test("TG-A25/A26 linked service data resolves PB identity server-side; personal-only", async () => {
   const a = await authUser(RT.userA); const tg = nextTgid();
   await svc("/api/tg/service/pair-consume", { telegram_user_id: tg, code: await pairCode(a.token) });

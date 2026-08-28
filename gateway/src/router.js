@@ -45,11 +45,12 @@ export async function isle(update, deps) {
 
   // /status ile bağlı mı? (metadata; finansal veri YOK) — R8.
   const bagliMi = async () => (await pb.statusGet(tgid)).linked;
-  // Finansal veri getir (YALNIZ finansal komutlar). 401 → bağlı değil.
+  // Finansal veri getir (YALNIZ finansal komutlar). F2: 404 → GERÇEKTEN bağlı değil (iş yanıtı);
+  // 401/403 auth-drift pb.getData'da Fatal fırlar → ASLA "Önce hesabını bağla" olarak raporlanmaz.
   async function findataGetir() {
     const r = await pb.getData(tgid);
-    if (r.status === 200 && r.json) return r.json;
-    await gonder(M.bagliDegilMesaji());
+    if (r.status === 200) return r.json;
+    await gonder(M.bagliDegilMesaji()); // yalnız 404 buraya ulaşır (diğer her şey throw)
     return null;
   }
 
@@ -79,9 +80,9 @@ export async function isle(update, deps) {
         await gonder(M.linkHataMesaji(r.json && r.json.message));
         return { ok: "link_bad" };
       }
-      // beklenmeyen 2xx/4xx → güvenli fallback
-      await gonder(M.linkHataMesaji());
-      return { ok: "link_unexpected" };
+      // F1: pb.pairConsume yalnız 200/400/409/429 döndürür; başka durum orada AÇIK HATA olarak
+      // fırlar (fallback-done YOK) → buraya ulaşılamaz.
+      throw new Error("pairConsume sözleşme dışı durum"); // savunma; erişilemez
     }
     case "/unlink":
       await pb.unlink(tgid);                               // 5xx→Transient throw → yalan yok (R7)

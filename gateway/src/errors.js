@@ -13,6 +13,12 @@ export class TransientError extends Error {
   // retryAfterMs: 429 gibi durumlarda sunucunun istediği bekleme (ms). Yoksa null → exp backoff.
   constructor(msg, retryAfterMs = null) { super(msg); this.name = "TransientError"; this.retryAfterMs = retryAfterMs; }
 }
+// F1: update/complete 409 (no_claim | not_processing | lease_mismatch) — fencing kaybı.
+// ASLA başarı/done değildir; batch durur, offset ilerlemez, bounded backoff (Transient alt sınıfı).
+// complete(failed) DENENMEZ (lease zaten bizde değil).
+export class LeaseConflictError extends TransientError {
+  constructor(msg) { super(msg); this.name = "LeaseConflictError"; }
+}
 export class PermanentUpdateError extends Error {
   constructor(msg) { super(msg); this.name = "PermanentUpdateError"; }
 }

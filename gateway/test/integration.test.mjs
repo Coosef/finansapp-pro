@@ -1,7 +1,9 @@
 // Gateway ENTEGRASYON — GERÇEK PocketBase 0.39.10 (docker, T1A şeması) + FAKE Telegram.
 // Gerçek gateway istemcileri (HMAC pb + tg) ve loop. Kapsam: /link e2e + W5 crash-window,
 // komut e2e, READ-ONLY (revision sabit + kaydet/users-PATCH=0), duplicate, crash→reclaim,
-// durable offset, /status metadata, private-chat + not-linked, group=zero-mutation.
+// durable offset, /status metadata, private-chat + not-linked, group=zero-mutation,
+// F1 lease fencing (gerçek complete 409), F2 enjekte DB hatası (tablo rename → 500; yanlış
+// linked:false / yalan unlink 200 YOK).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -23,7 +25,12 @@ const BOT_TOKEN = "123456:TEST-" + crypto.randomBytes(6).toString("hex");
 const TGID = "555000111";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let ADMIN = "", USER = null, pb = null, tg = null, fake = null, fetchLog = [];
+let ADMIN = "", USER = null, pb = null, tg = null, fake = null, fetchLog = [], DD = "";
+
+async function pbBekle(maxSn = 60) {
+  for (let i = 0; i < maxSn; i++) { try { if ((await fetch(PB + "/api/health")).ok) return; } catch { /* */ } await sleep(1000); }
+  assert.fail("PB sağlık bekleme zaman aşımı");
+}
 
 function fakeTelegram() {
   const state = { updates: [], sent: [] };
@@ -57,10 +64,9 @@ const FINDATA = {
 
 before(async () => {
   try { execSync(`docker rm -f ${C}`, { stdio: "ignore" }); } catch { /* */ }
-  const dd = mkdtempSync(join(tmpdir(), "gw-it-"));
-  execSync(`docker run -d --name ${C} -p ${PORT}:8090 -e TG_GATEWAY_SECRET=${GW} -e TG_PAIRING_PEPPER=${PEP} -v "${REPO}/pb/pb_hooks:/pb_hooks" -v "${REPO}/pb/pb_migrations:/pb_migrations" -v "${dd}:/pb_data" ghcr.io/muchobien/pocketbase:0.39.10 serve --http=0.0.0.0:8090 --dir=/pb_data --migrationsDir=/pb_migrations --hooksDir=/pb_hooks`, { stdio: "ignore" });
-  let up = false; for (let i = 0; i < 40; i++) { try { if ((await fetch(PB + "/api/health")).ok) { up = true; break; } } catch { /* */ } await sleep(1000); }
-  assert.ok(up, "PB boot");
+  DD = mkdtempSync(join(tmpdir(), "gw-it-"));
+  execSync(`docker run -d --name ${C} -p ${PORT}:8090 -e TG_GATEWAY_SECRET=${GW} -e TG_PAIRING_PEPPER=${PEP} -v "${REPO}/pb/pb_hooks:/pb_hooks" -v "${REPO}/pb/pb_migrations:/pb_migrations" -v "${DD}:/pb_data" ghcr.io/muchobien/pocketbase:0.39.10 serve --http=0.0.0.0:8090 --dir=/pb_data --migrationsDir=/pb_migrations --hooksDir=/pb_hooks`, { stdio: "ignore" });
+  await pbBekle(40);
   const adminPass = "gw-adm-" + crypto.randomBytes(6).toString("hex");
   execSync(`docker exec ${C} /usr/local/bin/pocketbase superuser upsert gw-admin@t.test ${adminPass} --dir=/pb_data`, { stdio: "ignore" });
   ADMIN = (await (await fetch(PB + "/api/collections/_superusers/auth-with-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identity: "gw-admin@t.test", password: adminPass }) })).json()).token;
@@ -144,7 +150,7 @@ test("GI7 private-chat + not-linked (gerçek path)", async () => {
   await updateIsle(msg(4000, "/bakiye", { type: "group" }), deps());
   assert.match(fake.state.sent.at(-1).text, /özel sohbet/);
   fake.state.sent.length = 0;
-  await updateIsle(msg(4001, "/bakiye", { fromId: "999888777" }), deps()); // linksiz → /data 401
+  await updateIsle(msg(4001, "/bakiye", { fromId: "999888777" }), deps()); // linksiz → /data 404 (F2 iş yanıtı)
   assert.match(fake.state.sent.at(-1).text, /Önce hesabını bağla/);
 });
 test("GI8 /status endpoint metadata-only (linked/scope; fin data/id YOK)", async () => {
@@ -183,6 +189,49 @@ test("W5 commit-then-reply crash: pair-consume commit → reply crash → replay
   assert.match(crashTg.sent.at(-1).t, /tamamlandı/);
   assert.doesNotMatch(crashTg.sent.at(-1).t, /geçersiz/);
   assert.equal((await adminList("telegram_links", `telegram_user_id = "${TGID}" && active = true`)).length, 1); // duplicate YOK
+});
+test("F1-01R real-PB fencing: complete 409 lease_mismatch → done DEĞİL, sonraki update claim edilmez, offset SABİT", async () => {
+  const offsetOnce = (await pb.stateGet()).next_offset;
+  const hijackTg = {
+    getUpdates: async () => [msg(9000, "/help"), msg(9001, "/help")],
+    sendMessage: async () => { // reply sırasında lease BAŞKA claimant'a geçer → gerçek 409 fencing
+      const row = (await adminList("telegram_updates", `update_id = "9000"`))[0];
+      await adminPatch("telegram_updates", row.id, { lease_token: "HIJACK-" + crypto.randomBytes(8).toString("hex") });
+      return { message_id: 1 };
+    },
+  };
+  const r = await pollOnce({ pb, tg: hijackTg, pollTimeout: 1, bugunStr: "2026-08-27" });
+  assert.equal(r.islenmis, 0);                                                          // done/permanent YOK
+  assert.ok(r.transient);                                                               // batch durdu + backoff sinyali
+  assert.equal((await adminList("telegram_updates", `update_id = "9001"`)).length, 0);  // sonraki update claim EDİLMEDİ
+  assert.notEqual((await adminList("telegram_updates", `update_id = "9000"`))[0].status, "done");
+  assert.equal((await pb.stateGet()).next_offset, offsetOnce);                          // offset-success varsayımı YOK
+});
+test("F2-02/F2-04 enjekte DB hatası (tablo rename): status ASLA linked:false; unlink ASLA yalan 200; finansal komut done OLMAZ", async () => {
+  // Seçici operasyonel hata: telegram_links tablosunu PB DIŞINDA yeniden adlandır → link sorguları
+  // gerçek DB hatası üretir (HMAC/nonce tabloları sağlam → auth geçer, hata link katmanında).
+  const { DatabaseSync } = await import("node:sqlite");
+  const chmodDD = () => execSync(`docker run --rm --entrypoint /bin/sh -v "${DD}:/d" ghcr.io/muchobien/pocketbase:0.39.10 -c "chmod -R a+rwX /d"`, { stdio: "ignore" });
+  const rename = (from, to) => { const db = new DatabaseSync(join(DD, "data.db")); db.exec(`ALTER TABLE ${from} RENAME TO ${to}`); db.close(); };
+  execSync(`docker stop -t 20 ${C}`, { stdio: "ignore" });
+  chmodDD();
+  rename("telegram_links", "telegram_links_broken");
+  execSync(`docker start ${C}`, { stdio: "ignore" });
+  await pbBekle();
+  try {
+    await assert.rejects(() => pb.statusGet(TGID), TransientError);      // F2-02: 500 → Transient, {linked:false} DEĞİL
+    await assert.rejects(() => pb.unlink(TGID), TransientError);         // F2-04: yalan 200/ok YOK
+    const r = await updateIsle(msg(9500, "/bakiye"), deps());            // finansal komut DB hatasında
+    assert.equal(r.failed, true);                                        // done DEĞİL → offset ilerlemez
+    assert.notEqual((await adminList("telegram_updates", `update_id = "9500"`))[0].status, "done");
+  } finally {
+    execSync(`docker stop -t 20 ${C}`, { stdio: "ignore" });
+    chmodDD();
+    rename("telegram_links_broken", "telegram_links");
+    execSync(`docker start ${C}`, { stdio: "ignore" });
+    await pbBekle();
+  }
+  assert.equal((await pb.statusGet("999000999")).linked, false);         // restore doğrulama (gerçek no-link)
 });
 test("R16 outbound: /api/findata/kaydet = 0 ve users generic PATCH = 0 (tüm koşu boyunca)", () => {
   const kaydet = fetchLog.filter((f) => f.url.includes("/api/findata/kaydet"));

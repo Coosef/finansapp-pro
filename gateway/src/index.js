@@ -8,7 +8,7 @@ import { yapilandir } from "./config.js";
 import { pbIstemci } from "./pb.js";
 import { tgIstemci } from "./telegram.js";
 import { runLoop } from "./loop.js";
-import { preflight } from "./startup.js";
+import { preflightBekle } from "./startup.js";
 import { kalpAtisiBaslat } from "./health.js";
 import { makeBackoff } from "./backoff.js";
 
@@ -22,10 +22,19 @@ async function main() {
   const pb = pbIstemci({ pbUrl: cfg.pbUrl, gwSecret: cfg.gwSecret, pbTimeoutMs: cfg.pbTimeoutMs, signal: ac.signal });
   const tg = tgIstemci({ apiBase: cfg.tgApiBase, botToken: cfg.botToken });
 
-  // R3: PREFLIGHT — healthy heartbeat YAZMADAN önce. Başarısız → fail-closed exit.
+  // F4: abort-uyanır uyku — shutdown sinyali backoff beklemesini DERHAL keser (startup + runtime).
+  const uyku = (ms) => new Promise((res) => {
+    const t = setTimeout(res, ms);
+    ac.signal.addEventListener("abort", () => { clearTimeout(t); res(); }, { once: true });
+  });
+  const backoff = makeBackoff({ sleep: uyku });
+
+  // R3/F4: PREFLIGHT — healthy heartbeat YAZMADAN önce. Geçici (ağ/5xx/429) → bounded backoff ile
+  // tekrar (süreç ayakta); FatalConfig (token/HMAC/config/webhook-conflict) → fail-closed exit.
   log(`preflight · build ${cfg.buildSha} · PB ${cfg.pbUrl}`);
   try {
-    await preflight({ pb, tg, signal: ac.signal });
+    const tamam = await preflightBekle({ pb, tg, signal: ac.signal, backoff, log });
+    if (!tamam) { log("kapanış sinyali (preflight sırasında) → temiz çıkış"); process.exit(0); }
   } catch (e) {
     console.error(`[tg-gateway] preflight fail-closed: ${e.message}`); // token/secret İÇERMEZ
     process.exit(1);
@@ -33,7 +42,7 @@ async function main() {
   log("preflight OK → long-poll başlıyor (read-only)");
 
   const durdurKalp = kalpAtisiBaslat(cfg.heartbeatFile); // R13: preflight SONRASI event-loop heartbeat
-  const backoff = makeBackoff({});
+  backoff.reset(); // startup denemeleri runtime backoff'unu şişirmesin
   try {
     await runLoop({ pb, tg, log, backoff, signal: ac.signal, pollTimeout: cfg.pollTimeout, pollLimit: cfg.pollLimit, dur: () => ac.signal.aborted });
     durdurKalp();

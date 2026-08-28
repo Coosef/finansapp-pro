@@ -6,14 +6,14 @@ import { readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isle, komutCoz } from "../src/router.js";
-import { updateIsle, pollOnce } from "../src/loop.js";
+import { updateIsle, pollOnce, runLoop } from "../src/loop.js";
 import { makeBackoff } from "../src/backoff.js";
 import { tgIstemci, offsetSayi } from "../src/telegram.js";
 import { pbIstemci } from "../src/pb.js";
-import { preflight } from "../src/startup.js";
+import { preflight, preflightBekle } from "../src/startup.js";
 import { yapilandir } from "../src/config.js";
 import { kalpAtisiBaslat } from "../src/health.js";
-import { FatalConfigError, TransientError, PermanentUpdateError, UserInputError } from "../src/errors.js";
+import { FatalConfigError, TransientError, PermanentUpdateError, UserInputError, LeaseConflictError } from "../src/errors.js";
 import * as M from "../src/messages.js";
 
 const FINDATA = {
@@ -36,7 +36,7 @@ function fakePb(o = {}) {
     calls,
     stateGet: async () => { rec("stateGet"); if (o.stateGet) return o.stateGet(); return { next_offset: o.nextOffset ?? "" }; },
     statusGet: async (t) => { rec("statusGet", t); if (o.statusGet) return o.statusGet(t); return { linked: o.linked ?? true, scope: "personal" }; },
-    getData: async (t) => { rec("getData", t); if (o.getData) return o.getData(t); return o.dataStatus === 401 ? { status: 401, json: null } : { status: 200, json: { data: o.data ?? FINDATA, revision: 1, updated: "2026-08-27 10:00:00", scope: "personal" } }; },
+    getData: async (t) => { rec("getData", t); if (o.getData) return o.getData(t); return o.dataStatus === 404 ? { status: 404, json: { error: "not_linked" } } : { status: 200, json: { data: o.data ?? FINDATA, revision: 1, updated: "2026-08-27 10:00:00", scope: "personal" } }; },
     pairConsume: async (t, c) => { rec("pairConsume", t, c); if (o.pairConsume) return o.pairConsume(t, c); return { status: o.pairStatus ?? 200, json: o.pairStatus === 400 ? { message: "Kod geçersiz veya süresi dolmuş." } : { ok: true } }; },
     unlink: async (t) => { rec("unlink", t); if (o.unlink) return o.unlink(t); return { ok: true }; },
     updateClaim: async (u) => { rec("claim", u); if (o.claim) return o.claim(u); return { status: 200, json: { claimed: true, lease_token: "L" + u } }; },
@@ -90,8 +90,8 @@ test("bottan mesaj işlenmez", async () => {
   const r = await isle(upd(1, "/bakiye", { isBot: true }), { pb, tg });
   assert.equal(r.skip, "from_bot"); assert.equal(tg.sent.length, 0);
 });
-test("bağlı değil → /bakiye 'önce bağlan'", async () => {
-  const tg = fakeTg(); const pb = fakePb({ dataStatus: 401 });
+test("bağlı değil (F2: /data 404 iş yanıtı) → /bakiye 'önce bağlan'", async () => {
+  const tg = fakeTg(); const pb = fakePb({ dataStatus: 404 });
   await isle(upd(1, "/bakiye"), { pb, tg });
   assert.match(tg.sent[0].text, /Önce hesabını bağla/);
 });
@@ -327,4 +327,180 @@ test("R16 heartbeat dosyası YALNIZ zaman damgası içerir (user/financial içer
   const icerik = readFileSync(f, "utf8");
   stop();
   assert.match(icerik, /^[0-9]+$/); // yalnız epoch ms
+});
+
+// ---- F1 strict PB endpoint contract ----
+const pbFetch = (status, json) => pbIstemci({ pbUrl: "http://pb", gwSecret: "s", fetchImpl: async () => ({ status, json: async () => json }) });
+test("F1 pb.updateComplete: 200 ok → başarı; 409 → LeaseConflictError (ASLA başarı); beklenmeyen → açık hata", async () => {
+  const ok = await pbFetch(200, { ok: true }).updateComplete(1, "L");
+  assert.equal(ok.status, 200);
+  await assert.rejects(() => pbFetch(409, { error: "lease_mismatch" }).updateComplete(1, "L"), LeaseConflictError);
+  await assert.rejects(() => pbFetch(409, { error: "no_claim" }).updateComplete(1, "L"), LeaseConflictError);
+  await assert.rejects(() => pbFetch(409, { error: "not_processing" }).updateComplete(1, "L", true), LeaseConflictError);
+  await assert.rejects(() => pbFetch(204, null).updateComplete(1, "L"), TransientError);      // beklenmeyen ≠ başarı
+  await assert.rejects(() => pbFetch(200, { ok: false }).updateComplete(1, "L"), TransientError);
+  await assert.rejects(() => pbFetch(503, {}).updateComplete(1, "L"), TransientError);
+  await assert.rejects(() => pbFetch(401, {}).updateComplete(1, "L"), FatalConfigError);
+});
+test("F1 pb.updateClaim: yalnız geçerli protokol yanıtı kabul; bozuk shape → açık hata", async () => {
+  assert.equal((await pbFetch(200, { claimed: true, lease_token: "L1" }).updateClaim(1)).json.claimed, true);
+  assert.equal((await pbFetch(200, { claimed: false, duplicate: true }).updateClaim(1)).json.duplicate, true);
+  assert.equal((await pbFetch(200, { claimed: false, busy: true }).updateClaim(1)).json.busy, true);
+  await assert.rejects(() => pbFetch(200, {}).updateClaim(1), TransientError);                 // shape yok
+  await assert.rejects(() => pbFetch(200, { claimed: true }).updateClaim(1), TransientError);  // lease_token yok
+  await assert.rejects(() => pbFetch(204, null).updateClaim(1), TransientError);
+});
+test("F1 pb.pairConsume: İŞ durumları 200/400/409/429; başka durum ASLA kullanıcı-başarısı değil", async () => {
+  for (const s of [200, 400, 409, 429]) assert.equal((await pbFetch(s, { message: "m" }).pairConsume("5", "C")).status, s);
+  await assert.rejects(() => pbFetch(204, null).pairConsume("5", "C"), TransientError);
+  await assert.rejects(() => pbFetch(302, null).pairConsume("5", "C"), TransientError);
+  await assert.rejects(() => pbFetch(503, {}).pairConsume("5", "C"), TransientError);
+  await assert.rejects(() => pbFetch(403, {}).pairConsume("5", "C"), FatalConfigError);
+});
+test("F2 pb.getData sözleşmesi: 200 payload; 404 bağlı-değil; 401/403 → Fatal; 5xx → Transient; diğer → açık hata", async () => {
+  assert.equal((await pbFetch(200, { data: {}, revision: 1 }).getData("5")).status, 200);
+  assert.equal((await pbFetch(404, { error: "not_linked" }).getData("5")).status, 404);
+  await assert.rejects(() => pbFetch(401, {}).getData("5"), FatalConfigError);
+  await assert.rejects(() => pbFetch(403, {}).getData("5"), FatalConfigError);
+  await assert.rejects(() => pbFetch(503, {}).getData("5"), TransientError);
+  await assert.rejects(() => pbFetch(200, { yanlis: 1 }).getData("5"), TransientError);        // bozuk 200 ≠ payload
+  await assert.rejects(() => pbFetch(302, null).getData("5"), TransientError);
+});
+test("F1-01 complete 409 fencing: done DEĞİL, sonraki update claim EDİLMEZ, complete(failed) denenmez", async () => {
+  const tg = { sent: [], getUpdates: async () => [upd(7000, "/help"), upd(7001, "/help")], sendMessage: async () => ({}) };
+  const pb = fakePb({ complete: () => { throw new LeaseConflictError("PB complete 409: lease_mismatch"); } });
+  const r = await pollOnce({ pb, tg });
+  assert.equal(r.islenmis, 0);                                      // done/permanent YOK
+  assert.ok(r.transient instanceof LeaseConflictError);             // batch durdu + backoff sinyali
+  assert.equal(pb.calls.filter((c) => c[0] === "claim" && c[1] === "7001").length, 0); // sonraki işlenmedi
+  assert.equal(pb.calls.filter((c) => c[0] === "complete").length, 1); // failed-complete DENENMEDİ (fencing bizde değil)
+});
+test("F1-02 stale-lease 409 tekrarları → bounded backoff, ASLA done/poison", async () => {
+  const uyku = []; const b = makeBackoff({ sleep: async (ms) => uyku.push(ms), random: () => 0 });
+  let tur = 0;
+  const tg = { sent: [], getUpdates: async () => [upd(7100, "/help")], sendMessage: async () => ({}) };
+  const pb = fakePb({ complete: () => { throw new LeaseConflictError("PB complete 409: lease_mismatch"); } });
+  await runLoop({ pb, tg, backoff: b, dur: () => ++tur > 4 });
+  assert.deepEqual(uyku, [1000, 2000, 4000, 8000]);                 // bounded + reset YOK (büyüyor)
+  assert.equal(pb.calls.filter((c) => c[0] === "complete" && c[2] === "done").length, 4); // 4 deneme (hepsi 409 fırlattı)
+  assert.equal(pb.calls.filter((c) => c[0] === "complete" && c[2] === "failed").length, 0);
+});
+test("F1-03 başarılı complete + yanıt kaybı → güvenli yakınsama (duplicate reply YOK)", async () => {
+  // Stateful fake: complete #1 sunucuda done+offset ilerletir ama yanıt kaybolur (Transient);
+  // sonraki complete(failed) denemesi 409 (not_processing) döner.
+  const st = { offset: null, done: new Set(), sent: 0, completeN: 0 };
+  const pb = {
+    stateGet: async () => ({ next_offset: st.offset ?? "" }),
+    updateClaim: async (u) => st.done.has(String(u)) ? { status: 200, json: { claimed: false, duplicate: true } } : { status: 200, json: { claimed: true, lease_token: "L" } },
+    updateComplete: async (u, tok, failed = false) => {
+      st.completeN++;
+      if (st.completeN === 1) { st.done.add(String(u)); st.offset = String(Number(u) + 1); throw new TransientError("yanıt kaybı"); }
+      throw new LeaseConflictError("PB complete 409: not_processing"); // artık done → 409
+    },
+  };
+  const tg = { getUpdates: async ({ offset } = {}) => (offset != null && offset > 8000 ? [] : [upd(8000, "/help")]), sendMessage: async () => { st.sent++; return {}; } };
+  const p1 = await pollOnce({ pb, tg });
+  assert.equal(p1.islenmis, 0); assert.ok(p1.transient);            // yanıt kaybı → failed raporu
+  const p2 = await pollOnce({ pb, tg });                            // sunucu offset'i ilerletmişti
+  assert.equal(p2.adet, 0);                                          // update yeniden gelmez
+  assert.equal(st.sent, 1);                                          // duplicate reply YOK
+  assert.ok(st.done.has("8000"));                                    // sunucu tarafı done
+});
+
+// ---- F2 auth-drift ayrımı ----
+test("F2-07 /data auth hatası (401 Fatal) ASLA 'Önce hesabını bağla' olarak raporlanmaz", async () => {
+  const tg = fakeTg(); const pb = fakePb({ getData: () => { throw new FatalConfigError("PB data auth 401"); } });
+  await assert.rejects(() => isle(upd(1, "/bakiye"), { pb, tg }), FatalConfigError);
+  assert.equal(tg.sent.length, 0);                                   // yanlış "bağla" mesajı YOK
+});
+test("F2-08 finansal komut PB auth hatasında update'i TAMAMLAMAZ (complete=0, Fatal yukarı)", async () => {
+  const tg = fakeTg(); const pb = fakePb({ getData: () => { throw new FatalConfigError("PB data auth 401"); } });
+  await assert.rejects(() => updateIsle(upd(9100, "/bakiye"), { pb, tg }), FatalConfigError);
+  assert.equal(pb.calls.filter((c) => c[0] === "complete").length, 0);
+});
+
+// ---- F3 busy backoff ----
+test("F3-02 busy: sıra korunur — sonraki update claim EDİLMEZ, transient sinyali döner", async () => {
+  const tg = { sent: [], getUpdates: async () => [upd(9200, "/help"), upd(9201, "/help")], sendMessage: async () => ({}) };
+  const pb = fakePb({ claim: (u) => String(u) === "9200" ? { status: 200, json: { claimed: false, busy: true } } : { status: 200, json: { claimed: true, lease_token: "L" } } });
+  const r = await pollOnce({ pb, tg });
+  assert.equal(r.islenmis, 0);
+  assert.ok(r.transient instanceof TransientError);                  // busy → backoff sinyali (hot-loop yok)
+  assert.equal(pb.calls.filter((c) => c[0] === "claim" && c[1] === "9201").length, 0);
+});
+test("F3-01/F3-04 tekrarlı busy → bounded uyku dizisi (reset YOK, sıkı stateGet döngüsü YOK)", async () => {
+  const uyku = []; const b = makeBackoff({ sleep: async (ms) => uyku.push(ms), random: () => 0 });
+  let tur = 0;
+  const tg = { sent: [], getUpdates: async () => [upd(9300, "/help")], sendMessage: async () => ({}) };
+  const pb = fakePb({ claim: () => ({ status: 200, json: { claimed: false, busy: true } }) });
+  await runLoop({ pb, tg, backoff: b, dur: () => ++tur > 3 });
+  assert.deepEqual(uyku, [1000, 2000, 4000]);                        // her busy turu uyudu, backoff büyüdü
+  assert.equal(pb.calls.filter((c) => c[0] === "stateGet").length, 3); // poll sayısı == uyku sayısı (tight-loop yok)
+});
+test("F3-03 busy → lease sonrası claim başarılı → done (recovery)", async () => {
+  const uyku = []; const b = makeBackoff({ sleep: async (ms) => uyku.push(ms), random: () => 0 });
+  let n = 0, tur = 0;
+  const tg = { sent: [], getUpdates: async () => (n >= 3 ? [] : [upd(9400, "/help")]), sendMessage: async () => ({}) };
+  const pb = fakePb({ claim: () => (++n <= 2 ? { status: 200, json: { claimed: false, busy: true } } : { status: 200, json: { claimed: true, lease_token: "L" } }) });
+  await runLoop({ pb, tg, backoff: b, dur: () => ++tur > 3 });
+  assert.deepEqual(uyku, [1000, 2000]);                              // 2 busy → 2 bekleme
+  assert.ok(pb.calls.some((c) => c[0] === "complete" && c[2] === "done")); // sonra done
+});
+
+// ---- F4 startup transient ≠ fatal ----
+const bof = (uyku) => makeBackoff({ sleep: async (ms) => uyku.push(ms), random: () => 0 });
+test("F4-01 getMe 503 → retry → başarı → startup devam", async () => {
+  const uyku = []; let n = 0;
+  const tg = { getMe: async () => { if (++n === 1) throw new TransientError("Telegram getMe 503"); return { id: 1 }; } };
+  const pb = { stateGet: async () => ({ next_offset: "" }) };
+  assert.equal(await preflightBekle({ pb, tg, backoff: bof(uyku) }), true);
+  assert.deepEqual(uyku, [1000]); assert.equal(n, 2);
+});
+test("F4-02 PB state 503 → retry → başarı → startup devam", async () => {
+  const uyku = []; let n = 0;
+  const tg = { getMe: async () => ({ id: 1 }) };
+  const pb = { stateGet: async () => { if (++n === 1) throw new TransientError("PB state/get 503"); return { next_offset: "" }; } };
+  assert.equal(await preflightBekle({ pb, tg, backoff: bof(uyku) }), true);
+  assert.deepEqual(uyku, [1000]);
+});
+test("F4-03 geçersiz TG token 401 → DERHAL fatal (retry YOK)", async () => {
+  const uyku = [];
+  const tg = { getMe: async () => { throw new FatalConfigError("Telegram getMe yetkisiz"); } };
+  const pb = { stateGet: async () => ({ next_offset: "" }) };
+  await assert.rejects(() => preflightBekle({ pb, tg, backoff: bof(uyku) }), FatalConfigError);
+  assert.deepEqual(uyku, []);                                        // hiç beklemedi
+});
+test("F4-04 PB bad HMAC → DERHAL fatal", async () => {
+  const uyku = [];
+  const tg = { getMe: async () => ({ id: 1 }) };
+  const pb = { stateGet: async () => { throw new FatalConfigError("PB state/get auth 401"); } };
+  await assert.rejects(() => preflightBekle({ pb, tg, backoff: bof(uyku) }), FatalConfigError);
+  assert.deepEqual(uyku, []);
+});
+test("F4-05 startup backoff sırasında SIGTERM → hızlı temiz kapanış (false döner)", async () => {
+  const ac = new AbortController();
+  let deneme = 0;
+  const tg = { getMe: async () => { deneme++; throw new TransientError("ağ"); } };
+  const pb = { stateGet: async () => ({ next_offset: "" }) };
+  const b = makeBackoff({ sleep: async () => { ac.abort(new Error("shutdown")); }, random: () => 0 }); // uykuda sinyal
+  assert.equal(await preflightBekle({ pb, tg, signal: ac.signal, backoff: b }), false);
+  assert.equal(deneme, 1);                                           // abort sonrası yeni deneme YOK
+});
+test("F4 Telegram getUpdates 409 webhook conflict → FatalConfigError (sessiz sonsuz retry YOK)", async () => {
+  const fetchImpl = async () => ({ ok: false, status: 409, json: async () => ({ ok: false, error_code: 409, description: "Conflict: webhook is active" }) });
+  const tg = tgIstemci({ apiBase: "http://x", botToken: "T", fetchImpl });
+  await assert.rejects(() => tg.getUpdates({ timeout: 1 }), (e) => e instanceof FatalConfigError && /webhook/.test(e.message));
+});
+
+// ---- F5 gerçek 30s tavan ----
+test("F5 exp+jitter TOPLAMI ≤ 30000 (random≈1.0 dahil); tavanda tam 30000", async () => {
+  const uyku = []; const b = makeBackoff({ sleep: async (ms) => uyku.push(ms), random: () => 0.999999 });
+  for (let i = 0; i < 8; i++) await b.wait();
+  for (const ms of uyku) assert.ok(ms <= 30000, `uyku ${ms} > 30000`);
+  assert.equal(uyku.at(-1), 30000);                                  // tavan aşılmıyor, tam max
+});
+test("F5 retry_after tavandan MUAF: wait(60000) → 60000 bekler", async () => {
+  const uyku = []; const b = makeBackoff({ sleep: async (ms) => uyku.push(ms), random: () => 0.999999 });
+  await b.wait(60000);
+  assert.deepEqual(uyku, [60000]);                                   // Telegram retry_after onurlandırılır
 });
