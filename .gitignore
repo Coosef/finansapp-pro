@@ -19,3 +19,5 @@ blob-report/
 # Telegram T1A E2E runtime (throwaway secrets/datadir — never commit)
 e2e/.tg-runtime.json
 e2e/.tg-datadir
+# Telegram T1C browser E2E runtime (throwaway TG secrets — never commit)
+e2e/.t1c-runtime.json

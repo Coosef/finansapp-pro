@@ -133,13 +133,42 @@ test("TG-A21 browser pair-code only for current authed user (body user ignored)"
   const rows = await adminList("telegram_pair_codes");
   expect(rows.every((r) => r.user === a.id)).toBe(true); // yalnız A
 });
-test("TG-A22/A23 browser status + unlink own only", async () => {
+test("TG-A22/A23 browser status (GET) + unlink own only", async () => {
   const a = await authUser(RT.userA); const tg = nextTgid();
   await svc("/api/tg/service/pair-consume", { telegram_user_id: tg, code: await pairCode(a.token) });
-  const st = await (await fetch(BASE + "/api/tg/user/status", { method: "POST", headers: { Authorization: a.token, "Content-Type": "application/json" }, body: "{}" })).json();
-  expect(st.linked).toBe(true); expect(st.telegram_user_id).toBe(tg);
+  const st = await (await fetch(BASE + "/api/tg/user/status", { headers: { Authorization: a.token } })).json();
+  expect(st.linked).toBe(true);
   await fetch(BASE + "/api/tg/user/unlink", { method: "POST", headers: { Authorization: a.token, "Content-Type": "application/json" }, body: "{}" });
   expect((await adminList("telegram_links", `user = "${a.id}" && active = true`)).length).toBe(0);
+});
+
+// T1C: browser status GET sözleşmesi — minimal metadata; iç kimlik/finansal veri YOK; auth şart.
+test("TG-C01 browser status GET: auth şart, linked=false/true minimal, telegram_user_id/user id/finansal veri YOK", async () => {
+  const a = await authUser(RT.userA);
+  const anon = await fetch(BASE + "/api/tg/user/status");
+  expect(anon.status).toBe(401);                                              // kimliksiz erişim yok
+  const unlinked = await fetch(BASE + "/api/tg/user/status", { headers: { Authorization: a.token } });
+  expect(unlinked.status).toBe(200);
+  const u = await unlinked.json();
+  expect(u.linked).toBe(false);
+  expect(Object.keys(u)).toEqual(["linked"]);                                 // yalnız linked
+
+  const tg = nextTgid();
+  await svc("/api/tg/service/pair-consume", { telegram_user_id: tg, code: await pairCode(a.token) });
+  const linked = await fetch(BASE + "/api/tg/user/status", { headers: { Authorization: a.token } });
+  expect(linked.status).toBe(200);
+  const l = await linked.json();
+  expect(l.linked).toBe(true); expect(l.scope).toBe("personal");
+  expect(Object.keys(l).sort()).toEqual(["linked", "linked_at", "scope"]);    // başka alan YOK
+  const ham = JSON.stringify(l);
+  expect(ham).not.toContain(tg);                                              // numerik Telegram ID YOK
+  expect(ham).not.toContain(a.id);                                            // PB user id YOK
+  expect(l.data).toBeUndefined(); expect(l.revision).toBeUndefined();         // finansal veri YOK
+});
+test("TG-C02 browser status POST artık desteklenmiyor (yalnız GET)", async () => {
+  const a = await authUser(RT.userA);
+  const r = await fetch(BASE + "/api/tg/user/status", { method: "POST", headers: { Authorization: a.token, "Content-Type": "application/json" }, body: "{}" });
+  expect(r.status).not.toBe(200);
 });
 
 // ---- F1: active-link uniqueness / relink lifecycle ----

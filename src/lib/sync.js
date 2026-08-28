@@ -200,6 +200,86 @@ export async function pbFindataGonder(data, baseRevision) {
 }
 
 // ============================================================
+// Telegram entegrasyonu — YALNIZ metadata (T1C browser istemcisi)
+// ------------------------------------------------------------
+// Token dışarı sızmaz: _token yalnız bu modülde kullanılır (public getter YOK).
+// Finansal veri gönderilmez/alınmaz; setFindata/revision mutasyonu YOK.
+// Hata sözleşmesi: 401 → pbCikis()+oturum hatası · 5xx/ağ → açık hata ·
+// BOZUK 2xx BAŞARI DEĞİLDİR (backend hatası ASLA "bağlı değil" olarak gösterilmez).
+// ============================================================
+
+const TG_KOD_ALFABE = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // pairing alfabesi (PB migration ile aynı)
+const TG_KOD_RE = new RegExp(`^[${TG_KOD_ALFABE}]{8}$`);
+// T1/T1B YALNIZ personal kapsamı destekler. Eksik/bilinmeyen kapsam UYDURULMAZ (varsayılan YOK).
+const TG_KAPSAMLAR = ["personal"];
+// Browser sözleşmesinde ASLA bulunmaması gereken alanlar: endpoint regresyonu sessizce
+// "bağlı" kabul edilmesin (iç kimlik / finansal veri sızıntısı fail-closed yakalanır).
+const TG_YASAK_ALANLAR = ["telegram_user_id", "user", "user_id", "userId", "link", "link_id", "linkId", "data", "revision", "token"];
+function tgYasakAlanKontrol(d) {
+  for (const a of TG_YASAK_ALANLAR) {
+    if (Object.prototype.hasOwnProperty.call(d, a)) throw new Error("Telegram durumu beklenmeyen alan içeriyor.");
+  }
+}
+
+// 401 → oturumu kapat; ortak davranış (mevcut sync deseni).
+function tgOturumKontrol(res) {
+  if (res.status === 401) { pbCikis(); throw new Error("Oturum süresi doldu, tekrar giriş yap."); }
+}
+
+// Telegram bağlantı durumu (GET, read-only). → {linked:false} | {linked:true, scope, linkedAt}
+export async function pbTelegramDurum() {
+  if (!syncBagliMi()) throw new Error("Önce giriş yap.");
+  const res = await pbFetch(_url, "/api/tg/user/status", { headers: { Authorization: _token }, cache: "no-store" });
+  tgOturumKontrol(res);
+  if (!res.ok) throw new Error(`Telegram durumu alınamadı (${res.status}).`);
+  let d; try { d = await res.json(); } catch { throw new Error("Telegram durumu çözümlenemedi."); }
+  if (!d || typeof d !== "object" || typeof d.linked !== "boolean") throw new Error("Telegram durumu çözümlenemedi."); // bozuk 2xx ≠ "bağlı değil"
+  tgYasakAlanKontrol(d);
+  if (!d.linked) return { linked: false };
+  // KATI sözleşme: linked=true → desteklenen kapsam + string linked_at ŞART. Eksik alan
+  // varsayılanla DOLDURULMAZ; aksi halde sunucu regresyonu sessizce "bağlı" görünürdü.
+  if (!TG_KAPSAMLAR.includes(d.scope)) throw new Error("Telegram bağlantı kapsamı desteklenmiyor.");
+  if (typeof d.linked_at !== "string") throw new Error("Telegram durumu çözümlenemedi.");
+  return { linked: true, scope: d.scope, linkedAt: d.linked_at };
+}
+
+// Tek seferlik pairing kodu üret (YALNIZ açık kullanıcı eylemiyle çağrılır).
+// Not: yeni kod üretimi kullanıcının önceki KULLANILMAMIŞ kodunu geçersiz kılar (T1A invariant).
+export async function pbTelegramKodUret() {
+  if (!syncBagliMi()) throw new Error("Önce giriş yap.");
+  const res = await pbFetch(_url, "/api/tg/user/pair-code", {
+    method: "POST",
+    headers: { Authorization: _token, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  tgOturumKontrol(res);
+  if (!res.ok) throw new Error(`Bağlantı kodu üretilemedi (${res.status}).`);
+  let d; try { d = await res.json(); } catch { throw new Error("Bağlantı kodu yanıtı çözümlenemedi."); }
+  const kod = typeof d?.code === "string" ? d.code : "";
+  const sn = d?.expires_in;
+  // Bozuk 2xx başarı DEĞİL: kod tam 8 karakter + izinli alfabe, süre pozitif tam sayı olmalı.
+  if (!TG_KOD_RE.test(kod) || !Number.isFinite(sn) || !Number.isInteger(sn) || sn <= 0) {
+    throw new Error("Sunucu geçerli bir bağlantı kodu döndürmedi.");
+  }
+  return { kod, saniye: sn };
+}
+
+// Bağlantıyı kaldır. YALNIZ 200 + {ok:true} başarıdır (yalan başarı yok).
+export async function pbTelegramBaglantiyiKes() {
+  if (!syncBagliMi()) throw new Error("Önce giriş yap.");
+  const res = await pbFetch(_url, "/api/tg/user/unlink", {
+    method: "POST",
+    headers: { Authorization: _token, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  tgOturumKontrol(res);
+  if (!res.ok) throw new Error(`Telegram bağlantısı kaldırılamadı (${res.status}).`);
+  let d; try { d = await res.json(); } catch { throw new Error("Sunucu yanıtı çözümlenemedi."); }
+  if (!d || d.ok !== true) throw new Error("Sunucu bağlantının kaldırıldığını onaylamadı.");
+  return { ok: true };
+}
+
+// ============================================================
 // Ortak Hane — birden çok kullanıcının aynı veriyi paylaşması
 // ============================================================
 

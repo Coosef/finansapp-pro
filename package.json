@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:pwa": "playwright test --config=playwright.pwa.config.js",
-    "test:e2e:tg": "playwright test --config=playwright.tg.config.js"
+    "test:e2e:tg": "playwright test --config=playwright.tg.config.js",
+    "test:e2e:dev": "playwright test --config=playwright.dev.config.js"
   },
   "dependencies": {
     "jsqr": "^1.4.0",

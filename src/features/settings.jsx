@@ -10,7 +10,7 @@ import { uid, bugun, buAy, sayiCevir } from "../lib/format.js";
 import { TL } from "../lib/format.js";
 import { MODEL_SECENEK, GEMINI_MODEL_SECENEK, OPENAI_MODEL_SECENEK, configureAI, testAIBaglanti, SAGLAYICI_SECENEK, varsayilanAdres, yerelModelleriListele, anahtarKaydet, anahtarDurum } from "../lib/ai.js";
 import { giderKategorileri, gelirKategorileri, bosVeri } from "../lib/finance.js";
-import { syncYukle, syncDurum, pbFindataCek, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril, pbSifreDegistir } from "../lib/sync.js";
+import { syncYukle, syncDurum, pbFindataCek, pbHaneBul, pbHaneOlustur, pbHaneKatil, pbHaneAyril, pbSifreDegistir, pbTelegramDurum, pbTelegramKodUret, pbTelegramBaglantiyiKes } from "../lib/sync.js";
 import { Card, Btn, Field, Toggle, Seg } from "../components/ui.jsx";
 import { Icon } from "../components/icons.jsx";
 
@@ -21,6 +21,11 @@ const etiket = { display: "block", fontSize: "11.5px", color: V.ink3, marginBott
 export function Ayarlar({ findata, setFindata, bildir, user, onLogout, senkronlaSimdi }) {
   const ay = findata.ayarlar || {};
   const setAyar = (obj) => setFindata((d) => ({ ...d, ayarlar: { ...(d.ayarlar || {}), ...obj } }));
+  // F7: hane modu Ayarlar açıkken değişebilir (oluştur/katıl/ayrıl). Küçük state köprüsü —
+  // global state mimarisi YOK, polling YOK: BulutKart değişimi bildirir, Telegram kartı
+  // CANLI değeri okur (bayat kapsam uyarısı olmaz).
+  const [haneId, setHaneId] = useState(() => syncDurum().haneId);
+  const haneDegisti = () => setHaneId(syncDurum().haneId);
 
   return (
     <div>
@@ -28,7 +33,8 @@ export function Ayarlar({ findata, setFindata, bildir, user, onLogout, senkronla
       <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 14 }}>
         <ProfilKart user={user} onLogout={onLogout} />
         <SifreKart bildir={bildir} />
-        <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} senkronlaSimdi={senkronlaSimdi} />
+        <BulutKart findata={findata} setFindata={setFindata} bildir={bildir} senkronlaSimdi={senkronlaSimdi} onHaneDegisti={haneDegisti} />
+        <EntegrasyonlarKart bildir={bildir} haneId={haneId} />
         <PwaKart bildir={bildir} />
         <GorunumKart ay={ay} setAyar={setAyar} />
         <GuvenlikKart ay={ay} setAyar={setAyar} bildir={bildir} />
@@ -47,7 +53,8 @@ export function Ayarlar({ findata, setFindata, bildir, user, onLogout, senkronla
 
 // ---------- Profil ----------
 // ---------- Bulut Senkron (PocketBase) ----------
-function BulutKart({ findata, setFindata, bildir, senkronlaSimdi }) {
+function BulutKart({ findata, setFindata, bildir, senkronlaSimdi, onHaneDegisti }) {
+  const haneBildir = () => { if (typeof onHaneDegisti === "function") onHaneDegisti(); }; // F7 köprü
   const [durum, setDurum] = useState(() => syncYukle());
   const [mesgul, setMesgul] = useState(false);
   const [haneAd, setHaneAd] = useState("");
@@ -67,7 +74,7 @@ function BulutKart({ findata, setFindata, bildir, senkronlaSimdi }) {
     setMesgul(true);
     try {
       const h = await pbHaneOlustur(haneAd.trim() || "Ortak Hane", findata); // mevcut veriyi tohumla
-      setDurum(syncDurum());
+      setDurum(syncDurum()); haneBildir();
       setHaneForm(""); setHaneAd("");
       bildir(`Hane oluşturuldu · davet kodu: ${h.kod}`);
     } catch (e) { bildir(e?.message || "Hane oluşturulamadı", "err"); }
@@ -82,7 +89,7 @@ function BulutKart({ findata, setFindata, bildir, senkronlaSimdi }) {
       await pbHaneKatil(kod);
       const bulut = await pbFindataCek(); // artık hane verisi
       if (bulut?.data) setFindata({ ...bosVeri(), ...bulut.data });
-      setDurum(syncDurum());
+      setDurum(syncDurum()); haneBildir();
       setHaneForm(""); setKatilKod("");
       bildir("Haneye katıldın · ortak veri yüklendi");
     } catch (e) { bildir(e?.message || "Katılınamadı", "err"); }
@@ -95,7 +102,7 @@ function BulutKart({ findata, setFindata, bildir, senkronlaSimdi }) {
       await pbHaneAyril();
       const bulut = await pbFindataCek(); // artık kişisel veri
       if (bulut?.data) setFindata({ ...bosVeri(), ...bulut.data });
-      setDurum(syncDurum());
+      setDurum(syncDurum()); haneBildir();
       bildir("Haneden ayrıldın · kişisel verine dönüldü");
     } catch (e) { bildir(e?.message || "Ayrılınamadı", "err"); }
     finally { setMesgul(false); }
@@ -168,6 +175,338 @@ function BulutKart({ findata, setFindata, bildir, senkronlaSimdi }) {
             )}
           </div>
         </div>
+    </Card>
+  );
+}
+
+// ---------- Entegrasyonlar (Telegram — yalnız okuma) ----------
+// Durum modeli AÇIK: "yukleniyor" | "bagsiz" | "eslesme" | "bagli" | "hata".
+// Ağ/sunucu hatası ASLA "bağlı değil" olarak gösterilmez. Pairing kodu YALNIZ bileşen
+// belleğinde yaşar: localStorage/sessionStorage/findata/URL/log'a ASLA yazılmaz.
+// Finansal yazma YOK (setFindata/kaydet/revision yok) — bu kart yalnız metadata konuşur.
+const TG_BOT_KULLANICI_RE = /^[A-Za-z0-9_]{5,32}$/;
+const ikiHane = (n) => String(n).padStart(2, "0");
+const sureBicim = (sn) => `${ikiHane(Math.floor(Math.max(0, sn) / 60))}:${ikiHane(Math.max(0, sn) % 60)}`;
+
+const TG_POLL_GECIKME = [4000, 8000, 16000, 30000]; // normal → ardışık geçici hatada sınırlı artış
+
+function EntegrasyonlarKart({ bildir, haneId }) {
+  const [durum, setDurum] = useState("yukleniyor");   // asla başlangıçta "bagsiz" değil
+  const [hata, setHata] = useState("");
+  const [bagli, setBagli] = useState(null);            // { scope, linkedAt }
+  const [kod, setKod] = useState("");                  // plaintext — SADECE bellek
+  const [bitis, setBitis] = useState(0);               // expiresAt (ms, yerel gösterim için)
+  const [kalan, setKalan] = useState(0);
+  const [mesgul, setMesgul] = useState(false);
+  const [onayKes, setOnayKes] = useState(false);
+  const haneModunda = !!haneId;                        // F7: CANLI sync durumu (ebeveynden)
+  const canli = useRef(true);
+  const durumSozRef = useRef(null);                    // F5: paylaşılan tek-uçuş status isteği
+  const hataSayaciRef = useRef(0);                     // F5: ardışık geçici hata sayacı
+
+  // F1: StrictMode kurulum→temizlik→kurulum probu'nda ref TEKRAR true'lanmalı; aksi halde
+  // ikinci kurulumda tüm async sonuçlar sonsuza dek yok sayılır (kalıcı "yükleniyor").
+  useEffect(() => {
+    canli.current = true;
+    return () => { canli.current = false; };
+  }, []);
+
+  // F5: otomatik yoklama ve manuel "Durumu Yenile" AYNI uçuşu paylaşır → iki eşzamanlı
+  // GET /api/tg/user/status ASLA çıkmaz.
+  function durumIste() {
+    if (durumSozRef.current) return durumSozRef.current;
+    const p = pbTelegramDurum();
+    durumSozRef.current = p;
+    const temizle = () => { if (durumSozRef.current === p) durumSozRef.current = null; };
+    p.then(temizle, temizle);
+    return p;
+  }
+
+  // F2: TEK ortak hata yolu. Oturum sunucu tarafında düştüyse (sync.js 401'de pbCikis yaptı)
+  // bayat "● Bağlı"/pairing ekranı GÖSTERİLMEZ: her şey temizlenir, yoklama durur.
+  // Dönüş: true = oturum kapandı (fail-closed uygulandı).
+  function hataIsle(e, varsayilan) {
+    if (!canli.current) return false;
+    const mesaj = e?.message || varsayilan;
+    if (!syncDurum().bagli) {
+      setBagli(null); setKod(""); setBitis(0); setKalan(0); setOnayKes(false);
+      setDurum("hata");                                 // "eslesme" biterse yoklama efekti de durur
+      setHata(mesaj || "Oturum süresi doldu, tekrar giriş yap.");
+      return true;
+    }
+    setHata(mesaj);                                     // geçici hata: yıkıcı DEĞİL
+    return false;
+  }
+
+  // Sunucu durumunu uygula; bağlandıysa plaintext kodu DERHAL bellekten sil.
+  function durumUygula(d) {
+    if (!canli.current) return;
+    if (d.linked) { setBagli({ scope: d.scope, linkedAt: d.linkedAt }); setDurum("bagli"); setKod(""); setBitis(0); setHata(""); return; }
+    setBagli(null);
+    setDurum((s) => (s === "eslesme" ? "eslesme" : "bagsiz")); // eşleşme ekranını bozma
+    setHata("");
+  }
+
+  // İlk yükleme: durum bilinene kadar "yukleniyor" kalır.
+  useEffect(() => {
+    let iptal = false;
+    (async () => {
+      try { const d = await durumIste(); if (!iptal && canli.current) durumUygula(d); }
+      catch (e) {
+        if (iptal || !canli.current) return;
+        if (!hataIsle(e, "Bağlantı durumu kontrol edilemedi.")) { setDurum("hata"); }
+      }
+    })();
+    return () => { iptal = true; };
+  }, []);
+
+  // Eşleşme sırasında geri sayım (yerel gösterim; sunucu yetkili kalır).
+  useEffect(() => {
+    if (durum !== "eslesme" || !bitis) return;
+    const tik = () => setKalan(Math.max(0, Math.round((bitis - Date.now()) / 1000)));
+    tik();
+    const t = setInterval(tik, 1000);
+    return () => clearInterval(t);
+  }, [durum, bitis]);
+
+  // F5: eşleşme yoklaması — kendini planlayan timeout; normal 4 sn, ardışık geçici hatada
+  // 8→16→30 sn (başarıda sıfırlanır). Bağlanınca / süre dolunca / unmount / oturum
+  // düşünce DURUR. Geçici hata kodu imha ETMEZ (F2/TC-R03).
+  useEffect(() => {
+    if (durum !== "eslesme") return;
+    let iptal = false, zaman = 0;
+    const planla = () => { zaman = setTimeout(calis, TG_POLL_GECIKME[Math.min(hataSayaciRef.current, TG_POLL_GECIKME.length - 1)]); };
+    async function calis() {
+      if (iptal || !canli.current) return;
+      if (bitis && Date.now() >= bitis) return;         // süresi dolmuş kodu yoklama
+      try {
+        const d = await durumIste();
+        hataSayaciRef.current = 0;
+        if (iptal) return;
+        if (d.linked) { durumUygula(d); return; }       // bağlandı → yoklama biter
+      } catch (e) {
+        if (iptal) return;
+        if (hataIsle(e, "Bağlantı durumu kontrol edilemedi.")) return; // oturum düştü → dur
+        hataSayaciRef.current = Math.min(hataSayaciRef.current + 1, TG_POLL_GECIKME.length - 1);
+      }
+      if (!iptal) planla();
+    }
+    planla();
+    return () => { iptal = true; clearTimeout(zaman); };
+  }, [durum, bitis]);
+
+  const suresiDoldu = durum === "eslesme" && bitis > 0 && kalan <= 0;
+
+  // F3: yeni kod isteği BAŞLAR BAŞLAMAZ eski kod geçersiz sayılır (sunucu onu zaten iptal
+  // eder). İstek başarısız/belirsizse eski kod GERİ GETİRİLMEZ; kullanıcı yeniden tıklamalı.
+  // Otomatik ikinci POST YOK.
+  async function kodUret() {
+    setMesgul(true); setHata("");
+    setKod(""); setBitis(0); setKalan(0);
+    hataSayaciRef.current = 0;
+    setDurum((s) => (s === "bagli" ? s : "eslesme"));   // kod alanı boş → "üretiliyor" ekranı
+    try {
+      const r = await pbTelegramKodUret();              // YALNIZ açık kullanıcı eylemiyle
+      if (!canli.current) return;
+      setKod(r.kod); setBitis(Date.now() + r.saniye * 1000); setKalan(r.saniye); setDurum("eslesme");
+    } catch (e) {
+      if (!canli.current) return;
+      if (!hataIsle(e, "Bağlantı kodu üretilemedi.")) bildir(e?.message || "Bağlantı kodu üretilemedi", "err");
+    } finally { if (canli.current) setMesgul(false); }
+  }
+
+  async function durumYenile() {
+    setMesgul(true);
+    try { const d = await durumIste(); if (canli.current) durumUygula(d); }
+    catch (e) {
+      if (!canli.current) return;
+      if (!hataIsle(e, "Bağlantı durumu kontrol edilemedi.")) bildir(e?.message || "Durum kontrol edilemedi", "err");
+    } finally { if (canli.current) setMesgul(false); }
+  }
+
+  async function baglantiyiKes() {
+    setMesgul(true);
+    try {
+      await pbTelegramBaglantiyiKes();                  // yalnız 200+{ok:true} başarı
+      if (!canli.current) return;
+      setBagli(null); setKod(""); setBitis(0); setOnayKes(false); setDurum("bagsiz"); setHata("");
+      bildir("Telegram bağlantısı kaldırıldı.");
+    } catch (e) {                                       // ACK yoksa BAĞLI kalır (iyimser UI yok)
+      if (!canli.current) return;
+      if (!hataIsle(e, "Bağlantı kaldırılamadı.")) bildir(e?.message || "Bağlantı kaldırılamadı", "err");
+    } finally { if (canli.current) setMesgul(false); }
+  }
+
+  // F6: kopyalama ACK'i GERÇEK olmalı — Promise beklenir; pano yoksa/reddederse senkron
+  // yedek denenir, o da olmazsa BAŞARI GÖSTERİLMEZ (kullanıcı elle kopyalasın).
+  // Yedek yol kodu hiçbir yere kalıcı yazmaz (geçici textarea hemen kaldırılır).
+  async function komutuKopyala() {
+    const komut = `/link ${kod}`;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("pano yok");
+      await navigator.clipboard.writeText(komut);
+      setHata(""); bildir("Komut kopyalandı");
+      return;
+    } catch { /* yedek yola düş */ }
+    let ok = false;
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = komut; ta.setAttribute("readonly", "");
+      ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ok = typeof document.execCommand === "function" ? document.execCommand("copy") : false;
+      document.body.removeChild(ta);
+    } catch { ok = false; }
+    if (ok) { setHata(""); bildir("Komut kopyalandı"); return; }
+    setHata("Panoya kopyalanamadı. Yukarıdaki /link komutunu elle kopyala.");
+    bildir("Panoya kopyalanamadı — komutu elle kopyala", "err");
+  }
+
+  const botKullanici = (import.meta.env?.VITE_TELEGRAM_BOT_USERNAME || "").trim();
+  const botLink = TG_BOT_KULLANICI_RE.test(botKullanici) ? `https://t.me/${botKullanici}` : "";
+  const baglandiMetin = (() => {
+    if (!bagli?.linkedAt) return "";
+    const t = new Date(String(bagli.linkedAt).replace(" ", "T"));
+    return Number.isNaN(t.getTime()) ? "" : t.toLocaleString("tr-TR");
+  })();
+
+  const rozet = { display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 11px", borderRadius: 999, fontSize: 12.5, fontWeight: 600 };
+  // F8: TEK etkileşimli öğe — <a> içinde <button> YOK. Soft buton görünümünde gerçek bağlantı.
+  const botBaglantiStil = {
+    display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "10px 16px",
+    borderRadius: 10, background: V.card2, color: V.ink, border: `1px solid ${V.border2}`,
+    fontFamily: F, fontWeight: 600, fontSize: "13.5px", textDecoration: "none", whiteSpace: "nowrap",
+  };
+  const botBaglantisi = botLink ? (
+    <a href={botLink} target="_blank" rel="noopener noreferrer" style={botBaglantiStil}>Telegram Botunu Aç</a>
+  ) : null;
+
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={{ ...baslik, marginBottom: 6 }}>Entegrasyonlar</div>
+      <p style={altYazi}>FinansApp hesabını diğer servislerle güvenli şekilde bağla.</p>
+
+      <div style={{ paddingTop: 14, borderTop: `1px solid ${V.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", marginBottom: 4 }}>
+          <Icon d="send" size={16} stroke={V.accent} />
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: V.ink }}>Telegram</span>
+          <span style={{ marginLeft: "auto" }}>
+            {durum === "yukleniyor" && <span style={{ ...rozet, background: V.card2, color: V.ink3 }}>Durum kontrol ediliyor…</span>}
+            {durum === "hata" && <span style={{ ...rozet, background: V.card2, color: V.neg }}>Bağlantı kontrol edilemedi</span>}
+            {durum === "bagli" && <span style={{ ...rozet, background: "var(--chip-green)", color: V.pos }}>● Bağlı</span>}
+            {(durum === "bagsiz" || durum === "eslesme") && <span style={{ ...rozet, background: V.card2, color: V.ink3 }}>Bağlı değil</span>}
+          </span>
+        </div>
+        <p style={{ ...altYazi, marginBottom: 12 }}>Finansal özetlerini Telegram üzerinden yalnız-okuma olarak görüntüle.</p>
+
+        {haneModunda && (
+          <div style={{ display: "flex", gap: 8, padding: "10px 12px", background: V.card2, border: `1px solid ${V.border2}`, borderRadius: 10, marginBottom: 12 }}>
+            <Icon d="users" size={15} stroke={V.ink3} />
+            <span style={{ fontSize: 12, color: V.ink2, lineHeight: 1.5 }}>
+              Telegram entegrasyonu şu aşamada yalnız kişisel finans verini gösterir. Ortak Hane verileri henüz Telegram'da desteklenmiyor.
+            </span>
+          </div>
+        )}
+
+        {durum === "yukleniyor" && <p style={{ fontSize: 12.5, color: V.ink3, margin: 0 }}>Telegram bağlantı durumu kontrol ediliyor…</p>}
+
+        {durum === "hata" && (
+          <div>
+            <p style={{ fontSize: 12.5, color: V.neg, margin: "0 0 10px", lineHeight: 1.5 }}>{hata || "Bağlantı durumu kontrol edilemedi."}</p>
+            <Btn variant="soft" onClick={durumYenile} disabled={mesgul}>{mesgul ? "…" : "Tekrar Dene"}</Btn>
+          </div>
+        )}
+
+        {durum === "bagsiz" && (
+          <div>
+            <p style={{ ...altYazi, marginBottom: 8 }}>Durum: <b>Bağlı değil</b></p>
+            <p style={{ fontSize: 12.5, color: V.ink2, lineHeight: 1.6, margin: "0 0 10px" }}>
+              Telegram üzerinden bakiye, bu ay özeti ve hesaplarını yalnız-okuma olarak görüntüleyebilirsin.
+            </p>
+            <p style={{ fontSize: 11.5, color: V.ink3, lineHeight: 1.6, margin: "0 0 14px" }}>
+              Telegram bağlantısı finansal verilerini değiştirme yetkisi vermez. Telegram'da görüntülenen özetler Telegram altyapısından geçer.
+            </p>
+            {hata && <p style={{ fontSize: 12, color: V.neg, margin: "0 0 10px" }}>{hata}</p>}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Btn onClick={kodUret} disabled={mesgul}>{mesgul ? "…" : "Telegram'ı Bağla"}</Btn>
+              {botBaglantisi}
+            </div>
+          </div>
+        )}
+
+        {/* F3: kod YOKKEN (üretiliyor / istek başarısız) eski kod ASLA gösterilmez veya
+            kopyalanamaz; başarısızlıkta yeni kod için AÇIK tıklama gerekir (otomatik POST yok). */}
+        {durum === "eslesme" && !kod && (
+          <div>
+            {mesgul ? (
+              <p style={{ fontSize: 12.5, color: V.ink3, margin: "0 0 12px" }}>Bağlantı kodu üretiliyor…</p>
+            ) : (
+              <p style={{ fontSize: 12.5, color: V.neg, margin: "0 0 12px", lineHeight: 1.5 }}>
+                {hata || "Bağlantı kodu alınamadı. Önceki kod artık geçersiz sayılmalıdır."}
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Btn onClick={kodUret} disabled={mesgul}>{mesgul ? "…" : "Yeni Kod Üret"}</Btn>
+              {botBaglantisi}
+            </div>
+          </div>
+        )}
+
+        {durum === "eslesme" && !!kod && (
+          <div>
+            <div style={{ fontSize: 12.5, color: V.ink2, marginBottom: 8 }}>Telegram bağlantı kodun</div>
+            <div style={{ padding: "14px 16px", background: V.card2, border: `1px solid ${V.accent}55`, borderRadius: 12, marginBottom: 10, textAlign: "center" }}>
+              <div style={{ fontFamily: MONO, fontSize: "clamp(20px, 6vw, 28px)", fontWeight: 700, letterSpacing: "0.18em", color: V.ink, wordBreak: "break-all" }}>{kod}</div>
+            </div>
+            {suresiDoldu ? (
+              <p style={{ fontSize: 12.5, color: V.neg, margin: "0 0 12px" }}>Kodun süresi doldu.</p>
+            ) : (
+              <p style={{ fontSize: 12.5, color: V.ink3, margin: "0 0 12px" }}><b style={{ fontFamily: MONO }}>{sureBicim(kalan)}</b> içinde geçerli</p>
+            )}
+            <ol style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 12.5, color: V.ink2, lineHeight: 1.7 }}>
+              <li>Telegram'da FinansApp botunu aç.</li>
+              <li>Aşağıdaki komutu bota gönder:</li>
+            </ol>
+            <div style={{ padding: "10px 12px", background: V.card2, border: `1px solid ${V.border}`, borderRadius: 10, fontFamily: MONO, fontSize: 13.5, color: V.ink, marginBottom: 12, wordBreak: "break-all" }}>/link {kod}</div>
+            {hata && <p style={{ fontSize: 12, color: V.neg, margin: "0 0 10px" }}>{hata}</p>}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {!suresiDoldu && <Btn onClick={komutuKopyala}>Komutu Kopyala</Btn>}
+              {!suresiDoldu && <Btn variant="soft" onClick={durumYenile} disabled={mesgul}>{mesgul ? "…" : "Durumu Yenile"}</Btn>}
+              <Btn variant="soft" onClick={kodUret} disabled={mesgul}>Yeni Kod Üret</Btn>
+              {botBaglantisi}
+            </div>
+          </div>
+        )}
+
+        {durum === "bagli" && (
+          <div>
+            <div style={{ fontSize: 12.5, color: V.ink2, lineHeight: 1.9, marginBottom: 10 }}>
+              <div>Kapsam: <b>Kişisel</b></div>
+              <div>Yetki: <b>Yalnız okuma</b></div>
+              {baglandiMetin && <div style={{ color: V.ink3 }}>Bağlandı: {baglandiMetin}</div>}
+            </div>
+            <p style={{ fontSize: 12.5, color: V.ink2, lineHeight: 1.6, margin: "0 0 14px" }}>Telegram üzerinden bakiye ve finansal özetlerini görüntüleyebilirsin.</p>
+            {hata && <p style={{ fontSize: 12, color: V.neg, margin: "0 0 10px" }}>{hata}</p>}
+            {onayKes ? (
+              <div style={{ padding: "12px 14px", background: V.card2, border: `1px solid ${V.neg}44`, borderRadius: 10 }}>
+                <p style={{ fontSize: 12.5, color: V.ink, margin: "0 0 4px", fontWeight: 600 }}>Telegram bağlantısı kaldırılsın mı?</p>
+                <p style={{ fontSize: 12, color: V.ink3, margin: "0 0 12px", lineHeight: 1.6 }}>Bot artık finansal özetlerine erişemez. FinansApp verilerin silinmez.</p>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <Btn variant="neg" onClick={baglantiyiKes} disabled={mesgul}>{mesgul ? "…" : "Evet, Kaldır"}</Btn>
+                  <Btn variant="soft" onClick={() => setOnayKes(false)} disabled={mesgul}>Vazgeç</Btn>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Btn variant="soft" onClick={() => setOnayKes(true)} style={{ color: V.neg }}>Bağlantıyı Kaldır</Btn>
+                <Btn variant="soft" onClick={durumYenile} disabled={mesgul}>{mesgul ? "…" : "Durumu Yenile"}</Btn>
+                {botBaglantisi}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
