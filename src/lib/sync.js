@@ -210,6 +210,16 @@ export async function pbFindataGonder(data, baseRevision) {
 
 const TG_KOD_ALFABE = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // pairing alfabesi (PB migration ile aynı)
 const TG_KOD_RE = new RegExp(`^[${TG_KOD_ALFABE}]{8}$`);
+// T1/T1B YALNIZ personal kapsamı destekler. Eksik/bilinmeyen kapsam UYDURULMAZ (varsayılan YOK).
+const TG_KAPSAMLAR = ["personal"];
+// Browser sözleşmesinde ASLA bulunmaması gereken alanlar: endpoint regresyonu sessizce
+// "bağlı" kabul edilmesin (iç kimlik / finansal veri sızıntısı fail-closed yakalanır).
+const TG_YASAK_ALANLAR = ["telegram_user_id", "user", "user_id", "userId", "link", "link_id", "linkId", "data", "revision", "token"];
+function tgYasakAlanKontrol(d) {
+  for (const a of TG_YASAK_ALANLAR) {
+    if (Object.prototype.hasOwnProperty.call(d, a)) throw new Error("Telegram durumu beklenmeyen alan içeriyor.");
+  }
+}
 
 // 401 → oturumu kapat; ortak davranış (mevcut sync deseni).
 function tgOturumKontrol(res) {
@@ -223,9 +233,14 @@ export async function pbTelegramDurum() {
   tgOturumKontrol(res);
   if (!res.ok) throw new Error(`Telegram durumu alınamadı (${res.status}).`);
   let d; try { d = await res.json(); } catch { throw new Error("Telegram durumu çözümlenemedi."); }
-  if (!d || typeof d.linked !== "boolean") throw new Error("Telegram durumu çözümlenemedi."); // bozuk 2xx ≠ "bağlı değil"
+  if (!d || typeof d !== "object" || typeof d.linked !== "boolean") throw new Error("Telegram durumu çözümlenemedi."); // bozuk 2xx ≠ "bağlı değil"
+  tgYasakAlanKontrol(d);
   if (!d.linked) return { linked: false };
-  return { linked: true, scope: d.scope || "personal", linkedAt: typeof d.linked_at === "string" ? d.linked_at : "" };
+  // KATI sözleşme: linked=true → desteklenen kapsam + string linked_at ŞART. Eksik alan
+  // varsayılanla DOLDURULMAZ; aksi halde sunucu regresyonu sessizce "bağlı" görünürdü.
+  if (!TG_KAPSAMLAR.includes(d.scope)) throw new Error("Telegram bağlantı kapsamı desteklenmiyor.");
+  if (typeof d.linked_at !== "string") throw new Error("Telegram durumu çözümlenemedi.");
+  return { linked: true, scope: d.scope, linkedAt: d.linked_at };
 }
 
 // Tek seferlik pairing kodu üret (YALNIZ açık kullanıcı eylemiyle çağrılır).

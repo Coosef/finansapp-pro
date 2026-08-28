@@ -7,12 +7,15 @@ import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import crypto from "node:crypto";
-import { seedSession, BASE_FINDATA, PB, getRecordRaw } from "./helpers.mjs";
+import { seedSession, BASE_FINDATA, PB, getRecordRaw, casKaydet, pbAuth } from "./helpers.mjs";
 import { signHeaders } from "./tg-hmac.mjs";
 
 const TG = JSON.parse(readFileSync(join(process.cwd(), "e2e", ".t1c-runtime.json"), "utf8"));
-const TGID = "770000123456"; // sentetik numerik Telegram kimliği (DOM'da GÖRÜNMEMELİ)
 const KOD_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
+// Sentetik numerik Telegram kimliği (DOM'da GÖRÜNMEMELİ). HER TEST KENDİ tgid'ini alır:
+// pair-consume rate-limit'i (5 / tgid / 15 dk) testler arasında paylaşılmasın.
+let TGID = "770000000000";
+let tgSayac = 0;
 
 // Gateway'i taklit et: HMAC v1 imzalı service çağrısı.
 async function svc(path, body) {
@@ -29,6 +32,13 @@ async function tgBagliMi() {
   return r.json?.linked === true;
 }
 async function linkTemizle() { await svc("/api/tg/service/unlink", { telegram_user_id: TGID }); }
+// Kullanıcı-kapsamlı temizlik: her test KENDİ tgid'ini kullandığından (rate-limit izolasyonu),
+// önceki testin linki tgid ile silinemez — fixture kullanıcının aktif linki browser endpoint'i
+// ile kaldırılır, böylece her test "bağlı değil" durumundan başlar.
+async function kullaniciLinkTemizle() {
+  const { token } = await pbAuth();
+  await fetch(PB.base + "/api/tg/user/unlink", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: "{}" });
+}
 
 const ayarlara = async (page) => {
   await page.goto("/");
@@ -58,7 +68,9 @@ async function taban() {
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
 test.beforeEach(async ({ page }) => {
+  TGID = String(770000100000 + (++tgSayac) * 7 + crypto.randomInt(1, 999)); // teste özel tgid
   await linkTemizle();
+  await kullaniciLinkTemizle();
   await seedSession(page, BASE_FINDATA);
 });
 
@@ -217,6 +229,161 @@ test("TC-UI10 ortak hane modunda kişisel-kapsam uyarısı görünür", async ({
   const sonra = await haneOku();
   expect(sonra.revision).toBe(once.revision);
   expect(sonra.data).toBe(once.data);
+});
+
+// ============================================================
+// F2/F3/F5/F6/F7 remediation kanıtları (TC-R01..R12)
+// ============================================================
+
+// Kart eşleşme durumuna kadar getir; görünen kodu döndür.
+async function eslesmeyeGec(page) {
+  await ayarlara(page);
+  const kart = telegramKart(page);
+  await kart.getByRole("button", { name: "Telegram'ı Bağla" }).click();
+  await expect(kart.getByText("Telegram bağlantı kodun")).toBeVisible({ timeout: 15000 });
+  return { kart, kod: await kodMetni(page) };
+}
+
+test("TC-R03b (F3) yeni kod isteği PB'ye ULAŞIR ama yanıt kaybolur → eski kod ASLA geçerli gösterilmez", async ({ page }) => {
+  const { kart, kod: kodA } = await eslesmeyeGec(page);
+  // Replacement isteği gerçekten PB'ye gider (A sunucuda geçersizleşir), yanıt DÜŞÜRÜLÜR.
+  await page.route("**/api/tg/user/pair-code", async (route) => {
+    await route.fetch();          // PB'de B üretildi + A geçersizleşti
+    await route.abort("failed");  // tarayıcı yanıtı kaybetti (belirsiz pencere)
+  });
+  await kart.getByRole("button", { name: "Yeni Kod Üret" }).click();
+  await expect(kart.getByText(/Bağlantı kodu üretilemedi|ulaşılamadı|alınamadı/)).toBeVisible({ timeout: 15000 });
+  await expect(kart.getByText(kodA, { exact: true })).toHaveCount(0);                       // A gösterilmiyor
+  await expect(kart.getByText(`/link ${kodA}`)).toHaveCount(0);            // kopyalanamaz
+  await expect(kart.getByRole("button", { name: "Komutu Kopyala" })).toHaveCount(0);
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: TGID, code: kodA })).status).toBe(400); // A gerçekten geçersiz
+
+  await page.unroute("**/api/tg/user/pair-code");                          // AÇIK yeni tıklama → C
+  await kart.getByRole("button", { name: "Yeni Kod Üret" }).click();
+  await expect(kart.getByText("Telegram bağlantı kodun")).toBeVisible({ timeout: 15000 });
+  const kodC = await kodMetni(page);
+  expect(kodC).not.toBe(kodA);
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: TGID, code: kodC })).status).toBe(200); // C kullanılabilir
+  await linkTemizle();
+});
+
+test("TC-R01 bağlı UI + status 401 → oturum kapanır, '● Bağlı' KAYBOLUR, hata gösterilir", async ({ page }) => {
+  const { kart, kod } = await eslesmeyeGec(page);
+  expect((await svc("/api/tg/service/pair-consume", { telegram_user_id: TGID, code: kod })).status).toBe(200);
+  await expect(kart.getByText("● Bağlı")).toBeVisible({ timeout: 20000 });
+
+  await page.route("**/api/tg/user/status", (route) => route.fulfill({ status: 401, json: { message: "unauthorized" } }));
+  await kart.getByRole("button", { name: "Durumu Yenile" }).click();
+  await expect(kart.getByText("● Bağlı")).toHaveCount(0, { timeout: 15000 }); // bayat "bağlı" YOK
+  await expect(kart.getByText(/Oturum süresi doldu/)).toBeVisible();
+  // PB oturumu gerçekten temizlendi (sync.js pbCikis)
+  const oturum = await page.evaluate(() => localStorage.getItem("finansapp:sync"));
+  expect(JSON.parse(oturum || "{}").token || "").toBe("");
+  await page.unroute("**/api/tg/user/status");
+  await linkTemizle();
+});
+
+test("TC-R02 eşleşme yoklaması 401 alırsa: yoklama DURUR, kod silinir, oturum hatası", async ({ page }) => {
+  let istek = 0;
+  page.on("request", (r) => { if (r.url().includes("/api/tg/user/status")) istek++; });
+  const { kart, kod } = await eslesmeyeGec(page);
+  await expect(kart.getByText(kod, { exact: true })).toBeVisible();
+
+  await page.route("**/api/tg/user/status", (route) => route.fulfill({ status: 401, json: {} }));
+  await expect(kart.getByText(/Oturum süresi doldu/)).toBeVisible({ timeout: 20000 });
+  await expect(kart.getByText(kod, { exact: true })).toHaveCount(0);              // plaintext kod bellekten silindi
+  await expect(kart.getByText("Telegram bağlantı kodun")).toHaveCount(0);
+
+  const n = istek;
+  await page.waitForTimeout(12000);                              // birkaç yoklama aralığı
+  expect(istek).toBe(n);                                         // yoklama durdu
+  await page.unroute("**/api/tg/user/status");
+});
+
+test("TC-R03 eşleşme sırasında geçici 500: kod KORUNUR, yıkıcı olmayan hata, 'bağlı değil' DEĞİL", async ({ page }) => {
+  const { kart, kod } = await eslesmeyeGec(page);
+  await page.route("**/api/tg/user/status", (route) => route.fulfill({ status: 500, json: {} }));
+  await expect(kart.getByText(/alınamadı \(500\)/)).toBeVisible({ timeout: 20000 });
+  await expect(kart.getByText(kod, { exact: true })).toBeVisible();               // kod imha EDİLMEDİ
+  await expect(kart.getByText(`/link ${kod}`)).toBeVisible();
+  await expect(kart.getByRole("button", { name: "Komutu Kopyala" })).toBeVisible();
+  await expect(kart.getByText(/Oturum süresi doldu/)).toHaveCount(0);
+  await page.unroute("**/api/tg/user/status");
+});
+
+test("TC-R07 manuel yenileme + otomatik yoklama AYNI uçuşu paylaşır (tek istek)", async ({ page }) => {
+  const { kart } = await eslesmeyeGec(page);
+  let acik = 0, enCok = 0, toplam = 0;
+  await page.route("**/api/tg/user/status", async (route) => {
+    acik++; toplam++; enCok = Math.max(enCok, acik);
+    await new Promise((r) => setTimeout(r, 3000));               // uzun uçuş penceresi
+    acik--;
+    await route.fulfill({ status: 200, json: { linked: false } });
+  });
+  await page.waitForTimeout(4200);                               // otomatik yoklama uçuşa geçsin
+  await kart.getByRole("button", { name: "Durumu Yenile" }).click(); // uçuş sürerken manuel
+  await page.waitForTimeout(1500);
+  expect(enCok).toBe(1);                                         // ASLA iki eşzamanlı status isteği
+  expect(toplam).toBe(1);
+  await page.unroute("**/api/tg/user/status");
+});
+
+test("TC-R08 sürekli geçici hata → SINIRLI gecikmeli yoklama (agresif döngü yok), kod korunur", async ({ page }) => {
+  const { kart, kod } = await eslesmeyeGec(page);   // önce eşleşme ekranına gir (ilk yükleme sağlıklı)
+  const damga = [];
+  await page.route("**/api/tg/user/status", (route) => { damga.push(Date.now()); route.fulfill({ status: 500, json: {} }); });
+  await page.waitForTimeout(26000);                              // 4+8+16 > 26 sn → en çok 3 deneme
+  expect(damga.length).toBeGreaterThanOrEqual(2);                // yoklama devam ediyor
+  expect(damga.length).toBeLessThanOrEqual(4);                   // ama sınırlı (sabit 4 sn olsaydı ~6)
+  const araliklar = damga.slice(1).map((t, i) => t - damga[i]);
+  if (araliklar.length >= 2) expect(araliklar[1]).toBeGreaterThan(araliklar[0] * 1.4); // gecikme büyüyor
+  await expect(kart.getByText(kod, { exact: true })).toBeVisible();               // kod korunur
+  await page.unroute("**/api/tg/user/status");
+});
+
+test("TC-R09/R10 kopyalama ACK'i gerçek: pano reddederse YANLIŞ başarı gösterilmez", async ({ page }) => {
+  await page.addInitScript(() => {
+    // Pano API'si reddetsin + senkron yedek de başarısız olsun.
+    try {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.reject(new Error("denied")), readText: () => Promise.resolve("") } });
+    } catch { /* yoksay */ }
+    document.execCommand = () => false;
+  });
+  const { kart } = await eslesmeyeGec(page);
+  await kart.getByRole("button", { name: "Komutu Kopyala" }).click();
+  await expect(kart.getByText(/Panoya kopyalanamadı/)).toBeVisible({ timeout: 10000 }); // açık hata
+  await expect(page.getByText("Komut kopyalandı")).toHaveCount(0);                      // yalan ACK YOK
+});
+
+test("TC-R11/R12 hane uyarısı CANLI: oluştur → uyarı çıkar, ayrıl → uyarı kaybolur (reload YOK)", async ({ page }) => {
+  page.on("dialog", (d) => d.accept()); // hane oluştur/ayrıl onayları
+  // Paylaşılan fixture kullanıcı kirlenmesin diye AYRI throwaway kullanıcı.
+  const eposta = `t1c-live-${crypto.randomBytes(4).toString("hex")}@finansapp.test`;
+  const sifre = "t1clivepassword123";
+  await fetch(PB.base + "/api/collections/users/records", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: eposta, password: sifre, passwordConfirm: sifre }),
+  }).catch(() => {});
+  const auth = await (await fetch(PB.base + "/api/collections/users/auth-with-password", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identity: eposta, password: sifre }),
+  })).json();
+  await casKaydet(PB.base, auth.token, auth.record.id, BASE_FINDATA); // onboarding'i atla
+  await page.addInitScript(([t, u, e]) => {
+    localStorage.setItem("finansapp:sync", JSON.stringify({ url: "", token: t, userId: u, email: e }));
+  }, [auth.token, auth.record.id, eposta]);
+
+  await ayarlara(page);
+  const kart = telegramKart(page);
+  const uyari = kart.getByText(/Ortak Hane verileri henüz Telegram'da desteklenmiyor/);
+  await expect(uyari).toHaveCount(0);                            // kişisel modda uyarı yok
+
+  await page.getByRole("button", { name: "Hane Oluştur" }).click();
+  await page.getByRole("button", { name: "Oluştur", exact: true }).click();
+  await expect(uyari).toBeVisible({ timeout: 20000 });           // TC-R11: reload YOK
+
+  await page.getByRole("button", { name: "Haneden Ayrıl" }).click();
+  await expect(uyari).toHaveCount(0, { timeout: 20000 });        // TC-R12: reload YOK
 });
 
 test("TC-UI13 'Yeni Kod Üret' önceki kodu UNUTUR ve geçersiz kılar", async ({ page }) => {

@@ -135,6 +135,37 @@ describe("T1C browser Telegram istemcisi", () => {
     await expect(sync.pbTelegramBaglantiyiKes()).rejects.toThrow(/ulaşılamadı/);
   });
 
+  // ---- F4: KATI linked yanıt sözleşmesi ----
+  it("TC-R04 {linked:true} + scope YOK → hata (varsayılan UYDURULMAZ)", async () => {
+    fetchVer({ status: 200, json: { linked: true, linked_at: "2026-08-28 07:00:00.000Z" } });
+    await expect(sync.pbTelegramDurum()).rejects.toThrow(/kapsamı desteklenmiyor/);
+  });
+
+  it("TC-R05 {linked:true, scope:'unexpected'} → hata (personal dışı kapsam kabul edilmez)", async () => {
+    for (const scope of ["unexpected", "household", "hane", "", null, 1, "PERSONAL"]) {
+      fetchVer({ status: 200, json: { linked: true, scope, linked_at: "2026-08-28 07:00:00.000Z" } });
+      await expect(sync.pbTelegramDurum()).rejects.toThrow(/kapsamı desteklenmiyor/);
+    }
+    fetchVer({ status: 200, json: { linked: true, scope: "personal" } }); // linked_at yok
+    await expect(sync.pbTelegramDurum()).rejects.toThrow(/çözümlenemedi/);
+  });
+
+  it("TC-R06 geçerli personal yanıt → başarı", async () => {
+    fetchVer({ status: 200, json: { linked: true, scope: "personal", linked_at: "2026-08-28 07:00:00.000Z" } });
+    const d = await sync.pbTelegramDurum();
+    expect(d).toEqual({ linked: true, scope: "personal", linkedAt: "2026-08-28 07:00:00.000Z" });
+  });
+
+  it("TC-R06b hassas/bilinmeyen alan içeren yanıt kabul EDİLMEZ (endpoint regresyon kalkanı)", async () => {
+    const temel = { linked: true, scope: "personal", linked_at: "2026-08-28 07:00:00.000Z" };
+    for (const ek of [{ telegram_user_id: "770000123456" }, { user: "u1" }, { user_id: "u1" }, { link_id: "l1" }, { data: { gelirler: [] } }, { revision: 3 }, { token: "TOK" }]) {
+      fetchVer({ status: 200, json: { ...temel, ...ek } });
+      await expect(sync.pbTelegramDurum()).rejects.toThrow(/beklenmeyen alan/);
+    }
+    fetchVer({ status: 200, json: { linked: false, telegram_user_id: "770000123456" } });
+    await expect(sync.pbTelegramDurum()).rejects.toThrow(/beklenmeyen alan/); // unlinked yanıt da korunur
+  });
+
   it("TC-U12 oturum yokken üç fonksiyon da çağrı YAPMADAN hata verir", async () => {
     sync.pbCikis();
     const c = fetchVer({ status: 200, json: { linked: false } });
