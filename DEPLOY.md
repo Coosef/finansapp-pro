@@ -71,6 +71,24 @@ Tüneli **tek origin** olarak `http://localhost:8080`'e yönlendir — hepsi (ar
 docker compose pull && docker compose up -d      # GHCR'dan yeni imajlar
 ```
 
+## Telegram Finance Gateway imajı (opsiyonel bileşen)
+
+Telegram entegrasyonu ayrı bir konteyner olarak çalışır ve **ayrı** bir iş akışıyla yayınlanır
+(`.github/workflows/gateway-publish.yml`; frontend/PB matrisinden bağımsız):
+
+```
+ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
+```
+
+- **Dağıtım otoritesi manifest digest'idir**; compose'da `latest` DEĞİL, `@sha256:…` kullan.
+- Zorunlu çalışma-zamanı ayarları: `TG_BOT_TOKEN` (veya `TG_BOT_TOKEN_FILE`),
+  `TG_GATEWAY_SECRET` (veya `TG_GATEWAY_SECRET_FILE`), `PB_URL` (PocketBase kökü, ör.
+  `http://finansapp-pb:8090` — `/pb` eki YOK). `NODE_ENV`, `TZ`, `HEARTBEAT_FILE` imajda gömülü.
+- PocketBase tarafı `TG_GATEWAY_SECRET` ve `TG_PAIRING_PEPPER` bekler (her ikisi de `_FILE`
+  biçimini destekler).
+- Gateway **dışarı port açmaz**, webhook kullanmaz (yalnız giden long-poll), non-root (uid 1000)
+  çalışır ve heartbeat healthcheck'i vardır. Tek replika olmalıdır.
+
 ## Notlar
 
 - İmajlar **multi-arch** (amd64 + arm64) — x86 mini-PC ve ARM (Raspberry vb.) çalışır.
