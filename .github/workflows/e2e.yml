@@ -47,6 +47,17 @@ jobs:
       - name: Playwright browser + runtime deps
         run: npx playwright install --with-deps chromium
 
+      # --- Telegram T1C StrictMode DEV smoke (React.StrictMode çift-efekt davranışı) ---
+      # AMAÇ: StrictMode kurulum→temizlik→kurulum probu YALNIZ development derlemesinde çalışır;
+      # production-preview suite'i bu sınıf hatayı (mounted-ref ikinci kurulumda false kalırsa
+      # async durum sonuçları sonsuza dek yok sayılır → kart kalıcı "yükleniyor") KANITLAYAMAZ.
+      # Bu yüzden GERÇEK `vite dev` sunucusu + kendi izole throwaway PocketBase 0.39.10'u
+      # (playwright.dev.config.js globalSetup/teardown, ana suite ile aynı desen) kullanılır.
+      # Production erişimi YOK, retries=0, workers=1 (config). Fail ederse bu workflow düşer.
+      # NOT: production-preview testine ÇEVRİLMEMELİ — amacı tam olarak development StrictMode.
+      - name: Telegram T1C StrictMode dev smoke
+        run: npm run test:e2e:dev
+
       # --- İzole PB 0.39.10 (globalSetup docker) + fixture seed + preview + tüm suite ---
       # PocketBase E2E sürümü globalSetup içinde 0.39.10'a PIN'li (asla :latest).
       # AI (senaryo L) gerçek /pb/ai endpoint'ini page.route() ile mock eder → gerçek
