@@ -1,0 +1,66 @@
+name: Telegram Gateway
+
+# T1B gateway: unit (fake pb/tg) + integration (GERÇEK PocketBase 0.39.10 docker + fake Telegram)
+# + Docker imaj doğrulaması (non-root, açık port YOK, healthcheck, build identity). Yayın/deploy YOK.
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: Telegram Gateway        # branch protection için kararlı required-check adı
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22        # gateway node22 hedefler (frontend node20'den ayrı)
+
+      # Bağımlılık yok (node builtins + fetch) → npm install gerekmez.
+      - name: Gateway unit tests (fake pb/tg)
+        run: node --test gateway/test/unit.test.mjs
+
+      # İzole GERÇEK PB 0.39.10 (test kendi docker container'ını yönetir) + fake Telegram. 3× determinizm.
+      - name: Gateway integration (real PB + fake Telegram) ×3
+        run: |
+          for i in 1 2 3; do
+            echo "== gateway integration run $i/3 =="
+            node --test gateway/test/integration.test.mjs
+          done
+
+      # İmaj doğrulaması: NON-ROOT + AÇIK PORT YOK + HEALTHCHECK + build identity (SHA, 'dev' değil).
+      - name: Gateway image build & guardrail verify
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          docker build -f gateway/Dockerfile --build-arg BUILD_SHA=$SHA -t finansapp-tg-gateway:ci .
+          U=$(docker run --rm --entrypoint sh finansapp-tg-gateway:ci -c 'id -u')
+          [ "$U" = "1000" ] || { echo "FAIL: image not non-root (uid=$U)"; exit 1; }
+          PORTS=$(docker image inspect finansapp-tg-gateway:ci --format '{{.Config.ExposedPorts}}')
+          [ "$PORTS" = "map[]" ] || { echo "FAIL: image exposes ports: $PORTS"; exit 1; }
+          HC=$(docker image inspect finansapp-tg-gateway:ci --format '{{.Config.Healthcheck.Test}}')
+          [ -n "$HC" ] && [ "$HC" != "[]" ] || { echo "FAIL: no healthcheck"; exit 1; }
+          S=$(docker run --rm --entrypoint sh finansapp-tg-gateway:ci -c 'echo $BUILD_SHA')
+          [ "$S" = "$SHA" ] && [ "$S" != "dev" ] || { echo "FAIL: BUILD_SHA not injected ($S vs $SHA)"; exit 1; }
+          echo "OK: non-root(uid=$U) · no exposed port · healthcheck=$HC · BUILD_SHA=$S"
+
+      # Fail-closed başlangıç: zorunlu config yoksa exit≠0 (secret sızmadan).
+      - name: Gateway fail-closed startup verify
+        run: |
+          set +e
+          OUT=$(docker run --rm finansapp-tg-gateway:ci 2>&1); CODE=$?
+          echo "$OUT"
+          [ $CODE -ne 0 ] || { echo "FAIL: config yokken exit 0"; exit 1; }
+          echo "$OUT" | grep -q "fail-closed" || { echo "FAIL: fail-closed mesajı yok"; exit 1; }
+          echo "OK: fail-closed (exit=$CODE)"

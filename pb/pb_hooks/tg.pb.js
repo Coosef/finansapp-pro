@@ -45,23 +45,24 @@ routerAdd("POST", "/api/tg/user/pair-code", (e) => {
   return e.json(200, { code, expires_in: Math.floor(T.CODE_TTL_MS / 1000) }); // plaintext YALNIZ burada, bir kez
 }, $apis.requireAuth("users"));
 
-// Durum — yalnız kendi link metadata'sı.
+// Durum — yalnız kendi link metadata'sı. F2: tekKayit → DB hatası 500 olarak yayılır,
+// ASLA yanlış {linked:false} dönmez.
 routerAdd("POST", "/api/tg/user/status", (e) => {
+  const T = require(`${__hooks}/tg_lib.js`);
   const auth = e.auth;
   if (!auth) throw new UnauthorizedError("Giriş gerekli.");
-  let link = null;
-  try { link = e.app.findFirstRecordByFilter("telegram_links", "user = {:u} && active = true", { u: auth.id }); } catch (_) { link = null; }
+  const link = T.tekKayit(e.app, "telegram_links", "user = {:u} && active = true", { u: auth.id });
   if (!link) return e.json(200, { linked: false });
   return e.json(200, { linked: true, telegram_user_id: link.get("telegram_user_id"), scope: link.get("scope"), linked_at: link.get("linked_at") });
 }, $apis.requireAuth("users"));
 
 // Unlink — yalnız kendi link'i. users.data/revision'a DOKUNMAZ.
+// F2: lookup/save hatası yayılır (yanlış 200 YOK); gerçek "link yok" → idempotent 200.
 routerAdd("POST", "/api/tg/user/unlink", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   const auth = e.auth;
   if (!auth) throw new UnauthorizedError("Giriş gerekli.");
-  let link = null;
-  try { link = e.app.findFirstRecordByFilter("telegram_links", "user = {:u} && active = true", { u: auth.id }); } catch (_) { link = null; }
+  const link = T.tekKayit(e.app, "telegram_links", "user = {:u} && active = true", { u: auth.id });
   if (link) { link.set("active", false); link.set("unlinked_at", T.isoAt(0)); e.app.save(link); }
   return e.json(200, { ok: true });
 }, $apis.requireAuth("users"));
@@ -85,8 +86,8 @@ routerAdd("POST", "/api/tg/service/pair-consume", (e) => {
   let sonuc = null;
   try {
     e.app.runInTransaction((tx) => {
-      let kod = null;
-      try { kod = tx.findFirstRecordByFilter("telegram_pair_codes", "code_mac = {:m}", { m: codeMac }); } catch (_) { kod = null; }
+      // F2: tekKayit — DB hatası "kod geçersiz"/"link yok" sayılmaz; throw → rollback → dış catch.
+      const kod = T.tekKayit(tx, "telegram_pair_codes", "code_mac = {:m}", { m: codeMac });
       if (!kod) { sonuc = { hata: T.CODE_GENERIC }; return; }
       if (!kod.getDateTime("used_at").isZero()) { sonuc = { hata: T.CODE_GENERIC }; return; }        // single-use
       if (kod.getDateTime("expires_at").before(new DateTime())) { sonuc = { hata: T.CODE_GENERIC }; return; } // expiry
@@ -94,12 +95,10 @@ routerAdd("POST", "/api/tg/service/pair-consume", (e) => {
 
       // F1: YALNIZ AKTİF link'lere göre karar ver; keyfi bir pasif tarihsel satır YENİDEN KULLANILMAZ.
       // Aktif link tgid'i BAŞKA bir user'a mı ait? → reddet (en fazla bir aktif link / tgid).
-      let tgActive = null;
-      try { tgActive = tx.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); } catch (_) { tgActive = null; }
+      const tgActive = T.tekKayit(tx, "telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid });
       if (tgActive && tgActive.get("user") !== userId) { sonuc = { hata: "Bu Telegram hesabı başka bir kullanıcıya bağlı." }; return; }
       // User'ın aktif link'i BAŞKA bir tgid'e mi bağlı? → reddet (en fazla bir aktif link / user).
-      let userActive = null;
-      try { userActive = tx.findFirstRecordByFilter("telegram_links", "user = {:u} && active = true", { u: userId }); } catch (_) { userActive = null; }
+      const userActive = T.tekKayit(tx, "telegram_links", "user = {:u} && active = true", { u: userId });
       if (userActive && String(userActive.get("telegram_user_id")) !== tgid) { sonuc = { hata: "Kullanıcı zaten başka bir Telegram hesabına bağlı." }; return; }
 
       // Idempotent: user zaten AYNI tgid'e aktif bağlıysa mevcut aktif satırı tazele; aksi halde
@@ -118,45 +117,69 @@ routerAdd("POST", "/api/tg/service/pair-consume", (e) => {
       sonuc = { ok: true };
     });
   } catch (err) {
-    // Aktif-link partial unique index ihlali (nadir yarış) → KONTROLLÜ 409, ham 4xx/5xx DEĞİL.
-    // Kod tüketilmez (transaction rollback) → yeniden denenebilir.
-    return e.json(409, { message: "Bağlantı çakışması. Tekrar dene." });
+    // T1B error taxonomy: GERÇEK active-link uniqueness yarışı mı, İLGİSİZ operasyonel hata mı?
+    // Re-query ile sınıflandır (F2 nonce deseniyle aynı): bu tgid'e BAŞKA user aktif bağlı VEYA
+    // kodun user'ı BAŞKA tgid'e aktif bağlıysa → yarış → KONTROLLÜ 409 (kod tüketilmez, retry).
+    // Aksi (bilinmeyen DB/storage/operasyonel hata) → YAY: conflict diye YANLIŞ sınıflandırma
+    // YOK; transaction rollback + fail-closed davranışı korunur.
+    let cakisma = false;
+    let uid2 = null;
+    try { const kod2 = e.app.findFirstRecordByFilter("telegram_pair_codes", "code_mac = {:m}", { m: codeMac }); uid2 = kod2 ? kod2.get("user") : null; } catch (_) { uid2 = null; }
+    try { const tgA = e.app.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); if (tgA && tgA.get("user") !== uid2) cakisma = true; } catch (_) { /* yok */ }
+    if (uid2) { try { const uA = e.app.findFirstRecordByFilter("telegram_links", "user = {:u} && active = true", { u: uid2 }); if (uA && String(uA.get("telegram_user_id")) !== tgid) cakisma = true; } catch (_) { /* yok */ } }
+    if (cakisma) return e.json(409, { message: "Bağlantı çakışması. Tekrar dene." });
+    throw err; // ilgisiz hata — yanlış 409 sınıflandırması YOK
   }
   if (sonuc && sonuc.hata) return e.json(400, { message: sonuc.hata });
   return e.json(200, { ok: true, scope: "personal" });
 });
 
 // Service unlink — link pasifleştir. Finansal veriye dokunmaz.
+// F2: gerçek "aktif link yok" → idempotent 200. Aktif link → pasifleştir + save; 200 YALNIZ
+// başarılı save sonrası. Lookup/save hatası YAYILIR (500) — asla yanlış 200 yok.
 routerAdd("POST", "/api/tg/service/unlink", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   const { tgid } = T.serviceAuth(e, "/api/tg/service/unlink");
   if (!T.TGID_RE.test(tgid)) throw new BadRequestError("Geçersiz telegram_user_id.");
-  let link = null;
-  try { link = e.app.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); } catch (_) { link = null; }
+  const link = T.tekKayit(e.app, "telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid });
   if (link) { link.set("active", false); link.set("unlinked_at", T.isoAt(0)); e.app.save(link); }
   return e.json(200, { ok: true });
 });
 
 // Service data — PB link'i ÇÖZER (gateway iddiasına güvenmez). Personal-only, READ-ONLY.
+// F2: 401/403 YALNIZ servis HMAC/auth hatası için ayrılmıştır. GERÇEK "bağlı değil" = İŞ yanıtı
+// → 404 sabit payload. DB/sorgu hatası tekKayit'ten yayılır (500) — asla "bağlı değil" sayılmaz.
 routerAdd("POST", "/api/tg/service/data", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   const { tgid } = T.serviceAuth(e, "/api/tg/service/data");
   if (!T.TGID_RE.test(tgid)) throw new BadRequestError("Geçersiz telegram_user_id.");
-  let link = null;
-  try { link = e.app.findFirstRecordByFilter("telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid }); } catch (_) { link = null; }
-  if (!link) throw new UnauthorizedError("Bağlı değil.");
+  const link = T.tekKayit(e.app, "telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid });
+  if (!link) return e.json(404, { error: "not_linked" });
   if (link.get("scope") !== "personal") throw new ApiError(400, "Yalnız personal desteklenir (T1).");
   const user = e.app.findRecordById("users", link.get("user")); // finansal kaynak — SADECE OKUMA
   e.response.header().set("Cache-Control", "no-store");
   return e.json(200, { data: user.get("data") || {}, revision: user.getInt("revision"), updated: user.get("updated"), scope: "personal" });
 });
 
+// Service status — METADATA-ONLY link kontrolü (R2/R8). PB tgid'i kendi çözer. Finansal veri YOK,
+// PB user id YOK, mutation YOK. linked=false için de 200 döner (HMAC 401 = saf auth hatası →
+// gateway'de FatalConfig). /link crash-window replay ve /start,/durum,Bağlantı bunu kullanır.
+routerAdd("POST", "/api/tg/service/status", (e) => {
+  const T = require(`${__hooks}/tg_lib.js`);
+  const { tgid } = T.serviceAuth(e, "/api/tg/service/status");
+  if (!T.TGID_RE.test(tgid)) throw new BadRequestError("Geçersiz telegram_user_id.");
+  // F2: tekKayit — GERÇEK "aktif link yok" → {linked:false}; DB/sorgu hatası YAYILIR (500),
+  // gateway'de TransientError olur ve update TAMAMLANMAZ. Yanlış {linked:false} imkânsız.
+  const link = T.tekKayit(e.app, "telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid });
+  if (!link) return e.json(200, { linked: false });
+  return e.json(200, { linked: true, scope: link.get("scope") || "personal" });
+});
+
 // Durable state — explicit next_offset (max(update_id) DEĞİL). Yoksa oluştur.
 routerAdd("POST", "/api/tg/service/state/get", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   T.serviceAuth(e, "/api/tg/service/state/get");
-  let st = null;
-  try { st = e.app.findFirstRecordByFilter("telegram_state", "key = {:k}", { k: "main" }); } catch (_) { st = null; }
+  let st = T.tekKayit(e.app, "telegram_state", "key = {:k}", { k: "main" }); // F2: DB hatası yayılır
   if (!st) {
     st = new Record(e.app.findCollectionByNameOrId("telegram_state"));
     st.set("key", "main"); st.set("next_offset", "");
@@ -175,8 +198,7 @@ routerAdd("POST", "/api/tg/service/update/claim", (e) => {
   const leaseToken = $security.randomString(40);
   let out = null;
   e.app.runInTransaction((tx) => {
-    let rec = null;
-    try { rec = tx.findFirstRecordByFilter("telegram_updates", "update_id = {:u}", { u: uid }); } catch (_) { rec = null; }
+    let rec = T.tekKayit(tx, "telegram_updates", "update_id = {:u}", { u: uid }); // F2: DB hatası yayılır
     if (rec) {
       const st = rec.get("status");
       if (st === "done") { out = { claimed: false, duplicate: true }; return; }
@@ -203,8 +225,9 @@ routerAdd("POST", "/api/tg/service/update/claim", (e) => {
     try { tx.save(rec); out = { claimed: true, lease_token: leaseToken }; }
     catch (err) {
       // R2: kör "duplicate" YOK. Kayıt gerçekten var mı? → durumuna göre çöz; yoksa hatayı YAY.
+      // (Re-query hatasında da ORİJİNAL hata yayılır — muhafazakâr sınıflandırma.)
       let exist = null;
-      try { exist = tx.findFirstRecordByFilter("telegram_updates", "update_id = {:u}", { u: uid }); } catch (_) { exist = null; }
+      try { exist = T.tekKayit(tx, "telegram_updates", "update_id = {:u}", { u: uid }); } catch (_) { exist = null; }
       if (!exist) throw err; // gerçek DB/validation hatası
       out = exist.get("status") === "done" ? { claimed: false, duplicate: true } : { claimed: false, busy: true };
     }
@@ -224,8 +247,7 @@ routerAdd("POST", "/api/tg/service/update/complete", (e) => {
   const failed = body && body.status === "failed";
   let http = 200, out = { ok: true };
   e.app.runInTransaction((tx) => {
-    let rec = null;
-    try { rec = tx.findFirstRecordByFilter("telegram_updates", "update_id = {:u}", { u: uid }); } catch (_) { rec = null; }
+    const rec = T.tekKayit(tx, "telegram_updates", "update_id = {:u}", { u: uid }); // F2: DB hatası yayılır
     if (!rec) { http = 409; out = { error: "no_claim" }; return; }                     // R1: claim yok → offset dokunulmaz
     if (rec.get("status") !== "processing") { http = 409; out = { error: "not_processing" }; return; }
     if (!$security.equal(String(rec.get("lease_token") || ""), leaseToken)) { http = 409; out = { error: "lease_mismatch" }; return; } // R3 fencing
@@ -237,8 +259,7 @@ routerAdd("POST", "/api/tg/service/update/complete", (e) => {
     rec.set("status", "done"); rec.set("completed_at", T.isoAt(0)); rec.set("lease_until", null); rec.set("lease_token", null);
     tx.save(rec);
     const nextOffset = T.deriveNextOffset(uid);                                         // R1: server-derived update_id+1
-    let st = null;
-    try { st = tx.findFirstRecordByFilter("telegram_state", "key = {:k}", { k: "main" }); } catch (_) { st = null; }
+    let st = T.tekKayit(tx, "telegram_state", "key = {:k}", { k: "main" });             // F2: DB hatası yayılır
     if (!st) { st = new Record(tx.findCollectionByNameOrId("telegram_state")); st.set("key", "main"); }
     st.set("next_offset", nextOffset); tx.save(st);
     out = { ok: true, next_offset: nextOffset };

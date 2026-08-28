@@ -84,6 +84,16 @@ function serviceAuth(e, path) {
   return { body, tgid, ts };
 }
 
+// F2: "kayıt yok" ile "operasyonel hata"yı AYIRAN doğrulanmış PB 0.39 sorgu deseni.
+// findRecordsByFilter boş eşleşmede BOŞ DİZİ döner (throw ETMEZ); gerçek sorgu/DB/storage hatası
+// throw eder ve burada YAKALANMAZ → route'ta 500 olarak yüzeye çıkar. Böylece DB hatası asla
+// "link yok / linked:false / idempotent başarı" olarak yanlış sınıflandırılamaz.
+// (Kırılgan insan-dili hata-string ayrıştırması YOK.)
+function tekKayit(dbx, coll, filter, params) {
+  const rows = dbx.findRecordsByFilter(coll, filter, "", 1, 0, params || {});
+  return rows.length ? rows[0] : null;
+}
+
 function rateLimitAsildi(app, tgid, endpoint) {
   const esik = isoAt(-RL_PENCERE_MS);
   const rows = app.findRecordsByFilter(
@@ -97,6 +107,6 @@ function rateLimitAsildi(app, tgid, endpoint) {
 
 module.exports = {
   TGID_RE, PAIR_ALFABE, CODE_TTL_MS, UPDATE_LEASE_MS, CODE_GENERIC,
-  tgSecret, nowSec, isoAt, serviceAuth, rateLimitAsildi,
+  tgSecret, nowSec, isoAt, serviceAuth, rateLimitAsildi, tekKayit,
   validUpdateId, deriveNextOffset,
 };
