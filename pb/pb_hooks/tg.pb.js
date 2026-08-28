@@ -45,15 +45,19 @@ routerAdd("POST", "/api/tg/user/pair-code", (e) => {
   return e.json(200, { code, expires_in: Math.floor(T.CODE_TTL_MS / 1000) }); // plaintext YALNIZ burada, bir kez
 }, $apis.requireAuth("users"));
 
-// Durum — yalnız kendi link metadata'sı. F2: tekKayit → DB hatası 500 olarak yayılır,
-// ASLA yanlış {linked:false} dönmez.
-routerAdd("POST", "/api/tg/user/status", (e) => {
+// Durum — yalnız kendi link metadata'sı. T1C: **GET** (read-only browser rotası; POST kaldırıldı,
+// T1A/T1B deploy edilmediği için uyumluluk yükü yok). Yanıt MİNİMAL:
+//   {linked:false} | {linked:true, scope, linked_at}
+// telegram_user_id / PB user id / link id BROWSER'A DÖNMEZ (numerik Telegram kimliği sunucu-içi
+// altyapıdır, UI'da gerekmez). F2: tekKayit → DB hatası 500 yayılır, yanlış {linked:false} YOK.
+routerAdd("GET", "/api/tg/user/status", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
   const auth = e.auth;
   if (!auth) throw new UnauthorizedError("Giriş gerekli.");
   const link = T.tekKayit(e.app, "telegram_links", "user = {:u} && active = true", { u: auth.id });
+  e.response.header().set("Cache-Control", "no-store");
   if (!link) return e.json(200, { linked: false });
-  return e.json(200, { linked: true, telegram_user_id: link.get("telegram_user_id"), scope: link.get("scope"), linked_at: link.get("linked_at") });
+  return e.json(200, { linked: true, scope: link.get("scope") || "personal", linked_at: String(link.get("linked_at") || "") });
 }, $apis.requireAuth("users"));
 
 // Unlink — yalnız kendi link'i. users.data/revision'a DOKUNMAZ.

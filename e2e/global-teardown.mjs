@@ -8,4 +8,6 @@ export default async function globalTeardown() {
     const dir = readFileSync(join(process.cwd(), "e2e", ".pb-datadir"), "utf8").trim();
     if (dir && dir.includes("fa-e2e-pb-")) rmSync(dir, { recursive: true, force: true });
   } catch { /* yoksay */ }
+  // T1C throwaway TG secret dosyası (asla commit edilmez) — koşu sonunda sil.
+  try { rmSync(join(process.cwd(), "e2e", ".t1c-runtime.json"), { force: true }); } catch { /* yoksay */ }
 }
