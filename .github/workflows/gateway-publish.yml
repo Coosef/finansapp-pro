@@ -1,0 +1,170 @@
+name: Gateway publish
+
+# T1D-1 — Telegram Finance Gateway için AYRI, denetlenebilir, immutable GHCR yayını.
+# YALNIZ ghcr.io/coosef/finansapp-tg-gateway yayınlar; frontend/PB matrisi (docker.yml)
+# DEĞİŞMEZ. Bu SALT registry yayın akışıdır: uzak sunucu erişimi / orkestrasyon / dağıtım İÇERMEZ.
+# Dağıtım otoritesi = immutable manifest digest'i (latest yalnız kolaylık; production compose
+# ASLA latest kullanmaz).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gateway/**"
+      - "src/lib/**"                          # gateway saf finans helper'larını reuse eder
+      - ".dockerignore"                       # context=. → kök .dockerignore GERÇEK build girdisi
+      - ".github/workflows/gateway-publish.yml"
+  # Operasyonel kurtarma için elle tetikleme; parametre YOK (ref kısıtı override EDİLEMEZ).
+  # Kanonik ref kapısı (aşağıdaki ilk adım) main dışını GÜRÜLTÜLÜ biçimde reddeder.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: gateway-publish-${{ github.ref }}
+  cancel-in-progress: false                   # yayın yarıda kesilmesin
+
+jobs:
+  publish:
+    name: Gateway image publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30                       # Buildx/QEMU stall saatlerce sessizce sürmesin
+    steps:
+      # KANONİK REF KAPISI — İLK adım: checkout/GHCR login/metadata/build-push'tan ÖNCE.
+      # Kanonik gateway release'leri YALNIZ main'den çıkar. main dışı bir workflow_dispatch
+      # (feature branch / tag) burada GÜRÜLTÜLÜ biçimde düşer; sessizce atlanmaz (denetlenebilirlik)
+      # ve registry'ye login/push ASLA yapılmaz. Bu kısıtı gevşetecek bir input YOKTUR.
+      - name: Canonical main ref gate
+        run: |
+          echo "ref=$GITHUB_REF event=$GITHUB_EVENT_NAME"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "FAIL: gateway publication is allowed only from refs/heads/main (got: $GITHUB_REF)"
+            exit 1
+          fi
+          echo "OK: kanonik ref (refs/heads/main)"
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: GHCR login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build identity: exact git short SHA (gateway BUILD_TIME KULLANMAZ → gönderilmez).
+      - name: Build identity
+        id: id
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Meta (etiketler)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/coosef/finansapp-tg-gateway
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+          # org.opencontainers.image.revision = TAM commit SHA (metadata-action varsayılanı)
+
+      # Build context REPO KÖKÜ (gateway ../src/lib saf helper'larını kopyalar).
+      # SECRET ENJEKTE EDİLMEZ: yalnız BUILD_SHA. Çalışma-zamanı gizlileri ve backend adresi
+      # build-arg / label / imaj katmanı / log'a ASLA girmez (yalnız deploy anında env ile verilir).
+      - name: Build & push (amd64 + arm64)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            BUILD_SHA=${{ steps.id.outputs.short }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Digest yoksa veya sha256:<64hex> değilse yayın BAŞARISIZ sayılır.
+      - name: Verify digest captured
+        id: digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "digest=$DIGEST"
+          echo "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "FAIL: geçersiz/eksik digest"; exit 1; }
+          echo "value=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # GHCR'den (yerel build çıktısından DEĞİL) manifest doğrulaması: çalıştırılabilir
+      # platformlar TAM olarak amd64+arm64 olmalı. Attestation manifest'leri (unknown/unknown)
+      # ayrıştırılır — üçüncü bir runtime platformu sanılmaz.
+      - name: Verify published manifest (from GHCR)
+        env:
+          REF: ghcr.io/coosef/finansapp-tg-gateway@${{ steps.digest.outputs.value }}
+        run: |
+          docker buildx imagetools inspect "$REF" --raw > /tmp/index.json
+          RUNNABLE=$(jq -r '[.manifests[] | select((.platform.os // "") != "unknown") | "\(.platform.os)/\(.platform.architecture)"] | sort | join(",")' /tmp/index.json)
+          ATTEST=$(jq -r '[.manifests[] | select((.platform.os // "") == "unknown")] | length' /tmp/index.json)
+          echo "runnable=$RUNNABLE attestation_manifests=$ATTEST"
+          [ "$RUNNABLE" = "linux/amd64,linux/arm64" ] || { echo "FAIL: beklenen platformlar yok ($RUNNABLE)"; exit 1; }
+
+      # Runtime guardrail'ları YAYINLANMIŞ artefakt üzerinden (immutable digest ile) kanıtla.
+      - name: Verify published image guardrails (by digest)
+        env:
+          REF: ghcr.io/coosef/finansapp-tg-gateway@${{ steps.digest.outputs.value }}
+          EXPECT_SHA: ${{ steps.id.outputs.short }}
+        run: |
+          docker pull -q "$REF"                       # runner amd64 → amd64 manifest çözülür
+          U=$(docker run --rm --entrypoint sh "$REF" -c 'id -u')
+          [ "$U" = "1000" ] || { echo "FAIL: non-root değil (uid=$U)"; exit 1; }
+          CFGUSER=$(docker image inspect "$REF" --format '{{.Config.User}}')
+          [ "$CFGUSER" = "node" ] || [ "$CFGUSER" = "1000" ] || { echo "FAIL: Config.User beklenmeyen ($CFGUSER)"; exit 1; }
+          PORTS=$(docker image inspect "$REF" --format '{{.Config.ExposedPorts}}')
+          [ "$PORTS" = "map[]" ] || { echo "FAIL: açık port var: $PORTS"; exit 1; }
+          HC=$(docker image inspect "$REF" --format '{{.Config.Healthcheck.Test}}')
+          [ -n "$HC" ] && [ "$HC" != "[]" ] || { echo "FAIL: healthcheck yok"; exit 1; }
+          getenv() { docker image inspect "$REF" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n "s/^$1=//p" | head -1; }
+          S=$(getenv BUILD_SHA); N=$(getenv NODE_ENV); T=$(getenv TZ); H=$(getenv HEARTBEAT_FILE)
+          [ "$S" = "$EXPECT_SHA" ] && [ "$S" != "dev" ] || { echo "FAIL: BUILD_SHA ($S) beklenen ($EXPECT_SHA) değil"; exit 1; }
+          [ "$N" = "production" ] || { echo "FAIL: NODE_ENV=$N"; exit 1; }
+          [ "$T" = "Europe/Istanbul" ] || { echo "FAIL: TZ=$T"; exit 1; }
+          [ "$H" = "/tmp/tg-gateway-heartbeat" ] || { echo "FAIL: HEARTBEAT_FILE=$H"; exit 1; }
+          echo "OK: uid=$U user=$CFGUSER ports=$PORTS healthcheck=var BUILD_SHA=$S NODE_ENV=$N TZ=$T HEARTBEAT_FILE=$H"
+
+      # Fail-closed: zorunlu config YOKKEN yayınlanmış imaj hemen çıkmalı (exit≠0) ve
+      # secret sızdırmadan "fail-closed" demeli. Gerçek Telegram/production PB ÇAĞRILMAZ.
+      - name: Fail-closed startup verify (published image)
+        env:
+          REF: ghcr.io/coosef/finansapp-tg-gateway@${{ steps.digest.outputs.value }}
+        run: |
+          set +e
+          OUT=$(docker run --rm --network none "$REF" 2>&1); CODE=$?
+          echo "$OUT"
+          [ $CODE -ne 0 ] || { echo "FAIL: config yokken exit 0"; exit 1; }
+          echo "$OUT" | grep -q "fail-closed" || { echo "FAIL: fail-closed mesajı yok"; exit 1; }
+          echo "OK: fail-closed (exit=$CODE)"
+
+      # Denetim özeti (secret İÇERMEZ).
+      - name: Release summary
+        env:
+          DIGEST: ${{ steps.digest.outputs.value }}
+          SHORT: ${{ steps.id.outputs.short }}
+        run: |
+          {
+            echo "## Telegram Gateway release"
+            echo ""
+            echo "| alan | değer |"
+            echo "|---|---|"
+            echo "| source SHA | \`${GITHUB_SHA}\` |"
+            echo "| short SHA | \`${SHORT}\` |"
+            echo "| image | \`ghcr.io/coosef/finansapp-tg-gateway\` |"
+            echo "| manifest digest | \`${DIGEST}\` |"
+            echo "| platforms | \`linux/amd64, linux/arm64\` |"
+            echo ""
+            echo "Dağıtım otoritesi **digest**'tir; \`latest\` production compose'da KULLANILMAZ."
+          } >> "$GITHUB_STEP_SUMMARY"
