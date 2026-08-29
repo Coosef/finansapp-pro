@@ -12,7 +12,10 @@ on:
     paths:
       - "gateway/**"
       - "src/lib/**"                          # gateway saf finans helper'larını reuse eder
+      - ".dockerignore"                       # context=. → kök .dockerignore GERÇEK build girdisi
       - ".github/workflows/gateway-publish.yml"
+  # Operasyonel kurtarma için elle tetikleme; parametre YOK (ref kısıtı override EDİLEMEZ).
+  # Kanonik ref kapısı (aşağıdaki ilk adım) main dışını GÜRÜLTÜLÜ biçimde reddeder.
   workflow_dispatch:
 
 permissions:
@@ -29,6 +32,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30                       # Buildx/QEMU stall saatlerce sessizce sürmesin
     steps:
+      # KANONİK REF KAPISI — İLK adım: checkout/GHCR login/metadata/build-push'tan ÖNCE.
+      # Kanonik gateway release'leri YALNIZ main'den çıkar. main dışı bir workflow_dispatch
+      # (feature branch / tag) burada GÜRÜLTÜLÜ biçimde düşer; sessizce atlanmaz (denetlenebilirlik)
+      # ve registry'ye login/push ASLA yapılmaz. Bu kısıtı gevşetecek bir input YOKTUR.
+      - name: Canonical main ref gate
+        run: |
+          echo "ref=$GITHUB_REF event=$GITHUB_EVENT_NAME"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "FAIL: gateway publication is allowed only from refs/heads/main (got: $GITHUB_REF)"
+            exit 1
+          fi
+          echo "OK: kanonik ref (refs/heads/main)"
+
       - uses: actions/checkout@v4
 
       - uses: docker/setup-qemu-action@v3
