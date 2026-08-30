@@ -3,19 +3,23 @@
 // TÜM API kuralları NULL → generic REST ile erişilemez; yalnız server hook'ları okur/yazar.
 //
 // VERİ SINIFLANDIRMASI (dürüst): `answer` alanı kullanıcının finansal verisinden TÜRETİLMİŞ
-// içeriktir ve KALICI olarak (SQLite'ta) yazılır. Kalıcılığı KISA ÖMÜRLÜDÜR: expires_at =
-// +30 dk ve tg_cleanup cron'u süresi geçen satırları siler. "AI cevabı hiç saklanmıyor"
-// İDDİASI YANLIŞ OLURDU — saklanır, sınırlı süreyle.
+// içeriktir ve KALICI olarak (SQLite'ta) yazılır. "AI cevabı hiç saklanmıyor" İDDİASI YANLIŞ
+// OLURDU — saklanır, sınırlı süreyle. İki ayrı sınır vardır ve KARIŞTIRILMAMALIDIR:
+//   • MANTIKSAL geçerlilik  = en fazla 30 dk (expires_at). Süresi dolmuş satır, diskte
+//     dursa bile ASLA cache olarak döndürülmez (tg_ai_lib.aiSatirCoz zorunlu kılar).
+//   • FİZİKSEL silme        = bir SONRAKİ tg_cleanup cron turu (*/15 * * * *).
+//   • NOMİNAL disk kalıcılığı = 30 dk + en fazla 15 dk cron gecikmesi ≈ en fazla ~45 dk.
 //
 // SAKLANMAYANLAR: soru düz metni, konuşma geçmişi, finans context'i, Telegram user id,
-// PB user id, AI anahtarı. Bunların tümü yalnız request_hash içinde (geri döndürülemez
-// HMAC-SHA256 özeti olarak) temsil edilir.
+// PB user id, link id, AI anahtarı. Bunların tümü yalnız request_hash'in GİRDİSİDİR ve
+// geri döndürülemez SHA-256 özeti olarak temsil edilir.
 migrate(
   (app) => {
     const c = new Collection({ type: "base", name: "telegram_ai_results" });
     c.listRule = null; c.viewRule = null; c.createRule = null; c.updateRule = null; c.deleteRule = null;
     c.fields.add(new TextField({ name: "update_id", required: true, pattern: "^[0-9]{1,19}$" }));
-    // request_hash: tgid + update_id + normalize soru + sınırlı geçmiş + sağlayıcı/model özeti.
+    // request_hash: yapısal JSON kanoniğinin SHA-256'sı — link id + PB user id + tgid +
+    // update_id + normalize soru + sınırlı geçmiş + çözülen sağlayıcı/model. Ham id YOK.
     c.fields.add(new TextField({ name: "request_hash", required: true }));
     c.fields.add(new SelectField({ name: "status", required: true, maxSelect: 1, values: ["processing", "done"] }));
     c.fields.add(new TextField({ name: "answer", max: 20000 }));

@@ -610,3 +610,122 @@ test("AI-T2-24b B kullanıcısının verisi hiç okunmaz/etkilenmez", async () =
   const bSonra = await userGet(B.id);
   expect(parmakIzi(bSonra)).toBe(parmakIzi(bOnce));
 });
+
+// ============================================================
+// F1 — hesap-bağlı hash (relink izolasyonu)
+// ============================================================
+test("AI-T2-IDEM-HASH-03/04 relink sonrası ÖNCEKİ kullanıcının cache'i ASLA dönmez", async () => {
+  const tgid = nextTgid();
+  const uid = nextUid();
+  const body = { telegram_user_id: tgid, update_id: uid, question: "Net varlığım ne?" };
+
+  // A kullanıcısına bağlı: ilk yanıt cache'lenir.
+  await baglan(A, tgid);
+  fakeState.metin = "A-KULLANICISININ-CEVABI";
+  const r1 = await ai(body);
+  expect(r1.status).toBe(200);
+  expect(r1.json.answer).toBe("A-KULLANICISININ-CEVABI");
+  expect(istekSayisi()).toBe(1);
+
+  // Aynı tgid unlink → B kullanıcısına relink (aynı update_id + aynı soru).
+  await svc("/api/tg/service/unlink", { telegram_user_id: tgid });
+  await aiKeyAyarla(B.id, { anthropic: "user-key-B" });
+  await findataAyarla(B.id, TEMEL_FINDATA);
+  await baglan(B, tgid);
+
+  const r2 = await ai(body);
+  // Hash link.id + user.id'yi bağladığı için eşleşmez → fail-closed.
+  expect(r2.status).toBe(409);
+  expect(r2.json).toEqual({ error: "idempotency_conflict" });
+  expect(JSON.stringify(r2.json)).not.toContain("A-KULLANICISININ-CEVABI");
+  expect(istekSayisi()).toBe(1); // yeni upstream çağrısı da YOK (fail-closed)
+
+  // Aynı kullanıcıya YENİDEN bağlanmak da yeni bir link kimliği üretir → yine izole.
+  await svc("/api/tg/service/unlink", { telegram_user_id: tgid });
+  await baglan(A, tgid);
+  const r3 = await ai(body);
+  expect(r3.status).toBe(409);
+  expect(JSON.stringify(r3.json)).not.toContain("A-KULLANICISININ-CEVABI");
+});
+
+test("AI-T2-IDEM-HASH-01b kontrol karakterli geçmiş çakışma üretmez (uçtan uca)", async () => {
+  const tgid = nextTgid();
+  await baglan(A, tgid);
+  const uid = nextUid();
+  const temel = { telegram_user_id: tgid, update_id: uid, question: "s" };
+  const r1 = await ai({ ...temel, history: [{ q: "a", a: "b" }] });
+  expect(r1.status).toBe(200);
+  // Ayıraç birleştirmede AYNI kanoniğe düşerdi → burada FARKLI hash → conflict.
+  const r2 = await ai({ ...temel, history: [{ q: "a", a: "" }, { q: "b", a: "" }] });
+  expect(r2.status).toBe(409);
+  expect(r2.json).toEqual({ error: "idempotency_conflict" });
+  expect(istekSayisi()).toBe(1);
+});
+
+// ============================================================
+// F2 — expires_at cache okumada ZORUNLU
+// ============================================================
+async function aiSatiri(uid) {
+  return (await adminList("telegram_ai_results", `update_id="${uid}"`))[0];
+}
+const gecmisIso = (ms) => new Date(Date.now() - ms).toISOString().replace("T", " ");
+
+test("AI-T2-IDEM-TTL-01 süresi dolmuş DONE cron'dan ÖNCE bile ASLA cache olarak dönmez", async () => {
+  const tgid = nextTgid();
+  await baglan(A, tgid);
+  const uid = nextUid();
+  const body = { telegram_user_id: tgid, update_id: uid, question: "TTL zorunluluk" };
+
+  fakeState.metin = "ESKI-CEVAP";
+  expect((await ai(body)).json.answer).toBe("ESKI-CEVAP");
+  expect(istekSayisi()).toBe(1);
+
+  // expires_at'i geçmişe çek (cron HENÜZ çalışmadı; satır fiziksel olarak DURUYOR).
+  const satir = await aiSatiri(uid);
+  await adminPatch("telegram_ai_results", satir.id, { expires_at: gecmisIso(60000) });
+  expect((await aiSatiri(uid)).status).toBe("done"); // satır hâlâ diskte ve DONE
+
+  fakeState.metin = "YENI-CEVAP";
+  const r = await ai(body);
+  expect(r.status).toBe(200);
+  expect(r.json.answer).toBe("YENI-CEVAP");        // eski cevap DÖNMEDİ
+  expect(istekSayisi()).toBe(2);                    // taze upstream çağrısı yapıldı
+  const yeni = await aiSatiri(uid);
+  expect(yeni.answer).toBe("YENI-CEVAP");
+  expect(new Date(yeni.expires_at.replace(" ", "T")).getTime()).toBeGreaterThan(Date.now());
+});
+
+test("AI-T2-IDEM-TTL-02 süresi dolmuş retry TAZE-AI kotasını tüketir", async () => {
+  const tgid = nextTgid();
+  await baglan(A, tgid);
+  const uid = nextUid();
+  const body = { telegram_user_id: tgid, update_id: uid, question: "TTL kota" };
+  const taze = async () => (await adminList("telegram_service_requests", `telegram_user_id="${tgid}"`)).filter((r) => r.endpoint.endsWith("#fresh")).length;
+
+  await ai(body);
+  const once = await taze();
+  expect(once).toBe(1);
+
+  const satir = await aiSatiri(uid);
+  await adminPatch("telegram_ai_results", satir.id, { expires_at: gecmisIso(60000) });
+  await ai(body);
+  expect(await taze()).toBe(once + 1); // süresi dolmuş → TAZE istek sayılır
+});
+
+test("AI-T2-IDEM-TTL-03 süresi DOLMAMIŞ retry cache hit; kota tüketmez", async () => {
+  const tgid = nextTgid();
+  await baglan(A, tgid);
+  const uid = nextUid();
+  const body = { telegram_user_id: tgid, update_id: uid, question: "TTL cache" };
+  const taze = async () => (await adminList("telegram_service_requests", `telegram_user_id="${tgid}"`)).filter((r) => r.endpoint.endsWith("#fresh")).length;
+
+  const r1 = await ai(body);
+  const once = await taze();
+  for (let i = 0; i < 3; i++) {
+    const r = await ai(body);
+    expect(r.status).toBe(200);
+    expect(r.json.answer).toBe(r1.json.answer);
+  }
+  expect(await taze()).toBe(once);
+  expect(istekSayisi()).toBe(1);
+});

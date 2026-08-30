@@ -17,7 +17,8 @@ const C = require(`${__hooks}/tg_ai_context.js`);
 const UPSTREAM_TIMEOUT_SN = 45;   // $http.send timeout (saniye)
 const MAX_TOKENS = 700;           // sunucu sabiti — istemciden ASLA alınmaz
 const AI_LEASE_MS = 90 * 1000;    // ai_results processing lease
-const AI_RESULT_TTL_MS = 30 * 60000; // DONE sonucun saklama süresi (30 dk)
+const AI_RESULT_TTL_MS = 30 * 60000; // DONE sonucun MANTIKSAL geçerliliği (30 dk).
+// Fiziksel silme bir sonraki 15 dk'lık cron turunda → nominal disk kalıcılığı ≈ en fazla 45 dk.
 const AI_RL_MAX = 10;             // taze AI sorusu / tgid / 15 dk
 const AI_RL_ENDPOINT = "/api/tg/service/ai#fresh"; // rate-limit sayaç işaretçisi
 
@@ -202,19 +203,40 @@ function cevapCikar(tip, json) {
   return m && typeof m.content === "string" ? m.content.trim() : "";
 }
 
-// request_hash — tgid + update_id + normalize soru + sınırlı geçmiş + çözülen sağlayıcı/model.
-function istekHash(tgid, uid, soru, history, sag, model) {
-  return $security.sha256(C.hashKanonik(tgid, uid, soru, history, sag, model));
+// request_hash — çözülen link/user kimliği + tgid + update_id + normalize soru + sınırlı
+// geçmiş + çözülen sağlayıcı/model. Kanonikleştirme yapısaldır (bkz. tg_ai_context.hashKanonik).
+// linkId/userId hash GİRDİSİDİR; ham olarak hiçbir yere yazılmaz.
+function istekHash(linkId, userId, tgid, uid, soru, history, sag, model) {
+  return $security.sha256(C.hashKanonik(linkId, userId, tgid, uid, soru, history, sag, model));
 }
 
 // ---- Idempotency satır sınıflandırma (handler scope'u dosya-seviyesini GÖRMEZ → burada) ----
 // Dönüş: {conflict:true} | {cache:"..."} | {busy:true} | {go:true,id}
 function aiSatirCoz(tx, row, hash) {
   const T = require(`${__hooks}/tg_lib.js`);
+  // Hash uyuşmazlığı HER ŞEYDEN önce: farklı istek (veya BAŞKA hesap) → fail-closed.
   if (!$security.equal(String(row.get("request_hash") || ""), hash)) return { conflict: true };
-  if (row.get("status") === "done") return { cache: String(row.get("answer") || "") };
+
+  const simdi = new DateTime();
+  const suresiDolmus = row.getDateTime("expires_at").isZero() || !row.getDateTime("expires_at").after(simdi);
+
+  if (row.get("status") === "done") {
+    // F2: expires_at YALNIZ cron ipucu DEĞİL, MANTIKSAL GEÇERLİLİK sınırıdır.
+    // Süresi dolmuş DONE satırı cron onu fiziksel olarak silmeden önce sorulsa bile
+    // ASLA cache olarak döndürülmez.
+    if (!suresiDolmus) return { cache: String(row.get("answer") || "") };
+    // Süresi dolmuş: eski cevabı TEMİZLE + taze processing lease kur → taze AI isteği olarak
+    // sayılır (kota tüketir) ve yeni upstream çağrısı yapılır.
+    row.set("status", "processing");
+    row.set("answer", "");
+    row.set("lease_until", T.isoAt(AI_LEASE_MS));
+    row.set("expires_at", T.isoAt(AI_RESULT_TTL_MS));
+    tx.save(row);
+    return { go: true, id: row.id, yenilendi: true };
+  }
+
   const lease = row.getDateTime("lease_until");
-  if (!lease.isZero() && lease.after(new DateTime())) return { busy: true }; // aktif claimant → 2. upstream YOK
+  if (!lease.isZero() && lease.after(simdi)) return { busy: true }; // aktif claimant → 2. upstream YOK
   // Stale lease → deterministik devralma.
   row.set("lease_until", T.isoAt(AI_LEASE_MS));
   row.set("expires_at", T.isoAt(AI_RESULT_TTL_MS));

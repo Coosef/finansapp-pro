@@ -99,9 +99,16 @@ ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
   `users.data.ayarlar.apiKey` **kullanılmaz**; anahtar yoksa `409 provider_unavailable/no_key`.
 - Sağlayıcı whitelist'i: `anthropic`, `gemini`, `openai` (URL'ler sabit → SSRF yok). Yerel
   sağlayıcılar (`ollama`/`lmstudio`/`ozel`) sunucudan erişilemez → `409 .../local_only`.
-- Yeni koleksiyon `telegram_ai_results`: response-loss/idempotency için **kısa ömürlü** cevap
-  saklar (`expires_at` = +30 dk, `tg_cleanup` cron'u siler; tüm API kuralları `null`).
-  Soru metni, konuşma geçmişi, finans context'i, Telegram id ve PB id **saklanmaz**.
+- Yeni koleksiyon `telegram_ai_results`: response-loss/idempotency için cevap saklar (tüm API
+  kuralları `null`). Soru metni, konuşma geçmişi, finans context'i, Telegram id ve PB id
+  **saklanmaz**. İki sınır ayrıdır:
+  **mantıksal geçerlilik ≤ 30 dk** (`expires_at`; süresi dolmuş satır diskte dursa bile asla
+  cache olarak dönmez, taze upstream çağrısı yapılır ve kota tüketir) ·
+  **fiziksel silme** bir sonraki `tg_cleanup` turunda (15 dk'da bir) ·
+  **nominal disk kalıcılığı ≈ en fazla 45 dk** (30 dk + ≤15 dk cron gecikmesi).
+- `request_hash` yapısal JSON serileştirmesidir (ayıraç birleştirme yok) ve çözülen **hesap
+  kimliğini** (link id + PB user id) de bağlar → unlink/relink sonrası önceki kullanıcının
+  cache'i asla döndürülemez (fail-closed `409 idempotency_conflict`). Ham id'ler saklanmaz.
 - `UPDATE_LEASE_MS` 120 s → 180 s (AI turu için zaman payı). Fencing semantiği değişmedi.
 
 ### ⚠️ `ai_keys` şema onarımı (migration `1735000600`)

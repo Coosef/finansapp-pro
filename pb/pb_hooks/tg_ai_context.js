@@ -271,10 +271,32 @@ function govdeDogrula(body) {
   return { ok: true, tgid, uid, soru, history };
 }
 
-// request_hash kanonik girdisi (hash primitifi ÇAĞIRAN tarafta — $security.sha256).
-function hashKanonik(tgid, uid, soru, history, saglayici, model) {
-  const h = (history || []).map((x) => `${x.q} ${x.a}`).join("");
-  return ["t2b", tgid, uid, soru, h, saglayici || "", model || ""].join("\n");
+// request_hash kanonik girdisi (hash primitifi CAGIRAN tarafta — $security.sha256).
+//
+// F1 — AYIRAC BIRLESTIRME YOK: kullanici-kontrollu metinler (soru, gecmis) ayiracla duz metne
+// katlanirsa farkli girdiler AYNI kanonigi uretebilir (satir sonu / U+0000 / U+0001 enjeksiyonu).
+// Bunun yerine JSON dizi serilestirmesi kullanilir: her eleman kendi tirnakli+escape'li alaninda
+// durur -> belirsizlik yok. (Onceki surum NUL/SOH ayiraci kullaniyordu; kaynakta ham kontrol
+// baytlari da birakiyordu.)
+//
+// KIMLIK BAGLAMA: hash yalniz (tgid, update_id, soru, gecmis) degil, COZULEN HESAP KIMLIGINI de
+// baglar (linkId + userId). Ayni tgid+update_id unlink/relink ile BASKA bir PB kullanicisina
+// baglanirsa hash DEGISIR -> onceki kullanicinin cache'lenmis cevabi ASLA dondurulemez
+// (fail-closed: idempotency_conflict).
+//
+// linkId/userId YALNIZ hash GIRDISIDIR; telegram_ai_results'a ham olarak YAZILMAZ.
+function hashKanonik(linkId, userId, tgid, uid, soru, history, saglayici, model) {
+  return JSON.stringify([
+    "t2b-v2",
+    String(linkId || ""),
+    String(userId || ""),
+    String(tgid || ""),
+    String(uid || ""),
+    String(soru || ""),
+    (history || []).map((x) => [String((x && x.q) || ""), String((x && x.a) || "")]),
+    String(saglayici || ""),
+    String(model || ""),
+  ]);
 }
 
 module.exports = {

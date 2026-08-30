@@ -114,6 +114,12 @@ jobs:
             npx playwright test --config=playwright.t2b.config.js --workers=1 --retries=0
           done
 
+      # --- ai_keys şema onarımı: GERÇEK yükseltme testi (temiz DB'den DEĞİL) ---
+      # PRE-REPAIR (bozuk 1735000200 davranışı + yetim satırlar) durumundan başlar, AYNI veri
+      # dizininde tam migration setiyle yeniden başlatıp onarımı kanıtlar.
+      - name: "ai_keys upgrade repair test (UPG-01..08)"
+        run: npm run test:pb:upgrade
+
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
       # HTML report + trace.zip (console + network dahil) + screenshot + video.
       # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.

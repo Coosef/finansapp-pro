@@ -305,7 +305,9 @@ routerAdd("POST", "/api/tg/service/ai", (e) => {
   const key = A.anahtarCoz(e.app, user.id, sc.sag);
   if (!key) return e.json(409, { error: "provider_unavailable", reason: "no_key" });
 
-  const hash = A.istekHash(tgid, uid, soru, history, sc.sag, sc.model);
+  // F1: hash çözülen HESAP KİMLİĞİNİ de bağlar (link.id + user.id) → relink sonrası
+  // önceki kullanıcının cache'i ASLA eşleşmez. Ham id'ler saklanmaz, yalnız hash girdisidir.
+  const hash = A.istekHash(link.id, user.id, tgid, uid, soru, history, sc.sag, sc.model);
 
   // ---- Idempotency: DONE cache / hash conflict / aktif lease / stale devralma ----
   let durum = null;
@@ -359,7 +361,9 @@ routerAdd("POST", "/api/tg/service/ai", (e) => {
     return e.json(r.http, r.sinif ? { error: r.error, class: r.sinif } : { error: r.error });
   }
 
-  // ---- DONE olarak dayanıklı sakla (kısa ömürlü: expires_at = +30 dk, cron siler) ----
+  // ---- DONE olarak dayanıklı sakla ----
+  // Mantıksal geçerlilik: expires_at = +30 dk (süresi dolunca cache olarak DÖNDÜRÜLMEZ).
+  // Fiziksel silme: sonraki 15 dk'lık cron turu → nominal disk kalıcılığı ≈ en fazla 45 dk.
   try {
     const row = e.app.findRecordById("telegram_ai_results", durum.id);
     row.set("status", "done");
