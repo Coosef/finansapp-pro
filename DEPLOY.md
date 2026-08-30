@@ -89,6 +89,70 @@ ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
 - Gateway **dışarı port açmaz**, webhook kullanmaz (yalnız giden long-poll), non-root (uid 1000)
   çalışır ve heartbeat healthcheck'i vardır. Tek replika olmalıdır.
 
+## Telegram AI (T2B — PocketBase servis ucu)
+
+- Yeni servis ucu: `POST /api/tg/service/ai` (gateway HMAC v1 ile çağırır; tarayıcı `/ai`
+  ucu **değişmedi**). Yalnız **metin** döner; ham `users.data`, PB id, e-posta veya AI anahtarı
+  gateway'e gitmez.
+- Kimlik bilgisi kaynağı **yalnız** ilgili kullanıcının `ai_keys` kaydıdır. Telegram AI için
+  `ANTHROPIC_API_KEY`/`GEMINI_API_KEY`/`OPENAI_API_KEY` env fallback'i ve legacy
+  `users.data.ayarlar.apiKey` **kullanılmaz**; anahtar yoksa `409 provider_unavailable/no_key`.
+- Sağlayıcı whitelist'i: `anthropic`, `gemini`, `openai` (URL'ler sabit → SSRF yok). Yerel
+  sağlayıcılar (`ollama`/`lmstudio`/`ozel`) sunucudan erişilemez → `409 .../local_only`.
+- Yeni koleksiyon `telegram_ai_results`: response-loss/idempotency için cevap saklar (tüm API
+  kuralları `null`). Soru metni, konuşma geçmişi, finans context'i, Telegram id ve PB id
+  **saklanmaz**. İki sınır ayrıdır:
+  **mantıksal geçerlilik ≤ 30 dk** (`expires_at`; süresi dolmuş satır diskte dursa bile asla
+  cache olarak dönmez, taze upstream çağrısı yapılır ve kota tüketir) ·
+  **fiziksel silme** bir sonraki `tg_cleanup` turunda (15 dk'da bir) ·
+  **nominal disk kalıcılığı ≈ en fazla 45 dk** (30 dk + ≤15 dk cron gecikmesi).
+- `request_hash` yapısal JSON serileştirmesidir (ayıraç birleştirme yok) ve çözülen **hesap
+  kimliğini** (link id + PB user id) de bağlar → unlink/relink sonrası önceki kullanıcının
+  cache'i asla döndürülemez (fail-closed `409 idempotency_conflict`). Ham id'ler saklanmaz.
+- `UPDATE_LEASE_MS` 120 s → 180 s (AI turu için zaman payı). Fencing semantiği değişmedi.
+
+### ⚠️ `ai_keys` şema onarımı (migration `1735000600`)
+
+`1735000200_ai_keys.js`, koleksiyonu PB 0.39.10'da sessizce yok sayılan `fields: [...]`
+constructor dizisiyle oluşturuyordu; sonuçta `ai_keys` yalnız `id` alanıyla, indekssiz kaldı.
+Bu yüzden bugüne kadar **kullanıcının kaydettiği AI anahtarı hiç saklanmadı** ve `ai.pb.js`
+her zaman sessizce env anahtarına düştü (filtre hatası oradaki `try/catch` tarafından
+yutuluyordu). `1735000600_ai_keys_repair.js` eksik `user`/`keys` alanlarını ve unique index'i
+idempotent biçimde ekler; yalnız `id` taşıyan (bilgi içermeyen) yetim satırları siler.
+
+### ⚠️ `ai.pb.js` handler-scope onarımı (T2B.1)
+
+Şema onarımı sırasında **ikinci, bağımsız** bir kusur çıktı: `ai.pb.js` içindeki `routerAdd()`
+handler'ları dosya-seviyesindeki `UST` / `anahtarKaydiBul` / `anahtarBul` sembollerine
+başvuruyordu. PocketBase 0.39.10 JSVM'de handler'lar dosya-seviyesi leksik scope'u **görmez**
+(aynı kural `tg.pb.js` başında belgeli). Sonuç: `/ai`, `/ai/anahtar` ve `/ai/anahtar/durum`
+**her zaman** `400 ReferenceError` dönüyordu — sunucu-taraflı tarayıcı AI proxy'si hiç
+çalışmamıştı. (`l-ai-fallback` E2E'si `/pb/ai`'yi tarayıcıda mocklandığı için yakalanmamıştı.)
+
+Onarım **çalışma modeliyle** sınırlıdır: paylaşılan yardımcılar `pb/pb_hooks/ai_lib.js`
+modülüne taşındı ve her handler bunu **kendi içinde** `require()` ediyor (`tg.pb.js` deseni).
+Ürün davranışı değişmedi: sağlayıcı whitelist'i (`anthropic|gemini|openai`), sabit upstream
+URL'leri, anahtar önceliği (**kullanıcı anahtarı → sunucu env fallback**), anahtar değerinin
+istemciye asla dönmemesi ve anahtarsızken `503` aynen korunuyor. Ek olarak `keys` JSON alanı
+artık normalize ediliyor → bir sağlayıcının anahtarını kaydetmek diğerininkini silmiyor.
+
+**Dağıtım etkisi:** bu iki onarım birlikte deploy edildiğinde tarayıcı `/ai` akışı **ilk kez
+gerçekten çalışır** ve kodun zaten amaçladığı sırayı izler: önce kullanıcının kendi anahtarı,
+yoksa sunucu env anahtarı. Bugüne kadar hiçbir kullanıcı anahtarı saklanamadığı için pratikte
+yalnız env anahtarı devredeydi; kullanıcılar kendi anahtarlarını girmek isteyebilir.
+
+`AI_PROXY_TEST_UPSTREAM` yalnız test içindir: `http://127.0.0.1|localhost|host.docker.internal:<port>`
+biçimindeyse kabul edilir, yalnız **origin**'i değiştirir, kanonik sağlayıcı yolunu korur.
+Üretimde tanımlı değildir; tanımlı olsa bile hedef loopback ile sınırlıdır (SSRF yüzeyi yok).
+
+### Test-only knob'lar (üretimde YOK)
+
+`TG_AI_TEST_UPSTREAM` yalnız `http://127.0.0.1|localhost|host.docker.internal:<port>`
+biçimindeyse kabul edilir ve yalnız upstream **origin**'ini değiştirir (yol korunur);
+`TG_AI_TEST_TIMEOUT_SN` yalnız bu test origin'i aktifken ve 1..45 s aralığında geçerlidir.
+Üretim PocketBase'inde bu env'ler tanımlı değildir; tanımlı olsalar bile hedef loopback ile
+sınırlı olduğundan sağlayıcı whitelist'i zayıflamaz.
+
 ## Notlar
 
 - İmajlar **multi-arch** (amd64 + arm64) — x86 mini-PC ve ARM (Raspberry vb.) çalışır.

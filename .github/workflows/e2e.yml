@@ -104,6 +104,24 @@ jobs:
             npx playwright test --config=playwright.tg.config.js --workers=1 --retries=0
           done
 
+      # --- Telegram AI T2B PB servis sözleşmesi E2E ---
+      # Ayrı config (playwright.t2b.config.js, *.t2b.mjs); browser YOK. İzole throwaway PB +
+      # host'ta FAKE AI upstream (gerçek sağlayıcı anahtarı GEREKMEZ). 3× determinizm.
+      - name: "Telegram AI T2B E2E (AI-T2-* ×3)"
+        run: |
+          for i in 1 2 3; do
+            echo "== T2B suite run $i/3 =="
+            npx playwright test --config=playwright.t2b.config.js --workers=1 --retries=0
+          done
+
+      # --- ai_keys şema onarımı + tarayıcı AI proxy kabul testi (temiz DB'den DEĞİL) ---
+      # PRE-REPAIR (bozuk 1735000200 davranışı + yetim satırlar) durumundan başlar, AYNI veri
+      # dizininde tam migration setiyle yeniden başlatıp onarımı kanıtlar; ardından GERÇEK
+      # /ai, /ai/anahtar, /ai/anahtar/durum davranışını FAKE yerel upstream ile doğrular
+      # (dış AI servisi ve gerçek sağlayıcı anahtarı GEREKMEZ).
+      - name: "ai_keys upgrade + browser AI proxy (UPG-01..09)"
+        run: npm run test:pb:upgrade
+
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
       # HTML report + trace.zip (console + network dahil) + screenshot + video.
       # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.

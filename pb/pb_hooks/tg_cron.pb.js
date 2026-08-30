@@ -16,5 +16,10 @@ cronAdd("tg_cleanup", "*/15 * * * *", () => {
   sil("telegram_pair_codes", "expires_at < {:g}", { g: T.isoAt(-60 * 60000) });
   // updates: YALNIZ terminal (done/failed) ve 7 günden eski. processing dokunulmaz.
   sil("telegram_updates", "(status = 'done' || status = 'failed') && updated < {:o}", { o: T.isoAt(-7 * 24 * 60 * 60000) });
+  // T2B: ai_results — mantıksal geçerliliği (expires_at, en fazla 30 dk) dolmuş idempotency/
+  // DONE satırları. Bu cron FİZİKSEL silme backstop'udur: cache okuma tarafı süresi dolmuş
+  // satırı zaten ASLA döndürmez. Cron 15 dk'da bir koştuğundan nominal disk kalıcılığı
+  // 30 dk + ≤15 dk ≈ en fazla ~45 dk'dır (30 dk DEĞİL).
+  sil("telegram_ai_results", "expires_at < {:n}", { n: nowIso });
   // telegram_links, telegram_state: rutin silme YOK.
 });
