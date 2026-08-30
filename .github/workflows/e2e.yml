@@ -114,10 +114,12 @@ jobs:
             npx playwright test --config=playwright.t2b.config.js --workers=1 --retries=0
           done
 
-      # --- ai_keys şema onarımı: GERÇEK yükseltme testi (temiz DB'den DEĞİL) ---
+      # --- ai_keys şema onarımı + tarayıcı AI proxy kabul testi (temiz DB'den DEĞİL) ---
       # PRE-REPAIR (bozuk 1735000200 davranışı + yetim satırlar) durumundan başlar, AYNI veri
-      # dizininde tam migration setiyle yeniden başlatıp onarımı kanıtlar.
-      - name: "ai_keys upgrade repair test (UPG-01..08)"
+      # dizininde tam migration setiyle yeniden başlatıp onarımı kanıtlar; ardından GERÇEK
+      # /ai, /ai/anahtar, /ai/anahtar/durum davranışını FAKE yerel upstream ile doğrular
+      # (dış AI servisi ve gerçek sağlayıcı anahtarı GEREKMEZ).
+      - name: "ai_keys upgrade + browser AI proxy (UPG-01..09)"
         run: npm run test:pb:upgrade
 
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---

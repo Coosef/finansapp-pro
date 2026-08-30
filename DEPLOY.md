@@ -120,10 +120,30 @@ her zaman sessizce env anahtarına düştü (filtre hatası oradaki `try/catch` 
 yutuluyordu). `1735000600_ai_keys_repair.js` eksik `user`/`keys` alanlarını ve unique index'i
 idempotent biçimde ekler; yalnız `id` taşıyan (bilgi içermeyen) yetim satırları siler.
 
-**Dağıtım etkisi:** bu migration'dan sonra tarayıcı `/ai` akışı, kodun zaten amaçladığı gibi
-önce kullanıcının kendi anahtarını, yoksa env anahtarını kullanır. `ai.pb.js` kaynağı
-değişmedi — değişen tek şey, o davranışın artık gerçekten çalışabilmesidir. Sunucu env
-anahtarına bağlı bir kurulumda kullanıcıların kendi anahtarlarını girmesi gerekebilir.
+### ⚠️ `ai.pb.js` handler-scope onarımı (T2B.1)
+
+Şema onarımı sırasında **ikinci, bağımsız** bir kusur çıktı: `ai.pb.js` içindeki `routerAdd()`
+handler'ları dosya-seviyesindeki `UST` / `anahtarKaydiBul` / `anahtarBul` sembollerine
+başvuruyordu. PocketBase 0.39.10 JSVM'de handler'lar dosya-seviyesi leksik scope'u **görmez**
+(aynı kural `tg.pb.js` başında belgeli). Sonuç: `/ai`, `/ai/anahtar` ve `/ai/anahtar/durum`
+**her zaman** `400 ReferenceError` dönüyordu — sunucu-taraflı tarayıcı AI proxy'si hiç
+çalışmamıştı. (`l-ai-fallback` E2E'si `/pb/ai`'yi tarayıcıda mocklandığı için yakalanmamıştı.)
+
+Onarım **çalışma modeliyle** sınırlıdır: paylaşılan yardımcılar `pb/pb_hooks/ai_lib.js`
+modülüne taşındı ve her handler bunu **kendi içinde** `require()` ediyor (`tg.pb.js` deseni).
+Ürün davranışı değişmedi: sağlayıcı whitelist'i (`anthropic|gemini|openai`), sabit upstream
+URL'leri, anahtar önceliği (**kullanıcı anahtarı → sunucu env fallback**), anahtar değerinin
+istemciye asla dönmemesi ve anahtarsızken `503` aynen korunuyor. Ek olarak `keys` JSON alanı
+artık normalize ediliyor → bir sağlayıcının anahtarını kaydetmek diğerininkini silmiyor.
+
+**Dağıtım etkisi:** bu iki onarım birlikte deploy edildiğinde tarayıcı `/ai` akışı **ilk kez
+gerçekten çalışır** ve kodun zaten amaçladığı sırayı izler: önce kullanıcının kendi anahtarı,
+yoksa sunucu env anahtarı. Bugüne kadar hiçbir kullanıcı anahtarı saklanamadığı için pratikte
+yalnız env anahtarı devredeydi; kullanıcılar kendi anahtarlarını girmek isteyebilir.
+
+`AI_PROXY_TEST_UPSTREAM` yalnız test içindir: `http://127.0.0.1|localhost|host.docker.internal:<port>`
+biçimindeyse kabul edilir, yalnız **origin**'i değiştirir, kanonik sağlayıcı yolunu korur.
+Üretimde tanımlı değildir; tanımlı olsa bile hedef loopback ile sınırlıdır (SSRF yüzeyi yok).
 
 ### Test-only knob'lar (üretimde YOK)
 

@@ -13,6 +13,7 @@
 // Gerçek AI sağlayıcı anahtarı GEREKMEZ; dış AI servisine çağrı yapılmaz.
 // ============================================================
 import { test, before, after } from "node:test";
+import http from "node:http";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, copyFileSync, readdirSync, rmSync } from "node:fs";
@@ -32,8 +33,14 @@ const USER = { email: "upg-user@finansapp.test", password: "upgpassword123" };
 // Bu sağlayıcı için env anahtarı TANIMLI; gemini için TANIMSIZ → ayrım yapılabilir.
 const ENV_ANTHROPIC = "env-anthropic-" + crypto.randomBytes(6).toString("hex");
 
+const FAKE_PORT = 8798;
+const USER_B = { email: "upg-user-b@finansapp.test", password: "upgpasswordB123" };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let DATA_DIR = "", ONCE_DIR = "", ADMIN = "", USER_ID = "", USER_TOKEN = "", FIN_ONCE = null;
+let B_ID = "", B_TOKEN = "", fake = null;
+// Fake AI upstream — gerçek sağlayıcıya HİÇ çağrı yapılmaz. İstek başlıklarını kaydeder ki
+// hangi anahtarın kullanıldığı (kullanıcı mı env mi) kanıtlanabilsin.
+const fakeState = { istekler: [] };
 const FIN_SEED = { giderler: [{ id: "e1", baslik: "Test", kategori: "Market", miktar: 42, tarih: "2026-08-02" }] };
 
 function docker(args) { return execFileSync("docker", args, { stdio: ["ignore", "pipe", "pipe"] }).toString(); }
@@ -57,6 +64,8 @@ function pbBaslat(migrationsDir) {
     "-e", "FINANSAPP_CAS_ENFORCE=1",
     "-e", "TG_GATEWAY_SECRET=upg", "-e", "TG_PAIRING_PEPPER=upg",
     "-e", `ANTHROPIC_API_KEY=${ENV_ANTHROPIC}`,
+    "-e", `AI_PROXY_TEST_UPSTREAM=http://host.docker.internal:${FAKE_PORT}`,
+    "--add-host=host.docker.internal:host-gateway",
     "-v", `${REPO}/pb/pb_hooks:/pb_hooks`,
     "-v", `${migrationsDir}:/pb_migrations`,
     "-v", `${DATA_DIR}:/pb_data`,
@@ -101,6 +110,25 @@ async function kayitlar(coll) {
   return ((await r.json()).items) || [];
 }
 
+function fakeUpstreamBaslat(port) {
+  return new Promise((resolve) => {
+    const server = http.createServer(async (req, res) => {
+      const ch = []; for await (const c of req) ch.push(c);
+      let body = {}; try { body = JSON.parse(Buffer.concat(ch).toString() || "{}"); } catch { /* */ }
+      fakeState.istekler.push({ url: req.url, headers: req.headers, body });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ content: [{ type: "text", text: "ok" }], choices: [{ message: { content: "ok" } }] }));
+    });
+    server.listen(port, "0.0.0.0", () => resolve(server));
+  });
+}
+// Yanit basliklarindan HANGI anahtarin kullanildigini cikar (deger raporlanmaz, yalnizca
+// beklenen fixture ile karsilastirilir).
+function sonAnahtar(tip) {
+  const h = fakeState.istekler[fakeState.istekler.length - 1].headers;
+  return tip === "anthropic" ? h["x-api-key"] : String(h.authorization || "").replace(/^Bearer /, "");
+}
+
 before(async () => {
   DATA_DIR = mkdtempSync(join(tmpdir(), "fa-upg-pb-"));
   ONCE_DIR = preRepairMigrationsDir();
@@ -121,6 +149,18 @@ before(async () => {
   })).json();
   USER_ID = auth.record.id; USER_TOKEN = auth.token;
 
+  await fetch(BASE + "/api/collections/users/records", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: USER_B.email, password: USER_B.password, passwordConfirm: USER_B.password }),
+  });
+  const authB = await (await fetch(BASE + "/api/collections/users/auth-with-password", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identity: USER_B.email, password: USER_B.password }),
+  })).json();
+  B_ID = authB.record.id; B_TOKEN = authB.token;
+
+  fake = await fakeUpstreamBaslat(FAKE_PORT);
+
   // Finansal veri seed (onarımın dokunmadığını kanıtlamak için)
   const seed = await fetch(BASE + `/api/collections/users/records/${USER_ID}`, {
     method: "PATCH", headers: { Authorization: ADMIN, "Content-Type": "application/json" },
@@ -138,6 +178,7 @@ before(async () => {
 });
 
 after(async () => {
+  if (fake) await new Promise((r) => fake.close(r));
   dockerSessiz(["rm", "-f", CONTAINER]);
   for (const d of [DATA_DIR, ONCE_DIR]) { try { rmSync(d, { recursive: true, force: true }); } catch { /* geç */ } }
 });
@@ -213,47 +254,163 @@ test("UPG-06 unique index gerçekten uygulanıyor (kullanıcı başına tek kay�
 });
 
 // ============================================================
-// UPG-07..09 — F3'ün "onarım sonrası tarayıcı davranışı" ispatı BLOKE.
-//
-// Şema onarımı çalışıyor (UPG-01..06), ancak ai.pb.js rotaları AYRI ve BAĞIMSIZ bir
-// önceden var olan kusur yüzünden hiç çalışmıyor: handler'lar dosya-seviyesindeki
-// `UST` / `anahtarKaydiBul` / `anahtarBul` sembollerine başvuruyor; PocketBase 0.39.10
-// JSVM'de routerAdd handler'ları dosya-seviyesi scope'u GÖRMEZ (aynı kural tg.pb.js'te
-// açıkça belgeli). Sonuç: /ai, /ai/anahtar, /ai/anahtar/durum HER ZAMAN 400 döner.
-//
-// T2B talimatı bu durumda "ai.pb.js DEĞİŞTİRİLMEZ → STOP ve raporla" diyor. Bu yüzden
-// aşağıdaki test kusuru DÜZELTMEZ; MEVCUT gerçeği sabitler. ai.pb.js düzeltildiğinde bu
-// test kırılır ve UPG-07..09'un gerçek davranış ispatına dönüştürülmesi gerektiğini bildirir.
+// UPG-07x / UPG-08x — TARAYICI AI PROXY GERCEK KABUL ISPATI (T2B.1).
+// ai.pb.js handler-scope kusuru onarildi (paylasilan yardimcilar ai_lib.js'te, her handler
+// KENDI ICINDE require ediyor). Asagidaki testler "bilinen bozuk 400" davranisini DEGIL,
+// amaclanan urun davranisini dogrular. Gercek PB 0.39.10 + FAKE yerel upstream; dis AI
+// servisine cagri YOK, gercek saglayici anahtari GEREKMEZ.
 // ============================================================
-test("UPG-07 (BLOKE/kanıt) ai.pb.js handler-scope kusuru: tüm /ai rotaları 400 döner", async () => {
-  const cagir = (yol, govde) => fetch(BASE + yol, {
-    method: "POST", headers: { Authorization: USER_TOKEN, "Content-Type": "application/json" },
-    body: JSON.stringify(govde),
-  });
-  const a = await cagir("/ai/anahtar", { saglayici: "gemini", anahtar: "user-gemini-key" });
-  const b = await cagir("/ai/anahtar/durum", {});
-  const c = await cagir("/ai", { saglayici: "openai", govde: { model: "x", max_tokens: 1, messages: [{ role: "user", content: "ping" }] } });
-  assert.equal(a.status, 400, "/ai/anahtar — bilinen kusur");
-  assert.equal(b.status, 400, "/ai/anahtar/durum — bilinen kusur");
-  assert.equal(c.status, 400, "/ai — bilinen kusur");
-  const hata = await sonHata(/\/ai/);
-  assert.match(hata, /is not defined/, "kök neden: handler dosya-seviyesi scope'u göremiyor; alınan: " + hata);
-  // Kusur nedeniyle hiçbir anahtar YAZILAMAZ → depo boş kalır.
-  assert.deepEqual(await kayitlar("ai_keys"), [], "kusurlu rota hiçbir kayıt oluşturamaz");
+const anahtarKaydet = (token, saglayici, anahtar) => fetch(BASE + "/ai/anahtar", {
+  method: "POST", headers: { Authorization: token, "Content-Type": "application/json" },
+  body: JSON.stringify(anahtar === null ? { saglayici } : { saglayici, anahtar }),
 });
+const anahtarDurum = (token) => fetch(BASE + "/ai/anahtar/durum", {
+  method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: "{}",
+});
+const aiCagir = (token, saglayici) => fetch(BASE + "/ai", {
+  method: "POST", headers: { Authorization: token, "Content-Type": "application/json" },
+  body: JSON.stringify({ saglayici, govde: { model: "m", max_tokens: 8, messages: [{ role: "user", content: "ping" }] } }),
+});
+async function aiKeysTemizle() {
+  for (const r of await kayitlar("ai_keys")) {
+    await fetch(BASE + `/api/collections/ai_keys/records/${r.id}`, { method: "DELETE", headers: { Authorization: ADMIN } });
+  }
+}
+const A_GEMINI = "user-A-gemini-" + crypto.randomBytes(4).toString("hex");
+const A_OPENAI = "user-A-openai-" + crypto.randomBytes(4).toString("hex");
+const A_ANTH = "user-A-anthropic-" + crypto.randomBytes(4).toString("hex");
+const B_GEMINI = "user-B-gemini-" + crypto.randomBytes(4).toString("hex");
 
-test("UPG-08 şema onarımı ai_keys deposunu GERÇEKTEN kullanılabilir yapar (rotadan bağımsız)", async () => {
-  // ai.pb.js bloke olduğu için depo doğrudan (superuser) yazılıp okunur: onarımın asıl
-  // kazanımı budur — onarım ÖNCESİ bu kayıt hiç saklanamıyordu (alanlar yoktu).
-  const olustur = await fetch(BASE + "/api/collections/ai_keys/records", {
-    method: "POST", headers: { Authorization: ADMIN, "Content-Type": "application/json" },
-    body: JSON.stringify({ user: USER_ID, keys: { gemini: "user-gemini-key" } }),
-  });
-  assert.equal(olustur.status, 200, "kayıt oluşturulabilmeli: " + (await olustur.text()));
+test("UPG-07A /ai/anahtar kullanıcı anahtarını kaydeder (200) ve değeri döndürmez", async () => {
+  await aiKeysTemizle();
+  const r = await anahtarKaydet(USER_TOKEN, "gemini", A_GEMINI);
+  const govde = await r.text();
+  assert.equal(r.status, 200, "yanıt: " + govde);
+  assert.ok(!govde.includes(A_GEMINI), "anahtar değeri yanıtta DÖNMEMELİ");
   const satirlar = await kayitlar("ai_keys");
   assert.equal(satirlar.length, 1);
-  assert.equal(satirlar[0].user, USER_ID, "kayıt doğru kullanıcıya bağlı");
-  assert.equal(satirlar[0].keys.gemini, "user-gemini-key", "anahtar GERÇEKTEN saklandı (onarım öncesi imkânsızdı)");
-  // T2B Telegram AI yolu bu depoyu okur ve ÇALIŞIR (tg-t2b-ai suite'i kanıtlıyor);
-  // yani onarım Telegram AI için yeterlidir, tarayıcı /ai için ai.pb.js düzeltmesi gerekir.
+  assert.equal(satirlar[0].user, USER_ID);
+  assert.equal(satirlar[0].keys.gemini, A_GEMINI, "anahtar gerçekten saklandı");
+});
+
+test("UPG-07B /ai/anahtar/durum yalnız boolean döner, değeri sızdırmaz", async () => {
+  const r = await anahtarDurum(USER_TOKEN);
+  const ham = await r.text();
+  assert.equal(r.status, 200, "yanıt: " + ham);
+  const j = JSON.parse(ham);
+  assert.deepEqual(Object.keys(j).sort(), ["anthropic", "gemini", "openai"]);
+  for (const v of Object.values(j)) assert.equal(typeof v, "boolean", "yalnız boolean");
+  assert.equal(j.gemini, true, "kullanıcı anahtarı görünmeli (env'de GEMINI_API_KEY YOK)");
+  assert.equal(j.anthropic, true, "env fallback görünmeli");
+  assert.equal(j.openai, false, "ne kullanıcı ne env → false");
+  assert.ok(!ham.includes(A_GEMINI) && !ham.includes(ENV_ANTHROPIC), "hiçbir anahtar değeri sızmamalı");
+});
+
+test("UPG-07C ikinci sağlayıcı kaydı birincisini YOK ETMEZ", async () => {
+  assert.equal((await anahtarKaydet(USER_TOKEN, "openai", A_OPENAI)).status, 200);
+  const keys = (await kayitlar("ai_keys"))[0].keys;
+  assert.equal(keys.gemini, A_GEMINI, "önceki sağlayıcı anahtarı korunmalı");
+  assert.equal(keys.openai, A_OPENAI, "yeni sağlayıcı anahtarı eklenmeli");
+  const j = await (await anahtarDurum(USER_TOKEN)).json();
+  assert.deepEqual([j.gemini, j.openai], [true, true]);
+});
+
+test("UPG-07D tek sağlayıcı anahtarını silmek diğerlerini etkilemez", async () => {
+  assert.equal((await anahtarKaydet(USER_TOKEN, "openai", "")).status, 200); // boş → sil
+  const keys = (await kayitlar("ai_keys"))[0].keys;
+  assert.equal(keys.openai, undefined, "openai anahtarı silinmeli");
+  assert.equal(keys.gemini, A_GEMINI, "gemini anahtarı korunmalı");
+  const j = await (await anahtarDurum(USER_TOKEN)).json();
+  assert.equal(j.openai, false);
+  assert.equal(j.gemini, true);
+});
+
+test("UPG-07E kullanıcı A'nın anahtarı B için kişisel anahtar SAYILMAZ", async () => {
+  const j = await (await anahtarDurum(B_TOKEN)).json();
+  assert.equal(j.gemini, false, "B'nin kendi gemini anahtarı yok (A'nınki görünmemeli)");
+  assert.equal(j.anthropic, true, "env fallback herkes için geçerli");
+  assert.equal((await anahtarKaydet(B_TOKEN, "gemini", B_GEMINI)).status, 200);
+  const satirlar = await kayitlar("ai_keys");
+  assert.equal(satirlar.length, 2, "kullanıcı başına ayrı kayıt");
+  const aRow = satirlar.find((r) => r.user === USER_ID);
+  const bRow = satirlar.find((r) => r.user === B_ID);
+  assert.equal(aRow.keys.gemini, A_GEMINI);
+  assert.equal(bRow.keys.gemini, B_GEMINI);
+});
+
+test("UPG-07F ai_keys generic REST kuralları NULL — normal kullanıcı erişemez", async () => {
+  const col = await koleksiyon("ai_keys");
+  for (const k of ["listRule", "viewRule", "createRule", "updateRule", "deleteRule"]) {
+    assert.equal(col[k], null, `${k} null olmalı`);
+  }
+  const liste = await fetch(BASE + "/api/collections/ai_keys/records", { headers: { Authorization: USER_TOKEN } });
+  assert.ok(liste.status === 403 || liste.status === 404, "kullanıcı generic REST ile listeleyememeli, alınan " + liste.status);
+  const govde = await liste.text();
+  assert.ok(!govde.includes(A_GEMINI), "anahtar değeri sızmamalı");
+});
+
+test("UPG-08A kullanıcı anahtarı varsa upstream'e KULLANICI anahtarı gider", async () => {
+  fakeState.istekler = [];
+  const r = await aiCagir(USER_TOKEN, "gemini");
+  assert.equal(r.status, 200, "yanıt: " + (await r.text()));
+  assert.equal(fakeState.istekler.length, 1, "tek upstream çağrısı");
+  assert.equal(sonAnahtar("openai"), A_GEMINI, "kullanıcı anahtarı kullanılmalı");
+  assert.match(fakeState.istekler[0].url, /\/v1beta\/openai\/chat\/completions$/, "kanonik sağlayıcı yolu korunmalı");
+});
+
+test("UPG-08B kullanıcı anahtarı yoksa env fallback kullanılır", async () => {
+  fakeState.istekler = [];
+  const r = await aiCagir(USER_TOKEN, "anthropic"); // A'nın anthropic anahtarı YOK, env VAR
+  assert.equal(r.status, 200);
+  assert.equal(fakeState.istekler.length, 1);
+  assert.equal(sonAnahtar("anthropic"), ENV_ANTHROPIC, "env anahtarı kullanılmalı");
+  assert.match(fakeState.istekler[0].url, /\/v1\/messages$/, "kanonik sağlayıcı yolu korunmalı");
+});
+
+test("UPG-08C hem kullanıcı hem env varsa KULLANICI anahtarı kazanır", async () => {
+  assert.equal((await anahtarKaydet(USER_TOKEN, "anthropic", A_ANTH)).status, 200);
+  fakeState.istekler = [];
+  const r = await aiCagir(USER_TOKEN, "anthropic");
+  assert.equal(r.status, 200);
+  assert.equal(sonAnahtar("anthropic"), A_ANTH, "kullanıcı anahtarı env'i geçmeli");
+  assert.notEqual(sonAnahtar("anthropic"), ENV_ANTHROPIC);
+  // temizle: sonraki testler env fallback'e bakıyor
+  assert.equal((await anahtarKaydet(USER_TOKEN, "anthropic", "")).status, 200);
+});
+
+test("UPG-08D ne kullanıcı ne env anahtarı olan sağlayıcı → 503, upstream çağrısı YOK", async () => {
+  fakeState.istekler = [];
+  const r = await aiCagir(USER_TOKEN, "openai"); // openai: kullanıcı anahtarı silindi, env yok
+  assert.equal(r.status, 503);
+  assert.match(JSON.stringify(await r.json()), /anahtar yok/i);
+  assert.equal(fakeState.istekler.length, 0, "anahtar yokken upstream çağrılmamalı");
+});
+
+test("UPG-08E geçersiz sağlayıcı → 400, upstream çağrısı = 0", async () => {
+  fakeState.istekler = [];
+  for (const sag of ["ollama", "lmstudio", "ozel", "http://evil.example/v1", ""]) {
+    const r = await fetch(BASE + "/ai", {
+      method: "POST", headers: { Authorization: USER_TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ saglayici: sag, govde: { messages: [{ role: "user", content: "x" }] } }),
+    });
+    // "" → varsayılan anthropic'e düşer (mevcut davranış); diğerleri whitelist dışı → 400.
+    if (sag === "") { assert.ok(r.status === 200 || r.status === 503, "boş sağlayıcı varsayılana düşer"); continue; }
+    assert.equal(r.status, 400, `${sag} whitelist dışı olmalı`);
+  }
+  const yerelCagri = fakeState.istekler.filter((x) => !/\/v1\/messages$/.test(x.url));
+  assert.equal(yerelCagri.length, 0, "whitelist dışı sağlayıcı için upstream çağrısı olmamalı");
+});
+
+test("UPG-08F kullanıcı B, A'nın anahtarının kullanılmasına yol açamaz", async () => {
+  fakeState.istekler = [];
+  const r = await aiCagir(B_TOKEN, "gemini");
+  assert.equal(r.status, 200);
+  assert.equal(sonAnahtar("openai"), B_GEMINI, "B kendi anahtarını kullanmalı");
+  assert.notEqual(sonAnahtar("openai"), A_GEMINI, "A'nın anahtarı ASLA kullanılmamalı");
+});
+
+test("UPG-09 şema onarımı ai_keys deposunu gerçekten kullanılabilir yapar (özet)", async () => {
+  const satirlar = await kayitlar("ai_keys");
+  assert.ok(satirlar.length >= 1, "kayıtlar kalıcı");
+  assert.ok(satirlar.every((r) => typeof r.user === "string" && r.user.length > 0), "her kayıt bir kullanıcıya bağlı");
 });
