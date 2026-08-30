@@ -89,6 +89,43 @@ ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
 - Gateway **dışarı port açmaz**, webhook kullanmaz (yalnız giden long-poll), non-root (uid 1000)
   çalışır ve heartbeat healthcheck'i vardır. Tek replika olmalıdır.
 
+## Telegram AI (T2B — PocketBase servis ucu)
+
+- Yeni servis ucu: `POST /api/tg/service/ai` (gateway HMAC v1 ile çağırır; tarayıcı `/ai`
+  ucu **değişmedi**). Yalnız **metin** döner; ham `users.data`, PB id, e-posta veya AI anahtarı
+  gateway'e gitmez.
+- Kimlik bilgisi kaynağı **yalnız** ilgili kullanıcının `ai_keys` kaydıdır. Telegram AI için
+  `ANTHROPIC_API_KEY`/`GEMINI_API_KEY`/`OPENAI_API_KEY` env fallback'i ve legacy
+  `users.data.ayarlar.apiKey` **kullanılmaz**; anahtar yoksa `409 provider_unavailable/no_key`.
+- Sağlayıcı whitelist'i: `anthropic`, `gemini`, `openai` (URL'ler sabit → SSRF yok). Yerel
+  sağlayıcılar (`ollama`/`lmstudio`/`ozel`) sunucudan erişilemez → `409 .../local_only`.
+- Yeni koleksiyon `telegram_ai_results`: response-loss/idempotency için **kısa ömürlü** cevap
+  saklar (`expires_at` = +30 dk, `tg_cleanup` cron'u siler; tüm API kuralları `null`).
+  Soru metni, konuşma geçmişi, finans context'i, Telegram id ve PB id **saklanmaz**.
+- `UPDATE_LEASE_MS` 120 s → 180 s (AI turu için zaman payı). Fencing semantiği değişmedi.
+
+### ⚠️ `ai_keys` şema onarımı (migration `1735000600`)
+
+`1735000200_ai_keys.js`, koleksiyonu PB 0.39.10'da sessizce yok sayılan `fields: [...]`
+constructor dizisiyle oluşturuyordu; sonuçta `ai_keys` yalnız `id` alanıyla, indekssiz kaldı.
+Bu yüzden bugüne kadar **kullanıcının kaydettiği AI anahtarı hiç saklanmadı** ve `ai.pb.js`
+her zaman sessizce env anahtarına düştü (filtre hatası oradaki `try/catch` tarafından
+yutuluyordu). `1735000600_ai_keys_repair.js` eksik `user`/`keys` alanlarını ve unique index'i
+idempotent biçimde ekler; yalnız `id` taşıyan (bilgi içermeyen) yetim satırları siler.
+
+**Dağıtım etkisi:** bu migration'dan sonra tarayıcı `/ai` akışı, kodun zaten amaçladığı gibi
+önce kullanıcının kendi anahtarını, yoksa env anahtarını kullanır. `ai.pb.js` kaynağı
+değişmedi — değişen tek şey, o davranışın artık gerçekten çalışabilmesidir. Sunucu env
+anahtarına bağlı bir kurulumda kullanıcıların kendi anahtarlarını girmesi gerekebilir.
+
+### Test-only knob'lar (üretimde YOK)
+
+`TG_AI_TEST_UPSTREAM` yalnız `http://127.0.0.1|localhost|host.docker.internal:<port>`
+biçimindeyse kabul edilir ve yalnız upstream **origin**'ini değiştirir (yol korunur);
+`TG_AI_TEST_TIMEOUT_SN` yalnız bu test origin'i aktifken ve 1..45 s aralığında geçerlidir.
+Üretim PocketBase'inde bu env'ler tanımlı değildir; tanımlı olsalar bile hedef loopback ile
+sınırlı olduğundan sağlayıcı whitelist'i zayıflamaz.
+
 ## Notlar
 
 - İmajlar **multi-arch** (amd64 + arm64) — x86 mini-PC ve ARM (Raspberry vb.) çalışır.

@@ -270,3 +270,108 @@ routerAdd("POST", "/api/tg/service/update/complete", (e) => {
   });
   return e.json(http, out);
 });
+
+// ============================================================
+// T2B — Telegram AI (READ-ONLY doğal dil finans yanıtı).
+// Gateway HMAC ile çağırır; PB link'i KENDİ çözer, finans verisini YALNIZ OKUR, sanitize
+// context üretir, kullanıcının KENDİ ai_keys anahtarıyla whitelist'li sağlayıcıyı çağırır ve
+// YALNIZ metin döner. Ham users.data / PB id / e-posta / anahtar gateway'e ASLA gitmez.
+// FİNANSAL YAZMA YOK: bu handler users/haneler üzerinde hiç save çağırmaz.
+// ============================================================
+routerAdd("POST", "/api/tg/service/ai", (e) => {
+  const T = require(`${__hooks}/tg_lib.js`);
+  const C = require(`${__hooks}/tg_ai_context.js`);
+  const A = require(`${__hooks}/tg_ai_lib.js`);
+  const PATH = "/api/tg/service/ai";
+
+  // 401/403 YALNIZ servis HMAC/auth hatası için (gateway'de FatalConfig). İş hataları asla 401 değil.
+  const { body } = T.serviceAuth(e, PATH);
+
+  const v = C.govdeDogrula(body);
+  if (!v.ok) return e.json(400, { error: "bad_question" });
+  const tgid = v.tgid, uid = v.uid, soru = v.soru, history = v.history;
+
+  // Link → PB user (gateway iddiasına GÜVENİLMEZ). F2: DB hatası tekKayit'ten yayılır (500).
+  const link = T.tekKayit(e.app, "telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid });
+  if (!link) return e.json(404, { error: "not_linked" });
+  if (link.get("scope") !== "personal") return e.json(404, { error: "not_linked" }); // T2: yalnız personal
+  const user = e.app.findRecordById("users", link.get("user")); // finansal kaynak — SADECE OKUMA
+  const findata = A.jsonNesne(user.get("data")); // PB JSON alanı → gerçek JS nesnesi
+
+  // Sağlayıcı/model — users.data.ayarlar'dan; yerel/bilinmeyen → 409 (sessiz değiştirme YOK).
+  const sc = A.saglayiciCoz(findata);
+  if (!sc.ok) return e.json(409, { error: "provider_unavailable", reason: sc.reason });
+  // Kimlik bilgisi YALNIZ kullanıcının ai_keys kaydından. Env fallback YOK, legacy ayarlar.apiKey YOK.
+  const key = A.anahtarCoz(e.app, user.id, sc.sag);
+  if (!key) return e.json(409, { error: "provider_unavailable", reason: "no_key" });
+
+  const hash = A.istekHash(tgid, uid, soru, history, sc.sag, sc.model);
+
+  // ---- Idempotency: DONE cache / hash conflict / aktif lease / stale devralma ----
+  let durum = null;
+  e.app.runInTransaction((tx) => {
+    const row = T.tekKayit(tx, "telegram_ai_results", "update_id = {:u}", { u: uid });
+    if (row) { durum = A.aiSatirCoz(tx, row, hash); return; }
+    const rec = new Record(tx.findCollectionByNameOrId("telegram_ai_results"));
+    rec.set("update_id", uid);
+    rec.set("request_hash", hash);
+    rec.set("status", "processing");
+    rec.set("lease_until", T.isoAt(A.AI_LEASE_MS));
+    rec.set("expires_at", T.isoAt(A.AI_RESULT_TTL_MS));
+    try { tx.save(rec); durum = { go: true, id: rec.id }; }
+    catch (err) {
+      // Kör "duplicate" YOK: satır GERÇEKTEN var mı? Yoksa hatayı YAY (gerçek DB hatası).
+      let exist = null;
+      try { exist = T.tekKayit(tx, "telegram_ai_results", "update_id = {:u}", { u: uid }); } catch (_) { exist = null; }
+      if (!exist) throw err;
+      durum = A.aiSatirCoz(tx, exist, hash);
+    }
+  });
+
+  if (durum.conflict) return e.json(409, { error: "idempotency_conflict" });
+  if (durum.cache != null) {
+    // Cache hit: upstream çağrısı YOK, taze-AI quota TÜKETİLMEZ (D9).
+    e.response.header().set("Cache-Control", "no-store");
+    return e.json(200, { answer: durum.cache });
+  }
+  // Aktif lease: başka bir claimant işliyor → İKİNCİ upstream çağrısı YAPILMAZ. Retry edilebilir.
+  if (durum.busy) return e.json(409, { error: "processing" });
+
+  // ---- Taze AI: rate limit (10/tgid/15dk) — YALNIZ taze çağrılar sayılır ----
+  // İşaretçi ÖNCE yazılır, sonra sayılır: böylece pencere semantiği pair-consume ile
+  // AYNI olur (N'inci çağrı N işaretçi görür → N > MAX olduğunda reddedilir, yani
+  // 10 taze soru geçer, 11'inci 429 alır). Cache hit'ler bu yola HİÇ girmez (D9).
+  T.tazeAiIsaretle(e.app, tgid, A.AI_RL_ENDPOINT);
+  if (T.rateLimitAsildi(e.app, tgid, A.AI_RL_ENDPOINT, A.AI_RL_MAX)) {
+    A.aiLeaseBirak(e.app, durum.id);
+    return e.json(429, { error: "rate_limited" });
+  }
+
+  // ---- Sanitize context + upstream ----
+  const now = new Date();
+  const p2 = (n) => String(n).padStart(2, "0");
+  const bugunStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`; // format.js bugun() ile aynı
+  const ctx = C.finansContext(findata, bugunStr);
+  const r = A.ustCagir(sc.cfg, sc.model, key, A.SISTEM, A.kullaniciMetni(ctx, soru, history));
+
+  if (!r.ok) {
+    A.aiLeaseBirak(e.app, durum.id); // lease serbest → retry takılmaz (hash bağlaması korunur)
+    return e.json(r.http, r.sinif ? { error: r.error, class: r.sinif } : { error: r.error });
+  }
+
+  // ---- DONE olarak dayanıklı sakla (kısa ömürlü: expires_at = +30 dk, cron siler) ----
+  try {
+    const row = e.app.findRecordById("telegram_ai_results", durum.id);
+    row.set("status", "done");
+    row.set("answer", r.answer);
+    row.set("lease_until", null);
+    row.set("expires_at", T.isoAt(A.AI_RESULT_TTL_MS));
+    e.app.save(row);
+  } catch (_) {
+    // Kalıcılaştırma başarısız: cevap yine de teslim edilir; lease serbest bırakılır.
+    // Bu, D11'de belgelenen artık pencereyi genişletir (retry bir kez daha upstream çağırabilir).
+    A.aiLeaseBirak(e.app, durum.id);
+  }
+  e.response.header().set("Cache-Control", "no-store");
+  return e.json(200, { answer: r.answer });
+});

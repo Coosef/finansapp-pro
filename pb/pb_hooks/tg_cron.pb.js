@@ -16,5 +16,8 @@ cronAdd("tg_cleanup", "*/15 * * * *", () => {
   sil("telegram_pair_codes", "expires_at < {:g}", { g: T.isoAt(-60 * 60000) });
   // updates: YALNIZ terminal (done/failed) ve 7 günden eski. processing dokunulmaz.
   sil("telegram_updates", "(status = 'done' || status = 'failed') && updated < {:o}", { o: T.isoAt(-7 * 24 * 60 * 60000) });
+  // T2B: ai_results — süresi geçen (TTL 30 dk) idempotency/DONE satırları. Finansal veriden
+  // TÜREtilmiş `answer` içerdiğinden saklama kısa ömürlüdür; burada silinir.
+  sil("telegram_ai_results", "expires_at < {:n}", { n: nowIso });
   // telegram_links, telegram_state: rutin silme YOK.
 });

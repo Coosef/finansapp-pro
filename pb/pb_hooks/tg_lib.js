@@ -10,7 +10,13 @@ const NONCE_TTL_MS = 30 * 60000;   // replay retention ≥ 30 dk
 const CODE_TTL_MS = 5 * 60000;     // pairing code 5 dk
 const RL_PENCERE_MS = 15 * 60000;  // rate-limit penceresi 15 dk
 const RL_MAX = 5;                  // pair-consume 5 / tgid / 15 dk
-const UPDATE_LEASE_MS = 2 * 60000; // claim lease 2 dk
+// T2B/D13: 2 dk → 3 dk. Zamanlama ispatı: AI turu = upstream 45 s (sunucu timeout)
+// + PB/ağ/işleme ~5 s + Telegram sendMessage ≤15 s + update/complete ≤15 s ≈ 80 s; gateway'in
+// AI rotası için planlanan 60 s PB timeout'uyla en kötü hâl ≈ 90 s. 120 s lease'te pay yalnız
+// %25 kalıyordu (tek bir Telegram 429 retry_after payı silip lease'i düşürebilir → aynı update
+// ikinci kez claim edilir). 180 s ile pay 2×. Fencing semantiği DEĞİŞMEZ; yalnız stale-claim
+// kurtarma süresi uzar (T1 davranış regresyon testleri lease'i açıkça geçmişe çekiyor).
+const UPDATE_LEASE_MS = 3 * 60000; // claim lease 3 dk
 const CODE_GENERIC = "Kod geçersiz veya süresi dolmuş.";
 
 function tgSecret(ad) {
@@ -94,19 +100,36 @@ function tekKayit(dbx, coll, filter, params) {
   return rows.length ? rows[0] : null;
 }
 
-function rateLimitAsildi(app, tgid, endpoint) {
+// max: OPSİYONEL açık limit (T2B). Verilmezse T1 semantiği aynen korunur (RL_MAX = 5),
+// böylece mevcut pair-consume sınırı DEĞİŞMEZ.
+function rateLimitAsildi(app, tgid, endpoint, max) {
+  const limit = (typeof max === "number" && Number.isFinite(max) && max > 0) ? Math.floor(max) : RL_MAX;
   const esik = isoAt(-RL_PENCERE_MS);
   const rows = app.findRecordsByFilter(
     "telegram_service_requests",
     "telegram_user_id = {:t} && endpoint = {:e} && created > {:c}",
-    "-created", RL_MAX + 5, 0,
+    "-created", limit + 5, 0,
     { t: tgid, e: endpoint, c: esik }
   );
-  return rows.length > RL_MAX;
+  return rows.length > limit;
+}
+
+// T2B: TAZE AI çağrısı sayacı. serviceAuth her istekte (cache hit dahil) bir nonce satırı
+// yazdığından, quota'yı nonce satırlarından saymak cache hit'lerini de ücretlendirirdi.
+// Bu yüzden taze upstream çağrısı yapılacağına karar verildiğinde AYRI bir işaretçi satır
+// yazılır ve rate limit YALNIZ o işaretçiler üzerinden sayılır (D9).
+function tazeAiIsaretle(app, tgid, endpoint) {
+  const rec = new Record(app.findCollectionByNameOrId("telegram_service_requests"));
+  rec.set("nonce", "aifresh_" + $security.randomString(32)); // nonce alanı unique; işaretçi çakışmaz
+  rec.set("timestamp", nowSec());
+  rec.set("endpoint", endpoint);
+  rec.set("telegram_user_id", tgid);
+  rec.set("expires_at", isoAt(NONCE_TTL_MS)); // 30 dk ≥ 15 dk RL penceresi → sayım korunur
+  app.save(rec);
 }
 
 module.exports = {
   TGID_RE, PAIR_ALFABE, CODE_TTL_MS, UPDATE_LEASE_MS, CODE_GENERIC,
-  tgSecret, nowSec, isoAt, serviceAuth, rateLimitAsildi, tekKayit,
+  tgSecret, nowSec, isoAt, serviceAuth, rateLimitAsildi, tazeAiIsaretle, tekKayit,
   validUpdateId, deriveNextOffset,
 };
