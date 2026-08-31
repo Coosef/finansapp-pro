@@ -153,6 +153,32 @@ biçimindeyse kabul edilir ve yalnız upstream **origin**'ini değiştirir (yol 
 Üretim PocketBase'inde bu env'ler tanımlı değildir; tanımlı olsalar bile hedef loopback ile
 sınırlı olduğundan sağlayıcı whitelist'i zayıflamaz.
 
+## Telegram AI yönlendirme (T2C — gateway)
+
+- `/sor SORUN` ve **bağlı** kullanıcının özel sohbetteki serbest metni AI'ya gider. Bilinen
+  komutlar (`/start`, `/help`, `/link`, `/unlink`, `/durum`, `/bakiye`, `/buay`) ve menü
+  butonları **deterministik** kalır; **bilinmeyen slash komutu yardım gösterir, AI'ya GİTMEZ**
+  (yazım hatası ücretli çağrı üretmez). Bağlı olmayan serbest metin bağlanma yönlendirmesi alır.
+- Gateway PB'ye YALNIZ `telegram_user_id`, `update_id`, `question` ve sınırlı `history` gönderir.
+  Ham `users.data`, PB user id, link id, e-posta, CAS revision ve AI anahtarı gateway'e **hiç gelmez**.
+- **Uç-bazlı timeout:** AI ucu `PB_AI_TIMEOUT_MS` (varsayılan **60 s**); diğer T1 uçları
+  `PB_TIMEOUT_MS` (**15 s**) ile **değişmeden** kalır. Update lease 180 s → toplam yolda pay var.
+- **Sınırlı upstream retry bütçesi:** ilk geçici AI hatası (`502 transient` / `504`) → update
+  `failed`, backoff + yeniden claim. Yeniden claim edilmiş denemede yine geçici hata → güvenli
+  mesaj + `done`. Böylece süresiz sağlayıcı retry'ı ve sınırsız ücretli çağrı olmaz.
+  `409 processing` bu bütçeden **sayılmaz** (ikinci upstream çağrısı yapmaz, sadece retry edilir).
+- **Konuşma belleği: YALNIZ RAM.** PB koleksiyonu/disk yok. Kullanıcı başına en fazla 2 soru/cevap
+  çifti, alan başına 400 code point, 15 dk hareketsizlik TTL'i, global 500 giriş (LRU tahliye).
+  Gateway restart'ında **kasıtlı olarak kaybolur**; PB/Telegram'dan yeniden kurulmaz.
+  Anahtar yalnız **numerik Telegram id**'dir.
+- **Commit sırası güvenlik-kritik:** bellek YALNIZ `updateComplete` başarılı olduktan SONRA
+  işlenir. Aksi halde aynı update'in retry'ı farklı `history` gönderir ve T2B'nin history-bağlı
+  `request_hash`'i haklı olarak `409 idempotency_conflict` döner. `/link`, `/unlink` ve
+  `not_linked` kimlik sınırlarında bellek temizlenir.
+- Bir AI cevabı **tek** Telegram mesajıdır (çoklu-mesaj bölme YOK); PB zaten 3000 code point'te
+  sınırlar, gateway `uzunlukGuvenli` ile savunmacı guard uygular.
+- AI cevabı **güvenilmez düz metindir**: parse/eval/komut yorumlaması yok, `parse_mode` verilmez.
+
 ## Notlar
 
 - İmajlar **multi-arch** (amd64 + arm64) — x86 mini-PC ve ARM (Raspberry vb.) çalışır.

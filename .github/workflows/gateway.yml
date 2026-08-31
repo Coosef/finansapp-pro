@@ -32,12 +32,21 @@ jobs:
       - name: Gateway unit tests (fake pb/tg)
         run: node --test gateway/test/unit.test.mjs
 
+      # T2C — AI yönlendirme + konuşma belleği birim testleri (fake pb/tg).
+      - name: Gateway T2C AI routing unit tests ×3
+        run: |
+          for i in 1 2 3; do
+            echo "== T2C unit run $i/3 =="
+            node --test gateway/test/t2c.test.mjs
+          done
+
       # İzole GERÇEK PB 0.39.10 (test kendi docker container'ını yönetir) + fake Telegram. 3× determinizm.
       - name: Gateway integration (real PB + fake Telegram) ×3
         run: |
           for i in 1 2 3; do
             echo "== gateway integration run $i/3 =="
             node --test gateway/test/integration.test.mjs
+            node --test gateway/test/t2c-integration.test.mjs
           done
 
       # İmaj doğrulaması: NON-ROOT + AÇIK PORT YOK + HEALTHCHECK + build identity (SHA, 'dev' değil).

@@ -8,6 +8,10 @@
 import { bugun as bugunBul } from "../../src/lib/format.js";
 import { bakiyeOzeti, buAyOzeti, bugunOzeti, hesaplarOzeti } from "./summary.js";
 import * as M from "./messages.js";
+import { TransientError, UserInputError } from "./errors.js";
+
+const SORU_MAX_CP = 500;                 // PB'deki sınırla aynı; burada ergonomi/trafik guard'ı
+const cpUzunluk = (s) => Array.from(String(s ?? "")).length;
 
 const KOD_ALFABE = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // pairing alfabesi (pb migration ile aynı)
 const KOD_RE = new RegExp(`^[${KOD_ALFABE}]{8}$`);
@@ -70,13 +74,13 @@ export async function isle(update, deps) {
       // R15: yerel doğrulama — 8 haneli, doğru alfabe. Geçersiz → güvenli mesaj + pair-consume YOK.
       if (!KOD_RE.test(kod)) { await gonder(M.linkGecersizFormatMesaji()); return { ok: "link_badformat" }; } // kod LOGLANMAZ
       const r = await pb.pairConsume(tgid, kod);
-      if (r.status === 200) { await gonder(M.linkBasariMesaji(), { reply_markup: M.ANA_MENU }); return { ok: "link" }; }
+      if (r.status === 200) { hafizaTemizle(deps, tgid); await gonder(M.linkBasariMesaji(), { reply_markup: M.ANA_MENU }); return { ok: "link" }; }
       if (r.status === 429) { await gonder(M.cokFazlaDenemeMesaji()); return { ok: "link_rl" }; }
       if (r.status === 409) { await gonder(M.linkHataMesaji("Bağlantı çakışması. Tekrar dene.")); return { ok: "link_conflict" }; }
       if (r.status === 400) {
         // R2: commit-then-reply crash penceresi — kod "used" ama tgid ZATEN doğru bağlıysa
         // replay idempotent BAŞARI'dır; yanlış "kod geçersiz" DEME.
-        if (await bagliMi()) { await gonder(M.linkBasariMesaji(), { reply_markup: M.ANA_MENU }); return { ok: "link_idem" }; }
+        if (await bagliMi()) { hafizaTemizle(deps, tgid); await gonder(M.linkBasariMesaji(), { reply_markup: M.ANA_MENU }); return { ok: "link_idem" }; }
         await gonder(M.linkHataMesaji(r.json && r.json.message));
         return { ok: "link_bad" };
       }
@@ -86,6 +90,7 @@ export async function isle(update, deps) {
     }
     case "/unlink":
       await pb.unlink(tgid);                               // 5xx→Transient throw → yalan yok (R7)
+      hafizaTemizle(deps, tgid);                           // T2C: kimlik sınırı → konuşma belleği sıfırlanır
       await gonder(M.unlinkMesaji());
       return { ok: "unlink" };
 
@@ -119,8 +124,70 @@ export async function isle(update, deps) {
       return { ok: "hesaplar" };
     }
 
-    default:
-      await gonder(M.yardimMesaji());
-      return { ok: "help_fallback" };
+    case "/sor": {
+      const soru = String(arg || "").trim();
+      if (!soru) { await gonder(M.sorKullanimMesaji()); return { ok: "sor_usage" }; } // AI çağrısı YOK
+      return await aiIsle({ deps, gonder, tgid, update, soru });
+    }
+
+    default: {
+      // BİLİNMEYEN/BOZUK SLASH KOMUT → yardım. ASLA AI'ya gitmez (yazım hatası ücretli
+      // çağrı üretmemeli). Menü butonları ve bilinen komutlar zaten yukarıda ele alındı.
+      if (cmd.startsWith("/")) { await gonder(M.yardimMesaji()); return { ok: "help_fallback" }; }
+      // SERBEST METİN (özel sohbet, slash yok, menü butonu değil):
+      //   bağlı  → AI
+      //   değil  → mevcut bağlanma yönlendirmesi
+      if (!(await bagliMi())) { await gonder(M.bagliDegilMesaji()); return { ok: "free_unlinked" }; }
+      return await aiIsle({ deps, gonder, tgid, update, soru: String(msg.text || "").trim() });
+    }
   }
+}
+
+// T2C: konuşma belleği kimlik sınırında temizlenir (best-effort RAM durumu).
+function hafizaTemizle(deps, tgid) {
+  try { if (deps.aiHafiza) deps.aiHafiza.temizle(tgid); } catch (_) { /* RAM durumu; kritik değil */ }
+}
+
+// ---- AI dalı ----
+// Sıra GÜVENLİK-KRİTİK: history OKUNUR → PB aiAsk → Telegram gönder → (loop) updateComplete →
+// ANCAK BUNDAN SONRA bellek işlenir. Bu yüzden burada bellek YAZILMAZ; yalnız `afterComplete`
+// metadata'sı döner ve loop.js başarılı complete'ten sonra uygular.
+async function aiIsle({ deps, gonder, tgid, update, soru }) {
+  const { pb } = deps;
+  if (!soru) { await gonder(M.soruGecersizMesaji()); return { ok: "ai_bad_input" }; }
+  if (cpUzunluk(soru) > SORU_MAX_CP) { await gonder(M.soruUzunMesaji()); return { ok: "ai_too_long" }; } // AI çağrısı YOK
+
+  const history = deps.aiHafiza ? deps.aiHafiza.al(tgid) : [];
+  const r = await pb.aiAsk({ tgid, updateId: update.update_id, question: soru, history });
+  const j = r.json || {};
+
+  if (r.status === 200) {
+    await gonder(j.answer);                       // GÜVENİLMEZ düz metin: parse/eval/komut YOK
+    // Bellek YALNIZ updateComplete başarılı olduktan sonra işlenir (response-loss güvenliği).
+    return { ok: "ai", afterComplete: { type: "ai_memory_commit", tgid: String(tgid), q: soru, a: j.answer } };
+  }
+  if (r.status === 404) {                          // gerçekten bağlı değil
+    hafizaTemizle(deps, tgid);
+    await gonder(M.bagliDegilMesaji());
+    return { ok: "ai_unlinked" };
+  }
+  if (r.status === 400) throw new UserInputError("ai bad_question", M.soruGecersizMesaji());
+  if (r.status === 429) throw new UserInputError("ai rate_limited", M.aiLimitMesaji()); // aynı update RETRY EDİLMEZ
+  if (r.status === 409) {
+    if (j.error === "processing") throw new TransientError("PB ai processing (aktif lease)"); // 2. upstream YOK
+    if (j.error === "idempotency_conflict") throw new UserInputError("ai idempotency_conflict", M.aiCakismaMesaji());
+    // provider_unavailable
+    if (j.reason === "no_key") throw new UserInputError("ai no_key", M.aiAnahtarYokMesaji());
+    if (j.reason === "local_only") throw new UserInputError("ai local_only", M.aiYerelSaglayiciMesaji());
+    throw new UserInputError("ai unsupported", M.aiModelDesteklenmiyorMesaji());
+  }
+  if (r.status === 502 && j.class === "auth") throw new UserInputError("ai upstream auth", M.aiAnahtarRedMesaji());
+  if (r.status === 502 && j.class === "invalid") throw new UserInputError("ai upstream invalid", M.aiBozukYanitMesaji());
+
+  // 502 transient | 504 upstream_timeout → SINIRLI retry bütçesi.
+  // İlk deneme: TransientError (update failed → backoff → reclaim).
+  // Yeniden claim edilmiş (reclaimed) denemede yine geçici hata: güvenli mesaj + DONE.
+  // Böylece süresiz sağlayıcı retry'ı, kuyruk açlığı ve sınırsız ücretli çağrı olmaz.
+  if (deps.reclaimed) throw new UserInputError("ai upstream transient (reclaimed)", M.aiGeciciHataMesaji());
+  throw new TransientError(`PB ai upstream ${r.status}${j.class ? "/" + j.class : ""}`);
 }
