@@ -387,10 +387,12 @@ test("AI-T2-12C model boşsa ürün varsayılanı; gemini/openai whitelist'i ça
 test("AI-T2-13/14/15/16B upstream hata sınıflandırması", async () => {
   const tgid = nextTgid();
   await baglan(A, tgid);
+  // T2C.2: YALNIZ gerçek geçici sınıflar (transient/timeout) dayanıklı `attempt` taşır;
+  // auth/invalid terminal hatalardır ve attempt TAŞIMAMALIDIR.
   const bekle = [
     ["401", 502, { error: "upstream", class: "auth" }],
-    ["429", 502, { error: "upstream", class: "transient" }],
-    ["500", 502, { error: "upstream", class: "transient" }],
+    ["429", 502, { error: "upstream", class: "transient", attempt: 1 }],
+    ["500", 502, { error: "upstream", class: "transient", attempt: 1 }],
     ["bozuk", 502, { error: "upstream", class: "invalid" }],
     ["bosMetin", 502, { error: "upstream", class: "invalid" }],
   ];
@@ -410,7 +412,7 @@ test("AI-T2-16 upstream timeout → 504", async () => {
   fakeSifirla("hang"); // sunucu yanıt vermez → PB timeout (test knob'ı: 3 sn)
   const r = await ai({ telegram_user_id: tgid, update_id: nextUid(), question: "Bu ay?" });
   expect(r.status).toBe(504);
-  expect(r.json).toEqual({ error: "upstream_timeout" });
+  expect(r.json).toEqual({ error: "upstream_timeout", attempt: 1 });
 });
 
 test("AI-T2-16C cevap 3000 code point'te sert kırpılır", async () => {

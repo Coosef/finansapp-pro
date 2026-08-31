@@ -21,6 +21,9 @@ const AI_RESULT_TTL_MS = 30 * 60000; // DONE sonucun MANTIKSAL geçerliliği (30
 // Fiziksel silme bir sonraki 15 dk'lık cron turunda → nominal disk kalıcılığı ≈ en fazla 45 dk.
 const AI_RL_MAX = 10;             // taze AI sorusu / tgid / 15 dk
 const AI_RL_ENDPOINT = "/api/tg/service/ai#fresh"; // rate-limit sayaç işaretçisi
+// T2C.2 — update_id başına DAYANIKLI upstream çağrı slotu. Otorite burasıdır: gateway
+// süreç belleği, telegram_updates.attempts ve `reclaimed` bu sayımı BELİRLEMEZ.
+const MAX_UPSTREAM_ATTEMPTS = 2;
 
 // ---- Sağlayıcı whitelist (üretim) ----
 // url: SABİT. Yerel sağlayıcılar (ollama/lmstudio/ozel) bilerek YOK → local_only.
@@ -229,6 +232,10 @@ function aiSatirCoz(tx, row, hash) {
     if (!suresiDolmus) return { cache: String(row.get("answer") || "") };
     // Süresi dolmuş: eski cevabı TEMİZLE + taze processing lease kur → taze AI isteği olarak
     // sayılır (kota tüketir) ve yeni upstream çağrısı yapılır.
+    // T2C.2 — `upstream_attempts` BİLEREK SIFIRLANMAZ: sayaç update_id başına MONOTONDUR.
+    // Aksi hâlde "aynı Telegram update'i için en fazla 2 ücretli çağrı" tavanı, TTL dolumu
+    // beklenerek sınırsızca aşılabilirdi. Ceza pratikte yok: 30 dk sonra hâlâ işlenmemiş bir
+    // update zaten terk edilmiştir; kalan durumda fail-closed davranmak doğru yanlılıktır.
     row.set("status", "processing");
     row.set("answer", "");
     row.set("lease_until", T.isoAt(AI_LEASE_MS));
@@ -246,6 +253,36 @@ function aiSatirCoz(tx, row, hash) {
   return { go: true, id: row.id };
 }
 
+// ---- T2C.2: dayanıklı upstream çağrı slotu ----
+// GERÇEK bir $http.send'den HEMEN ÖNCE çağrılır. Satırı TAZE okur (fence), bütçe dolmuşsa
+// sağlayıcıyı ÇAĞIRMAZ, dolmamışsa sayacı artırır ve KALICILAŞTIRIR.
+//
+// SIRA BİLİNÇLİDİR (persist-before-call): PB sayacı artırdıktan SONRA, sağlayıcı çağrısından
+// ÖNCE çökerse bir slot TEMKİNLİ olarak tüketilmiş olur — bu KABUL EDİLEBİLİR. Kabul
+// EDİLEMEZ olan tersidir: çağrı yapılıp artırımın kaybolması → sınırsız ücretli retry.
+// Maliyet/güvenlik yanlılığı fail-closed'dur.
+//
+// Dönüş: {exhausted:true, attempt:MAX} | {ok:true, attempt:n} | {ok:false} (kalıcılaştırılamadı)
+function ustSlotAl(app, id) {
+  let sonuc = { ok: false };
+  try {
+    app.runInTransaction((tx) => {
+      const row = tx.findRecordById("telegram_ai_results", id); // TAZE okuma (fence)
+      const n = Number(row.get("upstream_attempts") || 0);
+      const mevcut = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0; // alanı olmayan eski satır → 0
+      if (mevcut >= MAX_UPSTREAM_ATTEMPTS) { sonuc = { exhausted: true, attempt: MAX_UPSTREAM_ATTEMPTS }; return; }
+      const yeni = mevcut + 1;
+      row.set("upstream_attempts", yeni);
+      tx.save(row); // kalıcılaştırma BAŞARISIZ olursa hata YAYILIR → aşağıda {ok:false}
+      sonuc = { ok: true, attempt: yeni };
+    });
+  } catch (_) {
+    // Sayaç kalıcılaştırılamadı → sağlayıcı ASLA çağrılmaz (sayılamayan ücretli çağrı yok).
+    return { ok: false };
+  }
+  return sonuc;
+}
+
 // Lease serbest bırak: status "processing" KALIR → request_hash bağlaması korunur (farklı hash
 // hâlâ 409 idempotency_conflict). Aynı hash ile retry hemen devralabilir.
 function aiLeaseBirak(app, id) {
@@ -261,6 +298,7 @@ function aiLeaseBirak(app, id) {
 module.exports = {
   SAGLAYICI, YEREL_SAGLAYICI,
   UPSTREAM_TIMEOUT_SN, MAX_TOKENS, AI_LEASE_MS, AI_RESULT_TTL_MS, AI_RL_MAX, AI_RL_ENDPOINT,
+  MAX_UPSTREAM_ATTEMPTS, ustSlotAl,
   SISTEM,
   jsonNesne, ustUrl, ustTimeout, saglayiciCoz, anahtarCoz, kullaniciMetni, ustCagir, cevapCikar, istekHash,
   aiSatirCoz, aiLeaseBirak,

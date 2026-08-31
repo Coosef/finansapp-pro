@@ -11,6 +11,9 @@ import * as M from "./messages.js";
 import { TransientError, UserInputError } from "./errors.js";
 
 const SORU_MAX_CP = 500;                 // PB'deki sınırla aynı; burada ergonomi/trafik guard'ı
+// T2C.2 — PB'nin dayanıklı upstream slot tavanının AYNASI. Karar PB'nin bildirdiği
+// `attempt`/`exhausted` alanlarına göre verilir; gateway kendi başına sayım TUTMAZ.
+const MAX_UPSTREAM_ATTEMPTS = 2;
 const cpUzunluk = (s) => Array.from(String(s ?? "")).length;
 
 const KOD_ALFABE = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // pairing alfabesi (pb migration ile aynı)
@@ -185,9 +188,18 @@ async function aiIsle({ deps, gonder, tgid, update, soru }) {
   if (r.status === 502 && j.class === "invalid") throw new UserInputError("ai upstream invalid", M.aiBozukYanitMesaji());
 
   // 502 transient | 504 upstream_timeout → SINIRLI retry bütçesi.
-  // İlk deneme: TransientError (update failed → backoff → reclaim).
-  // Yeniden claim edilmiş (reclaimed) denemede yine geçici hata: güvenli mesaj + DONE.
-  // Böylece süresiz sağlayıcı retry'ı, kuyruk açlığı ve sınırsız ücretli çağrı olmaz.
-  if (deps.reclaimed) throw new UserInputError("ai upstream transient (reclaimed)", M.aiGeciciHataMesaji());
-  throw new TransientError(`PB ai upstream ${r.status}${j.class ? "/" + j.class : ""}`);
+  //
+  // T2C.2: BÜTÇE OTORİTESİ PB'DİR (`telegram_ai_results.upstream_attempts`), gateway'in
+  // `reclaimed` bayrağı DEĞİL. `reclaimed=true` yalnızca "bu update daha önce bir kez
+  // claim edilip başarısız oldu" demektir; GERÇEK bir ücretli çağrı yapıldığını KANITLAMAZ
+  // (409 processing, PB iç 503 ve upstream öncesi hatalar da reclaimed üretir). Bu yüzden
+  // `deps.reclaimed` burada KULLANILMAZ — kullanılırsa ilk gerçek 502/transient yanlışlıkla
+  // ikinci başarısızlık sayılır ve 409 processing bütçe tüketmiş olurdu.
+  //
+  // exhausted=true  → bütçe zaten doluydu, sağlayıcı ÇAĞRILMADI → güvenli terminal mesaj.
+  // attempt >= MAX  → gerçek ikinci başarısızlık → güvenli terminal mesaj + done.
+  // attempt <  MAX  → TransientError (update failed → backoff → yeniden claim).
+  if (j.exhausted === true) throw new UserInputError("ai upstream budget exhausted", M.aiGeciciHataMesaji());
+  if (Number(j.attempt) >= MAX_UPSTREAM_ATTEMPTS) throw new UserInputError(`ai upstream transient (attempt ${j.attempt})`, M.aiGeciciHataMesaji());
+  throw new TransientError(`PB ai upstream ${r.status}${j.class ? "/" + j.class : ""} attempt=${j.attempt}`);
 }

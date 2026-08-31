@@ -284,6 +284,14 @@ routerAdd("POST", "/api/tg/service/update/complete", (e) => {
 //   → ancak bundan SONRA: finans verisi, sağlayıcı/model, ai_keys, taze-AI kotası, upstream.
 // Böylece dayanıklı bir DONE sonucu, kullanıcı arkasından anahtarını silse / sağlayıcı-model
 // değiştirse / finans verisini düzenlese bile (mantıksal TTL dolana kadar) teslim edilebilir.
+//
+// T2C.2 DAYANIKLI UPSTREAM BÜTÇESİ: taze yolun EN SONUNDA, $http.send'den hemen önce
+// `telegram_ai_results.upstream_attempts` fence'lenip artırılır (persist-before-call).
+// Slot YALNIZ gerçek bir sağlayıcı çağrısı için tüketilir; 409 processing / PB iç 5xx /
+// provider_unavailable / rate_limited yolları buraya HİÇ gelmez. En fazla 2 slot.
+// NOT: taze-AI kotası (10/15dk) slot alımından ÖNCE işaretlenir; bütçesi dolmuş bir retry
+// bu yüzden bir kota işaretçisi tüketebilir — bilinen ve kabul edilen küçük maliyet
+// (ücretli sağlayıcı çağrısı yapılmaz, yalnız yerel sayaç işaretçisi yazılır).
 // ============================================================
 routerAdd("POST", "/api/tg/service/ai", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
@@ -377,11 +385,33 @@ routerAdd("POST", "/api/tg/service/ai", (e) => {
   const p2 = (n) => String(n).padStart(2, "0");
   const bugunStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`; // format.js bugun() ile aynı
   const ctx = C.finansContext(findata, bugunStr);
+
+  // ---- T2C.2: DAYANIKLI upstream çağrı slotu — $http.send'den HEMEN ÖNCE ----
+  // Bütçe otoritesi BURASIDIR. Gateway'in `reclaimed` bayrağı ücretli retry sayımını
+  // BELİRLEMEZ: 409 processing, PB iç 5xx ve upstream ÖNCESİ hatalar bu satıra hiç
+  // gelmez → slot tüketmez. Sayaç yalnız gerçek bir sağlayıcı çağrısı yapılacakken artar.
+  const slot = A.ustSlotAl(e.app, durum.id);
+  if (slot.exhausted) {
+    // YENİ bir upstream hatası İDDİA EDİLMİYOR: bütçe zaten dolu, sağlayıcı ÇAĞRILMADI.
+    A.aiLeaseBirak(e.app, durum.id);
+    return e.json(502, { error: "upstream", class: "transient", attempt: slot.attempt, exhausted: true });
+  }
+  if (!slot.ok) {
+    // Sayaç kalıcılaştırılamadı → sağlayıcı ÇAĞRILMAZ (sayılamayan ücretli çağrı yapılmaz).
+    // PB iç hatası olarak raporlanır → gateway TransientError (bütçe tüketilmedi).
+    A.aiLeaseBirak(e.app, durum.id);
+    return e.json(500, { error: "attempt_persist_failed" });
+  }
+
   const r = A.ustCagir(sc.cfg, sc.model, key, A.SISTEM, A.kullaniciMetni(ctx, soru, history));
 
   if (!r.ok) {
     A.aiLeaseBirak(e.app, durum.id); // lease serbest → retry takılmaz (hash bağlaması korunur)
-    return e.json(r.http, r.sinif ? { error: r.error, class: r.sinif } : { error: r.error });
+    const govde = r.sinif ? { error: r.error, class: r.sinif } : { error: r.error };
+    // Dayanıklı deneme numarası YALNIZ gerçek geçici hata sınıflarında raporlanır
+    // (502/transient ve 504). auth/invalid zaten terminal kullanıcı/sağlayıcı hatalarıdır.
+    if (r.http === 504 || (r.http === 502 && r.sinif === "transient")) govde.attempt = slot.attempt;
+    return e.json(r.http, govde);
   }
 
   // ---- DONE olarak dayanıklı sakla ----

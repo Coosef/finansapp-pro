@@ -180,28 +180,81 @@ test("AI-T2C-17 processing → TransientError (retry; ikinci upstream YOK)", asy
   await assert.rejects(() => isle(upd("soru"), { pb, tg }), (e) => e instanceof TransientError);
 });
 
-test("AI-T2C-18 upstream transient İLK deneme → TransientError (failed/backoff)", async () => {
-  for (const y of [{ status: 502, json: { error: "upstream", class: "transient" } }, { status: 504, json: { error: "upstream_timeout" } }]) {
-    const pb = fakePb({ aiYanit: y }), tg = fakeTg();
-    await assert.rejects(() => isle(upd("soru"), { pb, tg, reclaimed: false }), (e) => e instanceof TransientError);
+test("AI-T2C-18 upstream transient attempt=1 → TransientError (failed/backoff); reclaimed ETKİSİZ", async () => {
+  for (const y of [{ status: 502, json: { error: "upstream", class: "transient", attempt: 1 } }, { status: 504, json: { error: "upstream_timeout", attempt: 1 } }]) {
+    // T2C.2: bütçe otoritesi PB'nin `attempt` alanıdır. `reclaimed` DEĞERİ NE OLURSA OLSUN
+    // attempt=1 geçici bir hatadır → retry edilir. (Eski davranış reclaimed=true'da terminal
+    // yapıyordu; bu, 409 processing / PB iç 503 sonrası İLK gerçek çağrıyı yanlış sayardı.)
+    for (const reclaimed of [false, true]) {
+      const pb = fakePb({ aiYanit: y }), tg = fakeTg();
+      await assert.rejects(() => isle(upd("soru"), { pb, tg, reclaimed }),
+        (e) => e instanceof TransientError, `${y.status}/reclaimed=${reclaimed}`);
+    }
   }
 });
 
-test("AI-T2C-19/20 reclaimed + ikinci geçici hata → güvenli terminal mesaj + done", async () => {
-  for (const y of [{ status: 502, json: { error: "upstream", class: "transient" } }, { status: 504, json: { error: "upstream_timeout" } }]) {
+test("AI-T2C-19/20 attempt=2 → güvenli terminal mesaj + done (reclaimed'dan BAĞIMSIZ)", async () => {
+  for (const y of [{ status: 502, json: { error: "upstream", class: "transient", attempt: 2 } }, { status: 504, json: { error: "upstream_timeout", attempt: 2 } }]) {
+    for (const reclaimed of [false, true]) {
+      const pb = fakePb({ aiYanit: y }), tg = fakeTg();
+      await assert.rejects(() => isle(upd("soru"), { pb, tg, reclaimed }), (e) => {
+        assert.ok(e instanceof UserInputError);
+        assert.equal(e.safeText, M.aiGeciciHataMesaji());
+        return true;
+      });
+    }
+  }
+  // loop seviyesinde: UserInputError → güvenli mesaj + complete(done)
+  const pb = fakePb({ aiYanit: { status: 504, json: { error: "upstream_timeout", attempt: 2 } }, claim: { claimed: true, lease_token: "lt" } });
+  const tg = fakeTg();
+  const r = await updateIsle(upd("soru"), { pb, tg });
+  assert.deepEqual(r, { done: true, userInput: true });
+  assert.equal(pb.cagrilar.filter((c) => c[0] === "complete" && c[2] === false).length, 1, "done olarak tamamlanmalı");
+});
+
+test("AI-T2C-20B exhausted=true → sağlayıcı çağrısı YOK, güvenli terminal mesaj", async () => {
+  // PB "yeni bir upstream hatası oldu" DEMİYOR: bütçe zaten doluydu, çağrı yapılmadı.
+  const y = { status: 502, json: { error: "upstream", class: "transient", attempt: 2, exhausted: true } };
+  for (const reclaimed of [false, true]) {
     const pb = fakePb({ aiYanit: y }), tg = fakeTg();
-    await assert.rejects(() => isle(upd("soru"), { pb, tg, reclaimed: true }), (e) => {
+    await assert.rejects(() => isle(upd("soru"), { pb, tg, reclaimed }), (e) => {
       assert.ok(e instanceof UserInputError);
       assert.equal(e.safeText, M.aiGeciciHataMesaji());
       return true;
     });
   }
-  // loop seviyesinde: UserInputError → güvenli mesaj + complete(done)
-  const pb = fakePb({ aiYanit: { status: 504, json: { error: "upstream_timeout" } }, claim: { claimed: true, reclaimed: true, lease_token: "lt" } });
-  const tg = fakeTg();
-  const r = await updateIsle(upd("soru"), { pb, tg });
-  assert.deepEqual(r, { done: true, userInput: true });
-  assert.equal(pb.cagrilar.filter((c) => c[0] === "complete" && c[2] === false).length, 1, "done olarak tamamlanmalı");
+});
+
+test("AI-T2C-20C 409 processing bütçeden BAĞIMSIZ: reclaimed olsa da HER ZAMAN TransientError", async () => {
+  for (const reclaimed of [false, true]) {
+    const pb = fakePb({ aiYanit: { status: 409, json: { error: "processing" } } }), tg = fakeTg();
+    await assert.rejects(() => isle(upd("soru"), { pb, tg, reclaimed }), (e) => e instanceof TransientError);
+  }
+});
+
+test("AI-T2C-20D bozuk/eksik attempt verisi → FatalConfigError (sessiz tahmin YOK)", async () => {
+  const { pbIstemci } = await import("../src/pb.js");
+  const sapmalar = [
+    { status: 502, body: { error: "upstream", class: "transient" } },                       // attempt yok
+    { status: 502, body: { error: "upstream", class: "transient", attempt: 0 } },            // aralık dışı
+    { status: 502, body: { error: "upstream", class: "transient", attempt: 3 } },            // aralık dışı
+    { status: 502, body: { error: "upstream", class: "transient", attempt: "1" } },          // string
+    { status: 502, body: { error: "upstream", class: "transient", attempt: 1.5 } },          // tamsayı değil
+    { status: 502, body: { error: "upstream", class: "transient", attempt: 2, exhausted: false } }, // yalnız true olabilir
+    { status: 504, body: { error: "upstream_timeout" } },                                    // attempt yok
+    { status: 504, body: { error: "upstream_timeout", attempt: 9 } },
+  ];
+  for (const s of sapmalar) {
+    const pb = pbIstemci({ pbUrl: "http://x", gwSecret: "s", fetchImpl: async () => ({ status: s.status, ok: false, json: async () => s.body }) });
+    await assert.rejects(() => pb.aiAsk({ tgid: "1", updateId: "2", question: "q", history: [] }),
+      (e) => e instanceof FatalConfigError, JSON.stringify(s));
+  }
+  // auth/invalid attempt TAŞIMAZ ve taşımamalıdır (terminal kullanıcı/sağlayıcı hataları).
+  for (const s of [{ status: 502, body: { error: "upstream", class: "auth" } }, { status: 502, body: { error: "upstream", class: "invalid" } }]) {
+    const pb = pbIstemci({ pbUrl: "http://x", gwSecret: "s", fetchImpl: async () => ({ status: s.status, ok: false, json: async () => s.body }) });
+    const r = await pb.aiAsk({ tgid: "1", updateId: "2", question: "q", history: [] });
+    assert.equal(r.status, 502);
+  }
 });
 
 test("AI-T2C-21 PB HMAC 401/403 → FatalConfigError (pb istemcisinden)", async () => {
@@ -240,7 +293,8 @@ test("AI-T2C-23 PB İÇ 5xx (500/503) → TransientError, FatalConfigError DEĞ�
       (e) => e instanceof TransientError && !(e instanceof FatalConfigError), `status ${st}`);
   }
   // 502/504 TransientError DEĞİL: şema doğrulamasından geçer, router taksonomisi karar verir.
-  for (const y of [{ status: 502, body: { error: "upstream", class: "transient" } }, { status: 504, body: { error: "upstream_timeout" } }]) {
+  // (T2C.2: bu sınıflar artık dayanıklı `attempt` alanını da taşımak ZORUNDADIR.)
+  for (const y of [{ status: 502, body: { error: "upstream", class: "transient", attempt: 1 } }, { status: 504, body: { error: "upstream_timeout", attempt: 1 } }]) {
     const pb = pbIstemci({ pbUrl: "http://x", gwSecret: "s", fetchImpl: async () => ({ status: y.status, ok: false, json: async () => y.body }) });
     const r = await pb.aiAsk({ tgid: "1", updateId: "2", question: "q", history: [] });
     assert.equal(r.status, y.status);

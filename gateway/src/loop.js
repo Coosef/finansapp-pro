@@ -25,8 +25,10 @@ export async function updateIsle(u, deps) {
     return { busy: true };                                       // in-flight lease → ilerleme yok
   }
   const leaseToken = c.json.lease_token;
-  // T2C: bu update DAHA ÖNCE claim edilip başarısız olmuş ve yeniden claim edilmiş mi?
-  // AI upstream geçici hataları için SINIRLI retry bütçesi bu bilgiyle uygulanır (router).
+  // Bu update DAHA ÖNCE claim edilip başarısız olmuş ve yeniden claim edilmiş mi?
+  // T2C.2: bu YALNIZCA genel dayanıklı-update teşhisi içindir. Ücretli AI upstream retry
+  // bütçesini BELİRLEMEZ — o bütçenin otoritesi PB'deki `upstream_attempts` sayacıdır
+  // (bkz. router.js aiIsle). `reclaimed` gerçek bir sağlayıcı çağrısı yapıldığını kanıtlamaz.
   const reclaimed = !!(c.json && c.json.reclaimed);
   try {
     const sonuc = await isle(u, { ...deps, reclaimed });   // reply (yan etki)

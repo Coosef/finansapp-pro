@@ -122,6 +122,17 @@ jobs:
       - name: "ai_keys upgrade + browser AI proxy (UPG-01..09)"
         run: npm run test:pb:upgrade
 
+      # --- T2C.2 telegram_ai_results.upstream_attempts migration yükseltme kanıtı ---
+      # Temiz DB'den DEĞİL: önce <=1735000600 durumuyla (alan YOK) DONE + PROCESSING satırları
+      # ve finans verisi seed edilir, sonra AYNI veri dizininde tam migration setiyle yeniden
+      # başlatılıp hiçbir mevcut verinin değişmediği kanıtlanır. 3× determinizm.
+      - name: "telegram_ai_results upstream_attempts upgrade (ATT-01..09 ×3)"
+        run: |
+          for i in 1 2 3; do
+            echo "== attempts upgrade run $i/3 =="
+            npm run test:pb:attempts
+          done
+
       # --- Failure artifacts: test fail etse de çalışır (if: always) ---
       # HTML report + trace.zip (console + network dahil) + screenshot + video.
       # trace/video "retain-on-failure" olduğundan başarılı run'larda devasa artifact üretilmez.

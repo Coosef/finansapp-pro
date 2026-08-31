@@ -124,6 +124,22 @@ ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
   Böylece DONE bir sonuç, kullanıcı arkasından anahtarını silse / sağlayıcı-model değiştirse
   bile mantıksal TTL dolana kadar teslim edilebilir kalır (`no_key` cache'i maskeleyemez).
   Süresi dolmuş DONE ise taze yürütmedir: yapılandırma o an neyse onunla çalışılır.
+- **T2C.2 — dayanıklı upstream deneme bütçesi.** Yeni migration `1735000700_telegram_ai_attempts.js`
+  `telegram_ai_results`'a `upstream_attempts` (tamsayı, min 0, required değil) ekler; yalnız şema
+  ekler, mevcut `answer`/`request_hash`/`status`/`expires_at` değerlerine dokunmaz, API kuralları
+  NULL kalır, idempotenttir ve alanı olmayan eski satırlar 0 okunur. Tarihsel `1735000500`
+  **değiştirilmedi**. Sayaç, gerçek bir `$http.send`'den **hemen önce** fence'lenip artırılır ve
+  **kalıcılaştırıldıktan sonra** çağrı yapılır (*persist-before-call*): PB artırım ile çağrı
+  arasında çökerse bir slot temkinli olarak yanar — bu kabul edilebilir; kabul edilemez olan
+  tersidir (çağrı yapılıp sayımın kaybolması → sınırsız ücretli retry). Tavan
+  `MAX_UPSTREAM_ATTEMPTS = 2`. `409 processing`, PB iç 5xx, `provider_unavailable`, `rate_limited`
+  ve cache hit yolları bu satıra hiç gelmez → **slot tüketmezler**. Yanıt sözleşmesi: gerçek
+  geçici hatalarda `502 {error:"upstream",class:"transient",attempt:n}` / `504 {error:"upstream_timeout",attempt:n}`;
+  bütçe doluyken sağlayıcı **çağrılmadan** `502 {…,attempt:2,exhausted:true}` (yeni bir upstream
+  hatası iddiası değildir). Sayaç kalıcılaştırılamazsa sağlayıcı **çağrılmaz** → `500 attempt_persist_failed`.
+  Sayaç `update_id` başına **monotondur**: mantıksal TTL dolduğunda satır taze yürütmeye açılırken
+  `upstream_attempts` bilerek sıfırlanmaz — aksi hâlde "aynı update için en fazla 2 ücretli çağrı"
+  tavanı TTL beklenerek aşılabilirdi.
 - `UPDATE_LEASE_MS` 120 s → 180 s (AI turu için zaman payı). Fencing semantiği değişmedi.
 
 ### ⚠️ `ai_keys` şema onarımı (migration `1735000600`)
@@ -178,10 +194,17 @@ sınırlı olduğundan sağlayıcı whitelist'i zayıflamaz.
   Ham `users.data`, PB user id, link id, e-posta, CAS revision ve AI anahtarı gateway'e **hiç gelmez**.
 - **Uç-bazlı timeout:** AI ucu `PB_AI_TIMEOUT_MS` (varsayılan **60 s**); diğer T1 uçları
   `PB_TIMEOUT_MS` (**15 s**) ile **değişmeden** kalır. Update lease 180 s → toplam yolda pay var.
-- **Sınırlı upstream retry bütçesi:** ilk geçici AI hatası (`502 transient` / `504`) → update
-  `failed`, backoff + yeniden claim. Yeniden claim edilmiş denemede yine geçici hata → güvenli
-  mesaj + `done`. Böylece süresiz sağlayıcı retry'ı ve sınırsız ücretli çağrı olmaz.
-  `409 processing` bu bütçeden **sayılmaz** (ikinci upstream çağrısı yapmaz, sadece retry edilir).
+- **Sınırlı upstream retry bütçesi — otorite PB'dir (T2C.2).** Karar, PB'nin bildirdiği dayanıklı
+  `attempt`/`exhausted` alanlarına göre verilir; gateway'in `reclaimed` bayrağı bu bütçeyi
+  **BELİRLEMEZ**. (`reclaimed=true` yalnız "bu update daha önce bir kez claim edilip başarısız
+  oldu" demektir; gerçek bir ücretli çağrı yapıldığını kanıtlamaz — `409 processing`, PB iç 503
+  ve upstream öncesi hatalar da `reclaimed` üretir. Eski davranışta bu, `409 processing` sonrası
+  **ilk** gerçek `502/transient`'ı yanlışlıkla ikinci başarısızlık sayıyordu.)
+  `attempt=1` → `TransientError` (update `failed`, backoff, yeniden claim) · `attempt>=2` veya
+  `exhausted:true` → güvenli terminal mesaj + `done` · `409 processing` → **her zaman**
+  `TransientError`, bütçe değişmez. `pb.aiAsk()` bu alanları doğrular: `attempt` 1..2 tamsayı,
+  `exhausted` varsa yalnız `true`; eksik/bozuk deneme verisi sessizce tahmin edilmez →
+  `FatalConfigError`.
 - **Konuşma belleği: YALNIZ RAM.** PB koleksiyonu/disk yok. Kullanıcı başına en fazla 2 soru/cevap
   çifti, alan başına 400 code point, 15 dk hareketsizlik TTL'i, global 500 giriş (LRU tahliye).
   Gateway restart'ında **kasıtlı olarak kaybolur**; PB/Telegram'dan yeniden kurulmaz.

@@ -61,6 +61,14 @@ export function pbIstemci({ pbUrl, gwSecret, pbTimeoutMs = 15000, pbAiTimeoutMs 
       if (r.status === 401 || r.status === 403) throw new FatalConfigError(`PB ai auth ${r.status}`);
       if (r.status >= 500 && r.status !== 502 && r.status !== 504) throw new TransientError(`PB ai ${r.status}`);
 
+      // T2C.2 — dayanıklı deneme alanları. GERÇEK geçici hata sınıflarında (502/transient,
+      // 504) PB, update_id başına kalıcı slot numarasını bildirir: attempt ∈ 1..2 tamsayı.
+      // `exhausted` varsa YALNIZ boolean true olabilir ("bütçe zaten doluydu, sağlayıcı
+      // ÇAĞRILMADI" anlamına gelir; yeni bir upstream hatası iddiası DEĞİLDİR).
+      // Eksik/bozuk deneme verisi SESSİZCE tahmin edilmez → sözleşme sapması (fail-closed).
+      const denemeGecerli = j && Number.isInteger(j.attempt) && j.attempt >= 1 && j.attempt <= 2
+        && (typeof j.exhausted === "undefined" || j.exhausted === true);
+
       const gecerli =
         (r.status === 200 && j && typeof j.answer === "string" && j.answer.length > 0) ||
         (r.status === 400 && j && j.error === "bad_question") ||
@@ -69,8 +77,10 @@ export function pbIstemci({ pbUrl, gwSecret, pbTimeoutMs = 15000, pbAiTimeoutMs 
           (j.error === "provider_unavailable" && ["no_key", "local_only", "unsupported"].indexOf(j.reason) !== -1) ||
           j.error === "idempotency_conflict" || j.error === "processing")) ||
         (r.status === 429 && j && j.error === "rate_limited") ||
-        (r.status === 502 && j && j.error === "upstream" && ["auth", "transient", "invalid"].indexOf(j.class) !== -1) ||
-        (r.status === 504 && j && j.error === "upstream_timeout");
+        (r.status === 502 && j && j.error === "upstream" && (
+          ["auth", "invalid"].indexOf(j.class) !== -1 ||
+          (j.class === "transient" && denemeGecerli))) ||
+        (r.status === 504 && j && j.error === "upstream_timeout" && denemeGecerli);
       // Sessizce "done" işaretlemek yerine sözleşme sapmasını AÇIKÇA bildir.
       if (!gecerli) throw new FatalConfigError(`PB ai sözleşme dışı yanıt: ${r.status}`);
       return r;

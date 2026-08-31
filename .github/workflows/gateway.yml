@@ -52,6 +52,17 @@ jobs:
             node --test gateway/test/t2c-integration.test.mjs
           done
 
+      # T2C.2 — DAYANIKLI upstream deneme bütçesi (AI-T2C-BUDGET-01..08). Gerçek PB 0.39.10 +
+      # gerçek gateway + fake AI upstream + fake Telegram + PB hata enjeksiyon vekili.
+      # Kanıtlanan: bütçe otoritesi PB'deki upstream_attempts sayacıdır (`reclaimed` DEĞİL),
+      # 409 processing ve PB iç 5xx slot tüketmez, sağlayıcı çağrısı 2'yi ASLA aşmaz.
+      - name: Gateway T2C.2 durable upstream budget ×3
+        run: |
+          for i in 1 2 3; do
+            echo "== budget run $i/3 =="
+            node --test gateway/test/t2c-budget.test.mjs
+          done
+
       # İmaj doğrulaması: NON-ROOT + AÇIK PORT YOK + HEALTHCHECK + build identity (SHA, 'dev' değil).
       - name: Gateway image build & guardrail verify
         run: |
