@@ -14,7 +14,8 @@
     "test:e2e:tg": "playwright test --config=playwright.tg.config.js",
     "test:e2e:dev": "playwright test --config=playwright.dev.config.js",
     "test:e2e:t2b": "playwright test --config=playwright.t2b.config.js",
-    "test:pb:upgrade": "node --test pb/test/ai-keys-upgrade.test.mjs"
+    "test:pb:upgrade": "node --test pb/test/ai-keys-upgrade.test.mjs",
+    "test:pb:attempts": "node --test pb/test/tg-ai-attempts-upgrade.test.mjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",

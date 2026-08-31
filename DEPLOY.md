@@ -106,9 +106,40 @@ ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
   cache olarak dönmez, taze upstream çağrısı yapılır ve kota tüketir) ·
   **fiziksel silme** bir sonraki `tg_cleanup` turunda (15 dk'da bir) ·
   **nominal disk kalıcılığı ≈ en fazla 45 dk** (30 dk + ≤15 dk cron gecikmesi).
-- `request_hash` yapısal JSON serileştirmesidir (ayıraç birleştirme yok) ve çözülen **hesap
-  kimliğini** (link id + PB user id) de bağlar → unlink/relink sonrası önceki kullanıcının
-  cache'i asla döndürülemez (fail-closed `409 idempotency_conflict`). Ham id'ler saklanmaz.
+- `request_hash` (**`t2b-v3`**) yapısal JSON serileştirmesidir (ayıraç birleştirme yok) ve
+  **yalnız DEĞİŞMEZ istek kimliğini** bağlar: link id + PB user id + telegram_user_id +
+  update_id + normalize soru. Ham id'ler saklanmaz, yalnız hash girdisidir. Unlink/relink
+  sonrası önceki kullanıcının cache'i asla döndürülemez (fail-closed `409 idempotency_conflict`);
+  aynı `update_id` ile farklı soru da fail-closed'dur.
+- **T2C.1 — crash/restart güvenli idempotency.** `history`, sağlayıcı, model, AI anahtarı ve
+  finans context'i hash'e **girmez**; bunlar *yürütme bağlamıdır* ve aynı Telegram update'i
+  yeniden denenirken meşru olarak değişebilir/yok olabilir (gateway belleği RAM-only + 15 dk
+  TTL; kullanıcı anahtarını silebilir veya sağlayıcı/model değiştirebilir). `t2b-v2` bunları
+  bağladığı için dayanıklı bir DONE cevabı restart sonrası `409 idempotency_conflict` alıp
+  **hiç teslim edilemiyordu**. Idempotency = "aynı değişmez Telegram isteği → ilk kabul edilen
+  sonuç otoritedir", "retry her çalışma-zamanı ayarını bayt bayt yeniden üretmelidir" değil.
+- **Sıralama sözleşmesi:** HMAC → gövde doğrula → link/hesap kimliği → `request_hash` →
+  `telegram_ai_results` incele → *süresi dolmamış DONE + hash eşleşmesi ⇒ cache'i HEMEN dön* →
+  ancak bundan **sonra** finans verisi, sağlayıcı/model, `ai_keys`, taze-AI kotası ve upstream.
+  Böylece DONE bir sonuç, kullanıcı arkasından anahtarını silse / sağlayıcı-model değiştirse
+  bile mantıksal TTL dolana kadar teslim edilebilir kalır (`no_key` cache'i maskeleyemez).
+  Süresi dolmuş DONE ise taze yürütmedir: yapılandırma o an neyse onunla çalışılır.
+- **T2C.2 — dayanıklı upstream deneme bütçesi.** Yeni migration `1735000700_telegram_ai_attempts.js`
+  `telegram_ai_results`'a `upstream_attempts` (tamsayı, min 0, required değil) ekler; yalnız şema
+  ekler, mevcut `answer`/`request_hash`/`status`/`expires_at` değerlerine dokunmaz, API kuralları
+  NULL kalır, idempotenttir ve alanı olmayan eski satırlar 0 okunur. Tarihsel `1735000500`
+  **değiştirilmedi**. Sayaç, gerçek bir `$http.send`'den **hemen önce** fence'lenip artırılır ve
+  **kalıcılaştırıldıktan sonra** çağrı yapılır (*persist-before-call*): PB artırım ile çağrı
+  arasında çökerse bir slot temkinli olarak yanar — bu kabul edilebilir; kabul edilemez olan
+  tersidir (çağrı yapılıp sayımın kaybolması → sınırsız ücretli retry). Tavan
+  `MAX_UPSTREAM_ATTEMPTS = 2`. `409 processing`, PB iç 5xx, `provider_unavailable`, `rate_limited`
+  ve cache hit yolları bu satıra hiç gelmez → **slot tüketmezler**. Yanıt sözleşmesi: gerçek
+  geçici hatalarda `502 {error:"upstream",class:"transient",attempt:n}` / `504 {error:"upstream_timeout",attempt:n}`;
+  bütçe doluyken sağlayıcı **çağrılmadan** `502 {…,attempt:2,exhausted:true}` (yeni bir upstream
+  hatası iddiası değildir). Sayaç kalıcılaştırılamazsa sağlayıcı **çağrılmaz** → `500 attempt_persist_failed`.
+  Sayaç `update_id` başına **monotondur**: mantıksal TTL dolduğunda satır taze yürütmeye açılırken
+  `upstream_attempts` bilerek sıfırlanmaz — aksi hâlde "aynı update için en fazla 2 ücretli çağrı"
+  tavanı TTL beklenerek aşılabilirdi.
 - `UPDATE_LEASE_MS` 120 s → 180 s (AI turu için zaman payı). Fencing semantiği değişmedi.
 
 ### ⚠️ `ai_keys` şema onarımı (migration `1735000600`)
@@ -152,6 +183,45 @@ biçimindeyse kabul edilir ve yalnız upstream **origin**'ini değiştirir (yol 
 `TG_AI_TEST_TIMEOUT_SN` yalnız bu test origin'i aktifken ve 1..45 s aralığında geçerlidir.
 Üretim PocketBase'inde bu env'ler tanımlı değildir; tanımlı olsalar bile hedef loopback ile
 sınırlı olduğundan sağlayıcı whitelist'i zayıflamaz.
+
+## Telegram AI yönlendirme (T2C — gateway)
+
+- `/sor SORUN` ve **bağlı** kullanıcının özel sohbetteki serbest metni AI'ya gider. Bilinen
+  komutlar (`/start`, `/help`, `/link`, `/unlink`, `/durum`, `/bakiye`, `/buay`) ve menü
+  butonları **deterministik** kalır; **bilinmeyen slash komutu yardım gösterir, AI'ya GİTMEZ**
+  (yazım hatası ücretli çağrı üretmez). Bağlı olmayan serbest metin bağlanma yönlendirmesi alır.
+- Gateway PB'ye YALNIZ `telegram_user_id`, `update_id`, `question` ve sınırlı `history` gönderir.
+  Ham `users.data`, PB user id, link id, e-posta, CAS revision ve AI anahtarı gateway'e **hiç gelmez**.
+- **Uç-bazlı timeout:** AI ucu `PB_AI_TIMEOUT_MS` (varsayılan **60 s**); diğer T1 uçları
+  `PB_TIMEOUT_MS` (**15 s**) ile **değişmeden** kalır. Update lease 180 s → toplam yolda pay var.
+- **Sınırlı upstream retry bütçesi — otorite PB'dir (T2C.2).** Karar, PB'nin bildirdiği dayanıklı
+  `attempt`/`exhausted` alanlarına göre verilir; gateway'in `reclaimed` bayrağı bu bütçeyi
+  **BELİRLEMEZ**. (`reclaimed=true` yalnız "bu update daha önce bir kez claim edilip başarısız
+  oldu" demektir; gerçek bir ücretli çağrı yapıldığını kanıtlamaz — `409 processing`, PB iç 503
+  ve upstream öncesi hatalar da `reclaimed` üretir. Eski davranışta bu, `409 processing` sonrası
+  **ilk** gerçek `502/transient`'ı yanlışlıkla ikinci başarısızlık sayıyordu.)
+  `attempt=1` → `TransientError` (update `failed`, backoff, yeniden claim) · `attempt>=2` veya
+  `exhausted:true` → güvenli terminal mesaj + `done` · `409 processing` → **her zaman**
+  `TransientError`, bütçe değişmez. `pb.aiAsk()` bu alanları doğrular: `attempt` 1..2 tamsayı,
+  `exhausted` varsa yalnız `true`; eksik/bozuk deneme verisi sessizce tahmin edilmez →
+  `FatalConfigError`.
+- **Konuşma belleği: YALNIZ RAM.** PB koleksiyonu/disk yok. Kullanıcı başına en fazla 2 soru/cevap
+  çifti, alan başına 400 code point, 15 dk hareketsizlik TTL'i, global 500 giriş (LRU tahliye).
+  Gateway restart'ında **kasıtlı olarak kaybolur**; PB/Telegram'dan yeniden kurulmaz.
+  Anahtar yalnız **numerik Telegram id**'dir.
+- **Commit sırası:** bellek YALNIZ `updateComplete` başarılı olduktan SONRA işlenir → aynı
+  update'in retry'ı aynı `history` ile gider ve konuşma tutarlı kalır. (T2C.1'den itibaren bu
+  bir *doğruluk* değil *tutarlılık* güvencesidir: `history` artık `request_hash`'e girmediği
+  için farklı/boş geçmişle yapılan retry de dayanıklı DONE cevabına yakınsar.) `/link`,
+  `/unlink` ve `not_linked` kimlik sınırlarında bellek temizlenir.
+- **PB 5xx sınıflandırması (bilinçli istisna):** PB'nin kendi altyapı hatası (500/503/… —
+  restart, unavailable, panic) `TransientError`'dır → offset ilerlemez, update yeniden denenir.
+  `502`/`504` ise PB'nin **belgelenmiş** AI protokol kodlarıdır (upstream sağlayıcı hatası /
+  timeout) ve router taksonomisine gider. Beklenmeyen 2xx/4xx/502 **şeması** ve HMAC `401/403`
+  → `FatalConfigError` (fail-closed). Regresyon: `AI-T2C-23`.
+- Bir AI cevabı **tek** Telegram mesajıdır (çoklu-mesaj bölme YOK); PB zaten 3000 code point'te
+  sınırlar, gateway `uzunlukGuvenli` ile savunmacı guard uygular.
+- AI cevabı **güvenilmez düz metindir**: parse/eval/komut yorumlaması yok, `parse_mode` verilmez.
 
 ## Notlar
 

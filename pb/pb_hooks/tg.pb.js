@@ -277,6 +277,21 @@ routerAdd("POST", "/api/tg/service/update/complete", (e) => {
 // context üretir, kullanıcının KENDİ ai_keys anahtarıyla whitelist'li sağlayıcıyı çağırır ve
 // YALNIZ metin döner. Ham users.data / PB id / e-posta / anahtar gateway'e ASLA gitmez.
 // FİNANSAL YAZMA YOK: bu handler users/haneler üzerinde hiç save çağırmaz.
+//
+// T2C.1 SIRALAMA SÖZLEŞMESİ (crash/restart güvenli idempotency):
+//   HMAC → gövde doğrula → link/hesap kimliği → DEĞİŞMEZ request_hash (t2b-v3)
+//   → telegram_ai_results incele → (süresi DOLMAMIŞ DONE + hash eşleşmesi ⇒ CACHE'İ HEMEN DÖN)
+//   → ancak bundan SONRA: finans verisi, sağlayıcı/model, ai_keys, taze-AI kotası, upstream.
+// Böylece dayanıklı bir DONE sonucu, kullanıcı arkasından anahtarını silse / sağlayıcı-model
+// değiştirse / finans verisini düzenlese bile (mantıksal TTL dolana kadar) teslim edilebilir.
+//
+// T2C.2 DAYANIKLI UPSTREAM BÜTÇESİ: taze yolun EN SONUNDA, $http.send'den hemen önce
+// `telegram_ai_results.upstream_attempts` fence'lenip artırılır (persist-before-call).
+// Slot YALNIZ gerçek bir sağlayıcı çağrısı için tüketilir; 409 processing / PB iç 5xx /
+// provider_unavailable / rate_limited yolları buraya HİÇ gelmez. En fazla 2 slot.
+// NOT: taze-AI kotası (10/15dk) slot alımından ÖNCE işaretlenir; bütçesi dolmuş bir retry
+// bu yüzden bir kota işaretçisi tüketebilir — bilinen ve kabul edilen küçük maliyet
+// (ücretli sağlayıcı çağrısı yapılmaz, yalnız yerel sayaç işaretçisi yazılır).
 // ============================================================
 routerAdd("POST", "/api/tg/service/ai", (e) => {
   const T = require(`${__hooks}/tg_lib.js`);
@@ -295,19 +310,16 @@ routerAdd("POST", "/api/tg/service/ai", (e) => {
   const link = T.tekKayit(e.app, "telegram_links", "telegram_user_id = {:t} && active = true", { t: tgid });
   if (!link) return e.json(404, { error: "not_linked" });
   if (link.get("scope") !== "personal") return e.json(404, { error: "not_linked" }); // T2: yalnız personal
-  const user = e.app.findRecordById("users", link.get("user")); // finansal kaynak — SADECE OKUMA
-  const findata = A.jsonNesne(user.get("data")); // PB JSON alanı → gerçek JS nesnesi
+  // T2C.1 F2: HESAP KİMLİĞİ link kaydından doğrudan okunur (users kaydını YÜKLEMEDEN).
+  // Finans verisi, sağlayıcı/model ve ai_keys YALNIZ TAZE yürütme yolunda okunur → dayanıklı
+  // DONE cevabı, kullanıcı sonradan anahtarını silse/sağlayıcı değiştirse bile teslim edilebilir.
+  const userId = String(link.get("user") || "");
 
-  // Sağlayıcı/model — users.data.ayarlar'dan; yerel/bilinmeyen → 409 (sessiz değiştirme YOK).
-  const sc = A.saglayiciCoz(findata);
-  if (!sc.ok) return e.json(409, { error: "provider_unavailable", reason: sc.reason });
-  // Kimlik bilgisi YALNIZ kullanıcının ai_keys kaydından. Env fallback YOK, legacy ayarlar.apiKey YOK.
-  const key = A.anahtarCoz(e.app, user.id, sc.sag);
-  if (!key) return e.json(409, { error: "provider_unavailable", reason: "no_key" });
-
-  // F1: hash çözülen HESAP KİMLİĞİNİ de bağlar (link.id + user.id) → relink sonrası
-  // önceki kullanıcının cache'i ASLA eşleşmez. Ham id'ler saklanmaz, yalnız hash girdisidir.
-  const hash = A.istekHash(link.id, user.id, tgid, uid, soru, history, sc.sag, sc.model);
+  // F1 (T2C.1 / t2b-v3): hash YALNIZ DEĞİŞMEZ istek kimliğini bağlar — link.id + user id +
+  // tgid + update_id + soru. Relink sonrası önceki kullanıcının cache'i ASLA eşleşmez
+  // (fail-closed). history/sağlayıcı/model hash'e GİRMEZ (yürütme bağlamı; retry'da değişebilir).
+  // Ham id'ler saklanmaz, yalnız hash girdisidir.
+  const hash = A.istekHash(link.id, userId, tgid, uid, soru);
 
   // ---- Idempotency: DONE cache / hash conflict / aktif lease / stale devralma ----
   let durum = null;
@@ -339,6 +351,25 @@ routerAdd("POST", "/api/tg/service/ai", (e) => {
   // Aktif lease: başka bir claimant işliyor → İKİNCİ upstream çağrısı YAPILMAZ. Retry edilebilir.
   if (durum.busy) return e.json(409, { error: "processing" });
 
+  // ============================================================
+  // BURADAN İTİBAREN: TAZE YÜRÜTME. Değişken (volatile) AI yapılandırması ANCAK ŞİMDİ okunur.
+  // T2C.1 F2 gereği finans verisi / sağlayıcı / model / ai_keys / rate limit / upstream
+  // DONE cache kontrolünden SONRA gelir → DONE bir sonuç, kullanıcı anahtarını silse veya
+  // sağlayıcı/model değiştirse bile (mantıksal TTL dolana kadar) teslim edilebilir kalır.
+  // Süresi dolmuş DONE → taze yürütme: yapılandırma o an neyse ONUNLA çalışılır (doğru davranış).
+  // ============================================================
+  const user = e.app.findRecordById("users", link.get("user")); // finansal kaynak — SADECE OKUMA
+  const findata = A.jsonNesne(user.get("data")); // PB JSON alanı → gerçek JS nesnesi
+
+  // Sağlayıcı/model — users.data.ayarlar'dan; yerel/bilinmeyen → 409 (sessiz değiştirme YOK).
+  // NOT: satır artık AÇILMIŞ durumda → hata yolunda lease serbest bırakılır, aksi halde aynı
+  // update'in retry'ı 409 processing'e takılırdı.
+  const sc = A.saglayiciCoz(findata);
+  if (!sc.ok) { A.aiLeaseBirak(e.app, durum.id); return e.json(409, { error: "provider_unavailable", reason: sc.reason }); }
+  // Kimlik bilgisi YALNIZ kullanıcının ai_keys kaydından. Env fallback YOK, legacy ayarlar.apiKey YOK.
+  const key = A.anahtarCoz(e.app, user.id, sc.sag);
+  if (!key) { A.aiLeaseBirak(e.app, durum.id); return e.json(409, { error: "provider_unavailable", reason: "no_key" }); }
+
   // ---- Taze AI: rate limit (10/tgid/15dk) — YALNIZ taze çağrılar sayılır ----
   // İşaretçi ÖNCE yazılır, sonra sayılır: böylece pencere semantiği pair-consume ile
   // AYNI olur (N'inci çağrı N işaretçi görür → N > MAX olduğunda reddedilir, yani
@@ -354,11 +385,33 @@ routerAdd("POST", "/api/tg/service/ai", (e) => {
   const p2 = (n) => String(n).padStart(2, "0");
   const bugunStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`; // format.js bugun() ile aynı
   const ctx = C.finansContext(findata, bugunStr);
+
+  // ---- T2C.2: DAYANIKLI upstream çağrı slotu — $http.send'den HEMEN ÖNCE ----
+  // Bütçe otoritesi BURASIDIR. Gateway'in `reclaimed` bayrağı ücretli retry sayımını
+  // BELİRLEMEZ: 409 processing, PB iç 5xx ve upstream ÖNCESİ hatalar bu satıra hiç
+  // gelmez → slot tüketmez. Sayaç yalnız gerçek bir sağlayıcı çağrısı yapılacakken artar.
+  const slot = A.ustSlotAl(e.app, durum.id);
+  if (slot.exhausted) {
+    // YENİ bir upstream hatası İDDİA EDİLMİYOR: bütçe zaten dolu, sağlayıcı ÇAĞRILMADI.
+    A.aiLeaseBirak(e.app, durum.id);
+    return e.json(502, { error: "upstream", class: "transient", attempt: slot.attempt, exhausted: true });
+  }
+  if (!slot.ok) {
+    // Sayaç kalıcılaştırılamadı → sağlayıcı ÇAĞRILMAZ (sayılamayan ücretli çağrı yapılmaz).
+    // PB iç hatası olarak raporlanır → gateway TransientError (bütçe tüketilmedi).
+    A.aiLeaseBirak(e.app, durum.id);
+    return e.json(500, { error: "attempt_persist_failed" });
+  }
+
   const r = A.ustCagir(sc.cfg, sc.model, key, A.SISTEM, A.kullaniciMetni(ctx, soru, history));
 
   if (!r.ok) {
     A.aiLeaseBirak(e.app, durum.id); // lease serbest → retry takılmaz (hash bağlaması korunur)
-    return e.json(r.http, r.sinif ? { error: r.error, class: r.sinif } : { error: r.error });
+    const govde = r.sinif ? { error: r.error, class: r.sinif } : { error: r.error };
+    // Dayanıklı deneme numarası YALNIZ gerçek geçici hata sınıflarında raporlanır
+    // (502/transient ve 504). auth/invalid zaten terminal kullanıcı/sağlayıcı hatalarıdır.
+    if (r.http === 504 || (r.http === 502 && r.sinif === "transient")) govde.attempt = slot.attempt;
+    return e.json(r.http, govde);
   }
 
   // ---- DONE olarak dayanıklı sakla ----

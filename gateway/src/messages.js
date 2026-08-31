@@ -22,6 +22,11 @@ const tipIcon = (tip) => (HESAP_TIP.find((t) => t.id === tip) || {}).icon || "�
 const tipLabel = (tip) => (HESAP_TIP.find((t) => t.id === tip) || {}).label || tip;
 
 const GIZLILIK = "ℹ️ Telegram üzerinden görüntülediğin finansal özetler Telegram altyapısından geçer. Hassas belge yükleme özelliği bu aşamada aktif değildir.";
+// AI gizlilik açıklaması — "AI sağlayıcısına finansal bilgi GİTMİYOR" demek YANLIŞ olurdu.
+const AI_GIZLILIK = [
+  "🤖 AI sorularında sorun ve sunucuda hazırlanmış SINIRLI finans özeti, seçtiğin AI sağlayıcısına gönderilir.",
+  "Ham hesap kaydı, uygulama kimlikleri ve API anahtarları modele gönderilmez.",
+].join("\n");
 
 // R11: generic uzunluk guard — code point sınırı (surrogate/emoji bölmeden). Router her gönderimde uygular.
 export function uzunlukGuvenli(text, max = MAX_UZUNLUK) {
@@ -31,7 +36,16 @@ export function uzunlukGuvenli(text, max = MAX_UZUNLUK) {
 }
 
 export function karsilamaMesaji(bagli) {
-  if (bagli) return `👋 FinansApp'e bağlısın. Menüden veya komutlardan devam et.\n/bakiye · /buay · 📊 Bugün · 💳 Hesaplar\n\n${GIZLILIK}`;
+  if (bagli) return [
+    "👋 FinansApp'e bağlısın. Menüden veya komutlardan devam et.",
+    "/bakiye · /buay · 📊 Bugün · 💳 Hesaplar",
+    "",
+    "Finans sorunu doğrudan mesaj olarak da yazabilirsin (ya da /sor SORUN).",
+    "",
+    GIZLILIK,
+    "",
+    AI_GIZLILIK,
+  ].join("\n");
   return [
     "👋 FinansApp Telegram botuna hoş geldin.",
     "",
@@ -52,13 +66,18 @@ export function yardimMesaji() {
     "/durum — bağlantı durumu",
     "/bakiye — Net Varlık (nakit + yatırım)",
     "/buay — bu ayın gelir/gider/net özeti",
+    "/sor SORUN — finans sorunu AI ile yanıtla",
     "/unlink — bağlantıyı kaldır",
     "",
     "Menü: 📊 Bugün · 📅 Bu Ay · 💳 Hesaplar · ⚙️ Bağlantı",
     "",
+    "Hesabın bağlıysa finans sorunu doğrudan mesaj olarak da yazabilirsin.",
+    "",
     "Yalnızca okuma — bot verini değiştirmez.",
     "",
     GIZLILIK,
+    "",
+    AI_GIZLILIK,
   ].join("\n");
 }
 
@@ -120,3 +139,16 @@ export const unlinkMesaji = () => "🔌 Bağlantı kaldırıldı. İstersen /lin
 export const cokFazlaDenemeMesaji = () => "⏳ Çok fazla deneme. Lütfen biraz sonra tekrar dene.";
 export const hataMesaji = () => "⚠️ Şu an bir sorun oluştu. Lütfen biraz sonra tekrar dene.";
 export const ozelDegilMesaji = () => "🔒 Bu bot yalnızca özel sohbette çalışır. Lütfen bana özelden yaz.";
+
+// ---- T2C: AI yanıt/hata mesajları (hepsi güvenli, iç kimlik/gizli bilgi İÇERMEZ) ----
+export const sorKullanimMesaji = () => "Kullanım: /sor SORUN\n\nÖrnek: /sor Bu ay en çok neye harcadım?\n\nHesabın bağlıysa soruyu doğrudan mesaj olarak da yazabilirsin.";
+export const soruUzunMesaji = () => "⚠️ Sorun çok uzun. Lütfen 500 karakterin altında, daha kısa bir soru yaz.";
+export const soruGecersizMesaji = () => "⚠️ Soruyu anlayamadım. Lütfen kısa ve net bir finans sorusu yaz.";
+export const aiAnahtarYokMesaji = () => "⚙️ Telegram AI için hesabına tanımlı bir AI anahtarı yok.\nUygulamada Ayarlar → Yapay Zekâ'dan bir bulut sağlayıcı (Claude, Gemini veya ChatGPT) anahtarını kaydet.";
+export const aiYerelSaglayiciMesaji = () => "⚙️ Seçili AI sağlayıcın yalnız kendi cihazında çalışıyor; sunucudan erişilemiyor.\nUygulamada Ayarlar → Yapay Zekâ'dan bulut bir sağlayıcı (Claude, Gemini veya ChatGPT) seç.";
+export const aiModelDesteklenmiyorMesaji = () => "⚙️ Seçili AI modeli desteklenmiyor.\nUygulamada Ayarlar → Yapay Zekâ'dan güncel bir model seç.";
+export const aiAnahtarRedMesaji = () => "⚠️ AI sağlayıcısı anahtarı kabul etmedi.\nUygulamadaki AI ayarlarından anahtarını kontrol et.";
+export const aiLimitMesaji = () => "⏳ AI soru limitine ulaşıldı.\nBir süre sonra yeni bir soru gönder.";
+export const aiCakismaMesaji = () => "⚠️ Bu mesaj için güvenli AI işlemi doğrulanamadı.\nLütfen sorunu yeni bir mesaj olarak tekrar gönder.";
+export const aiGeciciHataMesaji = () => "⚠️ AI şu an yanıt veremedi. Lütfen biraz sonra yeni bir soru gönder.";
+export const aiBozukYanitMesaji = () => "⚠️ AI'dan geçerli bir yanıt alınamadı. Lütfen sorunu tekrar yaz.";

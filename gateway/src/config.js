@@ -56,6 +56,9 @@ export function yapilandir(env = process.env) {
     pollTimeout: sayi(env, "TG_POLL_TIMEOUT", 25), // getUpdates long-poll saniye
     pollLimit: sayi(env, "TG_POLL_LIMIT", 50),
     pbTimeoutMs: sayi(env, "PB_TIMEOUT_MS", 15000),
+    // T2C: AI ucu için AYRI timeout. PB tarafında upstream timeout 45 s olduğundan 60 s pay
+    // bırakır; diğer T1 uçları 15 s'te KALIR (global değişiklik YOK). Update lease 180 s.
+    pbAiTimeoutMs: sayi(env, "PB_AI_TIMEOUT_MS", 60000),
     heartbeatFile: (env.HEARTBEAT_FILE || "/tmp/tg-gateway-heartbeat").trim(),
     buildSha: (env.BUILD_SHA || "dev").trim(),
   };

@@ -25,13 +25,30 @@ export async function updateIsle(u, deps) {
     return { busy: true };                                       // in-flight lease → ilerleme yok
   }
   const leaseToken = c.json.lease_token;
+  // Bu update DAHA ÖNCE claim edilip başarısız olmuş ve yeniden claim edilmiş mi?
+  // T2C.2: bu YALNIZCA genel dayanıklı-update teşhisi içindir. Ücretli AI upstream retry
+  // bütçesini BELİRLEMEZ — o bütçenin otoritesi PB'deki `upstream_attempts` sayacıdır
+  // (bkz. router.js aiIsle). `reclaimed` gerçek bir sağlayıcı çağrısı yapıldığını kanıtlamaz.
+  const reclaimed = !!(c.json && c.json.reclaimed);
   try {
-    await isle(u, deps);                        // reply (yan etki)
-    await pb.updateComplete(uid, leaseToken);   // done → next_offset = uid + 1
+    const sonuc = await isle(u, { ...deps, reclaimed });   // reply (yan etki)
+    await pb.updateComplete(uid, leaseToken);              // done → next_offset = uid + 1
+    // T2C: konuşma belleği YALNIZ dayanıklı complete BAŞARILI olduktan SONRA işlenir → aynı
+    // update'in retry'ı AYNI history ile gider, konuşma tutarlı kalır. (T2C.1: bu bir tutarlılık
+    // güvencesidir; request_hash history'yi bağlamadığı için farklı history idempotency'yi
+    // BOZMAZ.) Bellek best-effort RAM durumudur: hatası tamamlanmış update'i GERİ ALMAZ.
+    sonrasiUygula(sonuc, deps);
     return { done: true };
   } catch (e) {
     return await hataYonet(e, u, uid, leaseToken, deps);
   }
+}
+
+// Router'ın döndürdüğü complete-sonrası yan etkileri uygular (şimdilik yalnız AI bellek commit'i).
+function sonrasiUygula(sonuc, deps) {
+  const a = sonuc && sonuc.afterComplete;
+  if (!a || a.type !== "ai_memory_commit" || !deps.aiHafiza) return;
+  try { deps.aiHafiza.isle(a.tgid, a.q, a.a); } catch (_) { /* best-effort RAM durumu */ }
 }
 
 // Hata sınıfına göre tamamlama kararı.

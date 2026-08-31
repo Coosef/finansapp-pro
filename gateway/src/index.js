@@ -11,6 +11,7 @@ import { runLoop } from "./loop.js";
 import { preflightBekle } from "./startup.js";
 import { kalpAtisiBaslat } from "./health.js";
 import { makeBackoff } from "./backoff.js";
+import { aiHafiza } from "./ai-memory.js";
 
 function log(msg) { console.log(`[tg-gateway] ${msg}`); }
 
@@ -19,8 +20,9 @@ async function main() {
   const ac = new AbortController(); // R12 shutdown signal
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { log(`${sig} alındı → kapanıyor`); ac.abort(new Error("shutdown")); });
 
-  const pb = pbIstemci({ pbUrl: cfg.pbUrl, gwSecret: cfg.gwSecret, pbTimeoutMs: cfg.pbTimeoutMs, signal: ac.signal });
+  const pb = pbIstemci({ pbUrl: cfg.pbUrl, gwSecret: cfg.gwSecret, pbTimeoutMs: cfg.pbTimeoutMs, pbAiTimeoutMs: cfg.pbAiTimeoutMs, signal: ac.signal });
   const tg = tgIstemci({ apiBase: cfg.tgApiBase, botToken: cfg.botToken });
+  const hafiza = aiHafiza(); // T2C: kısa konuşma belleği — YALNIZ RAM, restart'ta kasıtlı kaybolur
 
   // F4: abort-uyanır uyku — shutdown sinyali backoff beklemesini DERHAL keser (startup + runtime).
   const uyku = (ms) => new Promise((res) => {
@@ -44,7 +46,7 @@ async function main() {
   const durdurKalp = kalpAtisiBaslat(cfg.heartbeatFile); // R13: preflight SONRASI event-loop heartbeat
   backoff.reset(); // startup denemeleri runtime backoff'unu şişirmesin
   try {
-    await runLoop({ pb, tg, log, backoff, signal: ac.signal, pollTimeout: cfg.pollTimeout, pollLimit: cfg.pollLimit, dur: () => ac.signal.aborted });
+    await runLoop({ pb, tg, log, backoff, aiHafiza: hafiza, signal: ac.signal, pollTimeout: cfg.pollTimeout, pollLimit: cfg.pollLimit, dur: () => ac.signal.aborted });
     durdurKalp();
     log("döngü durdu (temiz çıkış)");
     process.exit(0);

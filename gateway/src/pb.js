@@ -12,14 +12,16 @@
 import { imzaBasliklari } from "./hmac.js";
 import { TransientError, FatalConfigError, LeaseConflictError } from "./errors.js";
 
-export function pbIstemci({ pbUrl, gwSecret, pbTimeoutMs = 15000, fetchImpl = fetch, signal }) {
+export function pbIstemci({ pbUrl, gwSecret, pbTimeoutMs = 15000, pbAiTimeoutMs = 60000, fetchImpl = fetch, signal }) {
   // Tek düşük seviye istek: taze imza + timeout + (varsa) dış shutdown signal. {status,json}
   // döner; ağ/timeout/abort(shutdown-dışı) → TransientError.
-  async function istek(path, body) {
+  // T2C: timeoutMs UÇ-BAZLIDIR. Mevcut T1 uçları 15 s'te KALIR; yalnız AI ucu 60 s kullanır
+  // (PB tarafındaki 45 s upstream timeout'una pay bırakır). Global timeout DEĞİŞTİRİLMEZ.
+  async function istek(path, body, timeoutMs) {
     const raw = JSON.stringify(body || {});
     const headers = { ...imzaBasliklari({ secret: gwSecret, method: "POST", path, rawBody: raw }), "Content-Type": "application/json" };
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(new Error("timeout")), pbTimeoutMs);
+    const timer = setTimeout(() => ac.abort(new Error("timeout")), timeoutMs || pbTimeoutMs);
     const sig = signal ? AbortSignal.any([ac.signal, signal]) : ac.signal;
     try {
       const res = await fetchImpl(pbUrl + path, { method: "POST", headers, body: raw, signal: sig });
@@ -38,6 +40,52 @@ export function pbIstemci({ pbUrl, gwSecret, pbTimeoutMs = 15000, fetchImpl = fe
   }
   return {
     _fetch: fetchImpl,
+
+    // T2C — Telegram AI (T2B servis ucu). UÇ-BAZLI sözleşme doğrulaması: yalnız belgelenmiş
+    // durum+şema kabul edilir; başka her şey AÇIK sözleşme sapmasıdır (fail-closed).
+    // Gövde YALNIZ şunları taşır: telegram_user_id, update_id, question, bounded history.
+    // Ham users.data / PB user id / link id / AI anahtarı / e-posta / revision gateway'e GELMEZ.
+    async aiAsk({ tgid, updateId, question, history }) {
+      const govde = { telegram_user_id: String(tgid), update_id: String(updateId), question: String(question) };
+      if (history && history.length) govde.history = history.map((h) => ({ q: String(h.q), a: String(h.a) }));
+      const r = await istek("/api/tg/service/ai", govde, pbAiTimeoutMs);
+      const j = r.json;
+      // 5XX SINIFLANDIRMASI (T2C.1 F8 — BİLİNÇLİ İSTİSNA, kaza değil):
+      //   502/504 = PB'nin BELGELENMİŞ AI protokol kodları (upstream sağlayıcı hatası/timeout)
+      //             → aşağıdaki şema doğrulamasından geçer, router taksonomisi karar verir.
+      //   diğer 5xx (500/503/...) = PB'nin KENDİ altyapı hatası (panic, restart, 503 unavailable)
+      //             → TransientError: offset İLERLEMEZ, update yeniden denenir.
+      // Bu, "beklenmeyen 2xx/4xx/502 şeması → FatalConfigError" kuralının bir istisnasıdır:
+      // altyapı kesintisi bir sözleşme sapması DEĞİLDİR ve süreci fail-closed kapatmamalıdır.
+      // HMAC/servis-auth sapması → süreç fail-closed (T1 semantiği aynen).
+      if (r.status === 401 || r.status === 403) throw new FatalConfigError(`PB ai auth ${r.status}`);
+      if (r.status >= 500 && r.status !== 502 && r.status !== 504) throw new TransientError(`PB ai ${r.status}`);
+
+      // T2C.2 — dayanıklı deneme alanları. GERÇEK geçici hata sınıflarında (502/transient,
+      // 504) PB, update_id başına kalıcı slot numarasını bildirir: attempt ∈ 1..2 tamsayı.
+      // `exhausted` varsa YALNIZ boolean true olabilir ("bütçe zaten doluydu, sağlayıcı
+      // ÇAĞRILMADI" anlamına gelir; yeni bir upstream hatası iddiası DEĞİLDİR).
+      // Eksik/bozuk deneme verisi SESSİZCE tahmin edilmez → sözleşme sapması (fail-closed).
+      const denemeGecerli = j && Number.isInteger(j.attempt) && j.attempt >= 1 && j.attempt <= 2
+        && (typeof j.exhausted === "undefined" || j.exhausted === true);
+
+      const gecerli =
+        (r.status === 200 && j && typeof j.answer === "string" && j.answer.length > 0) ||
+        (r.status === 400 && j && j.error === "bad_question") ||
+        (r.status === 404 && j && j.error === "not_linked") ||
+        (r.status === 409 && j && (
+          (j.error === "provider_unavailable" && ["no_key", "local_only", "unsupported"].indexOf(j.reason) !== -1) ||
+          j.error === "idempotency_conflict" || j.error === "processing")) ||
+        (r.status === 429 && j && j.error === "rate_limited") ||
+        (r.status === 502 && j && j.error === "upstream" && (
+          ["auth", "invalid"].indexOf(j.class) !== -1 ||
+          (j.class === "transient" && denemeGecerli))) ||
+        (r.status === 504 && j && j.error === "upstream_timeout" && denemeGecerli);
+      // Sessizce "done" işaretlemek yerine sözleşme sapmasını AÇIKÇA bildir.
+      if (!gecerli) throw new FatalConfigError(`PB ai sözleşme dışı yanıt: ${r.status}`);
+      return r;
+    },
+
     async stateGet() {
       const r = infra(await istek("/api/tg/service/state/get", {}), "state/get");
       if (r.status === 200 && r.json && typeof r.json.next_offset !== "undefined") return r.json;
