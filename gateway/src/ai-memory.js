@@ -8,10 +8,12 @@
 //
 // Anahtar = NUMERİK telegram_user_id. Username ASLA anahtar değildir (değiştirilebilir).
 //
-// COMMIT SIRASI GÜVENLİK-KRİTİKTİR (bkz. router/loop): geçmiş, PB updateComplete BAŞARILI
-// olduktan SONRA işlenir. Aksi halde "cevap üretildi ama Telegram gönderimi/complete başarısız"
-// penceresinde aynı Telegram update'i FARKLI history ile tekrar gönderilir ve T2B'nin
-// history-bağlı request_hash'i haklı olarak 409 idempotency_conflict döner.
+// COMMIT SIRASI (bkz. router/loop): geçmiş, PB updateComplete BAŞARILI olduktan SONRA işlenir.
+// Aksi halde "cevap üretildi ama Telegram gönderimi/complete başarısız" penceresinde aynı
+// Telegram update'i FARKLI history ile tekrar gönderilirdi → konuşma tutarsızlaşırdı.
+// T2C.1 NOTU: bu artık bir DOĞRULUK değil TUTARLILIK güvencesidir. T2B request_hash'i
+// (t2b-v3) history'yi BAĞLAMAZ; bu yüzden restart/TTL sonrası boş history ile yapılan retry
+// de dayanıklı DONE cevabına yakınsar (409 idempotency_conflict ÜRETMEZ).
 // ============================================================
 
 export const VARSAYILAN = {

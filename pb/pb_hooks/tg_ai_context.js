@@ -279,23 +279,32 @@ function govdeDogrula(body) {
 // durur -> belirsizlik yok. (Onceki surum NUL/SOH ayiraci kullaniyordu; kaynakta ham kontrol
 // baytlari da birakiyordu.)
 //
-// KIMLIK BAGLAMA: hash yalniz (tgid, update_id, soru, gecmis) degil, COZULEN HESAP KIMLIGINI de
+// KIMLIK BAGLAMA: hash yalniz (tgid, update_id, soru) degil, COZULEN HESAP KIMLIGINI de
 // baglar (linkId + userId). Ayni tgid+update_id unlink/relink ile BASKA bir PB kullanicisina
 // baglanirsa hash DEGISIR -> onceki kullanicinin cache'lenmis cevabi ASLA dondurulemez
 // (fail-closed: idempotency_conflict).
 //
 // linkId/userId YALNIZ hash GIRDISIDIR; telegram_ai_results'a ham olarak YAZILMAZ.
-function hashKanonik(linkId, userId, tgid, uid, soru, history, saglayici, model) {
+//
+// T2C.1 (t2b-v3) — DEGISMEZ ISTEK KIMLIGI: hash ARTIK YALNIZ retry'lar arasinda DEGISMEYEN
+// alanlari baglar. history / saglayici / model / AI anahtari / finans context'i CIKARILDI:
+// bunlar YURUTME BAGLAMIDIR ve ayni Telegram update'i yeniden denenirken MESRU olarak
+// degisebilir veya YOK olabilir.
+//   - gateway konusma bellegi RAM-only + 15 dk TTL -> yeniden baslatmada history=[] olur;
+//   - kullanici DONE'dan sonra AI anahtarini silebilir, saglayici/model degistirebilir.
+// v2'de bunlar hash'e giriyordu; bu durumda ayni Telegram update'inin retry'i 409
+// idempotency_conflict aliyor ve dayanikli DONE cevabi ASLA teslim edilemiyordu.
+// Idempotency'nin anlami: "ayni degismez Telegram istegi -> ilk kabul edilen sonuc
+// otoritedir", "retry her calisma-zamani ayarini bayt bayt yeniden uretmelidir" DEGIL.
+// Degisen SORU veya degisen HESAP KIMLIGI hala hash'i degistirir -> fail-closed korunur.
+function hashKanonik(linkId, userId, tgid, uid, soru) {
   return JSON.stringify([
-    "t2b-v2",
+    "t2b-v3",
     String(linkId || ""),
     String(userId || ""),
     String(tgid || ""),
     String(uid || ""),
     String(soru || ""),
-    (history || []).map((x) => [String((x && x.q) || ""), String((x && x.a) || "")]),
-    String(saglayici || ""),
-    String(model || ""),
   ]);
 }
 

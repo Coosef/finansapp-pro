@@ -41,6 +41,9 @@ jobs:
           done
 
       # İzole GERÇEK PB 0.39.10 (test kendi docker container'ını yönetir) + fake Telegram. 3× determinizm.
+      # t2c-integration ayrıca T2C.1 crash/restart idempotency kabulünü içerir (AI-T2C-CRASH-01..06):
+      # gateway restart / bellek TTL / anahtar silme / sağlayıcı-model değişimi sonrası dayanıklı
+      # DONE cevabının yakınsaması + değişen soru ve relink'te fail-closed davranış.
       - name: Gateway integration (real PB + fake Telegram) ×3
         run: |
           for i in 1 2 3; do

@@ -454,9 +454,71 @@ test("AI-T2-IDEM-03 aynı update_id + farklı hash → 409 idempotency_conflict"
   expect(r.status).toBe(409);
   expect(r.json).toEqual({ error: "idempotency_conflict" });
   expect(istekSayisi()).toBe(1);
-  // geçmiş farkı da hash'i değiştirir
+  // T2C.1: geçmiş DEĞİŞMEZ kimliğin parçası DEĞİLDİR → aynı soru + farklı geçmiş = AYNI istek.
+  // (Gateway RAM belleği retry'da boş/farklı olabilir; dayanıklı DONE cevabı yine teslim edilmeli.)
   const r2 = await ai({ telegram_user_id: tgid, update_id: uid, question: "Soru bir", history: [{ q: "a", a: "b" }] });
-  expect(r2.status).toBe(409);
+  expect(r2.status).toBe(200);
+  expect(istekSayisi()).toBe(1);
+});
+
+test("AI-T2-IDEM-03B T2C.1 geçmiş/sağlayıcı/model retry'da değişse bile DONE cache döner", async () => {
+  const tgid = nextTgid();
+  await baglan(A, tgid);
+  const uid = nextUid();
+  fakeState.metin = "DAYANIKLI-CEVAP";
+  const r1 = await ai({ telegram_user_id: tgid, update_id: uid, question: "Kalıcı soru", history: [{ q: "a", a: "b" }] });
+  expect(r1.status).toBe(200);
+  expect(r1.json.answer).toBe("DAYANIKLI-CEVAP");
+  expect(istekSayisi()).toBe(1);
+
+  // 1) Geçmiş tamamen kayboldu (gateway yeniden başladı).
+  const rBos = await ai({ telegram_user_id: tgid, update_id: uid, question: "Kalıcı soru" });
+  expect(rBos.status).toBe(200);
+  expect(rBos.json.answer).toBe("DAYANIKLI-CEVAP");
+
+  // 2) Kullanıcı AI anahtarını SİLDİ → no_key, DONE cache'ini MASKELEYEMEZ.
+  await aiKeyAyarla(A.id, null);
+  const rKeysiz = await ai({ telegram_user_id: tgid, update_id: uid, question: "Kalıcı soru" });
+  expect(rKeysiz.status).toBe(200);
+  expect(rKeysiz.json.answer).toBe("DAYANIKLI-CEVAP");
+
+  // 3) Sağlayıcı/model değişti (hatta yerel sağlayıcıya geçildi) → yine cache döner.
+  await findataAyarla(A.id, { ...TEMEL_FINDATA, ayarlar: { aiSaglayici: "ozel", yerelModel: "x" } });
+  const rSag = await ai({ telegram_user_id: tgid, update_id: uid, question: "Kalıcı soru" });
+  expect(rSag.status).toBe(200);
+  expect(rSag.json.answer).toBe("DAYANIKLI-CEVAP");
+
+  // Hiçbir adımda İKİNCİ upstream çağrısı yok.
+  expect(istekSayisi()).toBe(1);
+
+  // Soru değişirse hâlâ fail-closed (değişmez kimlik farklı).
+  const rFark = await ai({ telegram_user_id: tgid, update_id: uid, question: "BAŞKA soru" });
+  expect(rFark.status).toBe(409);
+  expect(rFark.json).toEqual({ error: "idempotency_conflict" });
+  expect(istekSayisi()).toBe(1);
+
+  // Durumu geri al (sonraki testler için).
+  await aiKeyAyarla(A.id, { anthropic: "user-key-A" });
+  await findataAyarla(A.id, TEMEL_FINDATA);
+});
+
+test("AI-T2-IDEM-03C provider_unavailable satırı kilitlemez (lease serbest, retry devralabilir)", async () => {
+  // T2C.1'de satır sağlayıcı/anahtar çözümünden ÖNCE açılır; hata yolunda lease bırakılmalı,
+  // aksi halde aynı update'in retry'ı 409 processing'e takılırdı.
+  const tgid = nextTgid();
+  await baglan(A, tgid);
+  const uid = nextUid();
+  await aiKeyAyarla(A.id, null);
+  const r1 = await ai({ telegram_user_id: tgid, update_id: uid, question: "Anahtarsız soru" });
+  expect(r1.status).toBe(409);
+  expect(r1.json).toEqual({ error: "provider_unavailable", reason: "no_key" });
+  expect(istekSayisi()).toBe(0);
+
+  await aiKeyAyarla(A.id, { anthropic: "user-key-A" });
+  fakeState.metin = "SONRADAN-CALISTI";
+  const r2 = await ai({ telegram_user_id: tgid, update_id: uid, question: "Anahtarsız soru" });
+  expect(r2.status).toBe(200);
+  expect(r2.json.answer).toBe("SONRADAN-CALISTI");
   expect(istekSayisi()).toBe(1);
 });
 
@@ -648,17 +710,26 @@ test("AI-T2-IDEM-HASH-03/04 relink sonrası ÖNCEKİ kullanıcının cache'i ASL
   expect(JSON.stringify(r3.json)).not.toContain("A-KULLANICISININ-CEVABI");
 });
 
-test("AI-T2-IDEM-HASH-01b kontrol karakterli geçmiş çakışma üretmez (uçtan uca)", async () => {
+test("AI-T2-IDEM-HASH-01b kontrol karakterli SORU çakışma üretmez (uçtan uca)", async () => {
+  // T2C.1: geçmiş artık kimliğin parçası değil; enjeksiyon yüzeyi SORU metnidir.
+  // Ayıraç birleştirmede aşağıdaki çiftler aynı düz metne katlanabilirdi.
   const tgid = nextTgid();
   await baglan(A, tgid);
   const uid = nextUid();
-  const temel = { telegram_user_id: tgid, update_id: uid, question: "s" };
-  const r1 = await ai({ ...temel, history: [{ q: "a", a: "b" }] });
+  fakeState.metin = "ILK-CEVAP";
+  const r1 = await ai({ telegram_user_id: tgid, update_id: uid, question: 'x", "y' });
   expect(r1.status).toBe(200);
-  // Ayıraç birleştirmede AYNI kanoniğe düşerdi → burada FARKLI hash → conflict.
-  const r2 = await ai({ ...temel, history: [{ q: "a", a: "" }, { q: "b", a: "" }] });
-  expect(r2.status).toBe(409);
-  expect(r2.json).toEqual({ error: "idempotency_conflict" });
+  expect(istekSayisi()).toBe(1);
+  for (const soru of ["x\u0000y", "x\ny", "x\u0001y", "xy"]) {
+    const r2 = await ai({ telegram_user_id: tgid, update_id: uid, question: soru });
+    expect(`${JSON.stringify(soru)}:${r2.status}`).toBe(`${JSON.stringify(soru)}:409`);
+    expect(r2.json).toEqual({ error: "idempotency_conflict" });
+  }
+  expect(istekSayisi()).toBe(1);
+  // Aynı soru + farklı geçmiş → AYNI kimlik → cache.
+  const r3 = await ai({ telegram_user_id: tgid, update_id: uid, question: 'x", "y', history: [{ q: "a", a: "b" }] });
+  expect(r3.status).toBe(200);
+  expect(r3.json.answer).toBe("ILK-CEVAP");
   expect(istekSayisi()).toBe(1);
 });
 

@@ -229,6 +229,24 @@ test("AI-T2C-22 beklenmeyen PB durumu/şeması → fail-closed FatalConfigError"
   }
 });
 
+test("AI-T2C-23 PB İÇ 5xx (500/503) → TransientError, FatalConfigError DEĞİL (T2C.1 F8)", async () => {
+  // BİLİNÇLİ İSTİSNA: PB'nin kendi altyapı hatası (restart / 503 unavailable / panic) bir
+  // protokol sözleşmesi sapması DEĞİLDİR → süreci fail-closed kapatmaz, update yeniden denenir
+  // (offset İLERLEMEZ). 502/504 ise PB'nin BELGELENMİŞ AI protokol kodlarıdır ve bu dala girmez.
+  const { pbIstemci } = await import("../src/pb.js");
+  for (const st of [500, 503, 599]) {
+    const pb = pbIstemci({ pbUrl: "http://x", gwSecret: "s", fetchImpl: async () => ({ status: st, ok: false, json: async () => ({ error: "internal" }) }) });
+    await assert.rejects(() => pb.aiAsk({ tgid: "1", updateId: "2", question: "q", history: [] }),
+      (e) => e instanceof TransientError && !(e instanceof FatalConfigError), `status ${st}`);
+  }
+  // 502/504 TransientError DEĞİL: şema doğrulamasından geçer, router taksonomisi karar verir.
+  for (const y of [{ status: 502, body: { error: "upstream", class: "transient" } }, { status: 504, body: { error: "upstream_timeout" } }]) {
+    const pb = pbIstemci({ pbUrl: "http://x", gwSecret: "s", fetchImpl: async () => ({ status: y.status, ok: false, json: async () => y.body }) });
+    const r = await pb.aiAsk({ tgid: "1", updateId: "2", question: "q", history: [] });
+    assert.equal(r.status, y.status);
+  }
+});
+
 test("AI-T2C-TIMEOUT AI ucu 60 s, diğer uçlar 15 s (global değişiklik YOK)", async () => {
   const { pbIstemci } = await import("../src/pb.js");
   const gorulen = [];

@@ -31,10 +31,10 @@ export async function updateIsle(u, deps) {
   try {
     const sonuc = await isle(u, { ...deps, reclaimed });   // reply (yan etki)
     await pb.updateComplete(uid, leaseToken);              // done → next_offset = uid + 1
-    // T2C: konuşma belleği YALNIZ dayanıklı complete BAŞARILI olduktan SONRA işlenir.
-    // Aksi halde aynı update'in retry'ı FARKLI history gönderir ve T2B'nin history-bağlı
-    // request_hash'i haklı olarak 409 idempotency_conflict döner. Bellek best-effort RAM
-    // durumudur: hatası tamamlanmış dayanıklı update'i GERİ ALMAZ.
+    // T2C: konuşma belleği YALNIZ dayanıklı complete BAŞARILI olduktan SONRA işlenir → aynı
+    // update'in retry'ı AYNI history ile gider, konuşma tutarlı kalır. (T2C.1: bu bir tutarlılık
+    // güvencesidir; request_hash history'yi bağlamadığı için farklı history idempotency'yi
+    // BOZMAZ.) Bellek best-effort RAM durumudur: hatası tamamlanmış update'i GERİ ALMAZ.
     sonrasiUygula(sonuc, deps);
     return { done: true };
   } catch (e) {

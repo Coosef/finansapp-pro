@@ -41,8 +41,11 @@ function fakeAiBaslat() {
       const ch = []; for await (const c of req) ch.push(c);
       let b = {}; try { b = JSON.parse(Buffer.concat(ch).toString() || "{}"); } catch { /* */ }
       aiState.istekler.push({ url: req.url, body: b });
+      // Cevap ÇAĞRI NUMARASI taşır → "dayanıklı DONE cache'i mi döndü, yoksa yeni bir upstream
+      // çağrısı mı yapıldı" testlerde kesin ayırt edilebilir.
+      const metin = `Bu ay en çok Kira kaleminde harcadın. [#${aiState.istekler.length}]`;
       r.writeHead(200, { "Content-Type": "application/json" });
-      r.end(JSON.stringify({ content: [{ type: "text", text: "Bu ay en çok Kira kaleminde harcadın." }] }));
+      r.end(JSON.stringify({ content: [{ type: "text", text: metin }] }));
     });
     s.listen(AI_PORT, "0.0.0.0", () => res(s));
   });
@@ -189,4 +192,174 @@ test("AI-T2C-E2E-03 yazma niyetli soru AI'ya gider ama finansal veri değişmez"
   assert.equal(sonra.revision, once.revision);
   assert.equal(JSON.stringify(sonra.data), JSON.stringify(once.data));
   assert.equal(sonra.updated, once.updated, "users kaydına hiç yazılmamalı");
+});
+
+// ============================================================
+// T2C.1 — CRASH / RESTART GÜVENLİ IDEMPOTENCY (AI-T2C-CRASH-01..06)
+//
+// Sözleşme: request_hash YALNIZ DEĞİŞMEZ istek kimliğini bağlar (link.id + user id + tgid +
+// update_id + soru). Gateway konuşma belleği RAM-only + 15 dk TTL olduğu için retry'da history
+// KAYBOLABİLİR; kullanıcı DONE'dan sonra AI anahtarını silebilir veya sağlayıcı/model
+// değiştirebilir. Bunların HİÇBİRİ dayanıklı DONE cevabının teslimini engellememelidir.
+// Değişen SORU veya değişen HESAP/LINK KİMLİĞİ ise hâlâ FAIL-CLOSED'dur.
+// ============================================================
+const aiSatirlari = async () => (await api("/api/collections/telegram_ai_results/records?perPage=200", { headers: { Authorization: adminTok } })).json.items;
+
+async function leaseGecmise(uid) {
+  const satir = (await api(`/api/collections/telegram_updates/records?filter=${encodeURIComponent(`update_id="${uid}"`)}`, { headers: { Authorization: adminTok } })).json.items[0];
+  assert.ok(satir, `telegram_updates satırı yok: ${uid}`);
+  await api(`/api/collections/telegram_updates/records/${satir.id}`, { method: "PATCH", headers: yonetici(), body: JSON.stringify({ lease_until: new Date(Date.now() - 600000).toISOString().replace("T", " ") }) });
+}
+
+// DONE üret ama Telegram teslimini/complete'i BAŞARISIZ bırak → update yeniden claim edilebilir.
+async function doneAmaTeslimEdilmemis(uid, soru, hafiza) {
+  tgState.sendFail = true; tgState.sent = [];
+  tgState.updates = [mesaj(uid, soru)];
+  const r = await pollOnce({ pb, tg, aiHafiza: hafiza, pollTimeout: 1, pollLimit: 10 });
+  assert.equal(r.islenmis, 0, "gönderim başarısız → tamamlanmamalı");
+  const satir = (await aiSatirlari()).find((x) => String(x.update_id) === String(uid));
+  assert.equal(satir && satir.status, "done", "sonuç PB'de DONE olarak dayanıklı saklanmalı");
+  await leaseGecmise(uid);
+  tgState.sendFail = false; tgState.sent = [];
+  return satir.answer;
+}
+
+// Taze-AI kota işaretçilerini temizle. Rate limit (10 taze soru / tgid / 15 dk) T2B'nin KENDİ
+// testlerinde ayrıca doğrulanır; burada amaç crash/restart yakınsamasını izole ölçmektir, tek
+// bir test kullanıcısıyla arka arkaya çalışan senaryolar aksi hâlde kotayı tüketirdi.
+async function kotaSifirla() {
+  const q = encodeURIComponent(`telegram_user_id="${TGID}"`);
+  const r = await api(`/api/collections/telegram_service_requests/records?perPage=500&filter=${q}`, { headers: { Authorization: adminTok } });
+  for (const it of (r.json && r.json.items) || []) {
+    if (String(it.endpoint || "").indexOf("#fresh") !== -1) {
+      await api(`/api/collections/telegram_service_requests/records/${it.id}`, { method: "DELETE", headers: yonetici() });
+    }
+  }
+}
+
+async function tekrarDene(uid, soru, hafiza) {
+  tgState.updates = [mesaj(uid, soru)];
+  return await pollOnce({ pb, tg, aiHafiza: hafiza, pollTimeout: 1, pollLimit: 10 });
+}
+
+test("AI-T2C-CRASH-01 gateway restart (RAM history KAYBOLUR) → DONE cache yakınsar, upstream +0", async () => {
+  await kotaSifirla();
+  aiState.istekler = []; tgState.sent = []; tgState.sendFail = false;
+  const hafiza = aiHafiza();
+
+  // 1) Q1 başarıyla tamamlanır → bellekte 1 çift oluşur.
+  tgState.updates = [mesaj(4101, "Bu ay en çok neye harcadım?")];
+  assert.equal((await pollOnce({ pb, tg, aiHafiza: hafiza, pollTimeout: 1, pollLimit: 10 })).islenmis, 1);
+  assert.equal(hafiza.al(TGID).length, 1, "başarılı turdan sonra bellek dolu");
+  assert.equal(aiState.istekler.length, 1);
+
+  // 2) Q2 DOLU history ile PB'ye gider, upstream çağrılır, sonuç DONE olur; teslim BAŞARISIZ.
+  const cevap = await doneAmaTeslimEdilmemis(4102, "Peki gelirim ne durumda?", hafiza);
+  assert.equal(aiState.istekler.length, 2, "Q2 için taze upstream çağrısı");
+  assert.match(JSON.stringify(aiState.istekler[1].body), /GEÇM/, "Q2 upstream'e geçmişle gitti");
+  assert.match(cevap, /\[#2\]/, "DONE satırı 2. çağrının cevabını tutuyor");
+
+  // 3) SÜREÇ YENİDEN BAŞLADI: bellek nesnesi yok edilir, YENİSİ BOŞ.
+  const yeniHafiza = aiHafiza();
+  assert.deepEqual(yeniHafiza.al(TGID), [], "restart sonrası history boş");
+
+  // 4) Aynı Telegram update yeniden claim edilir → history=[] ile PB'ye gider.
+  const r2 = await tekrarDene(4102, "Peki gelirim ne durumda?", yeniHafiza);
+  assert.equal(r2.islenmis, 1, "retry tamamlanmalı (409 idempotency_conflict YOK)");
+  assert.equal(tgState.sent.length, 1, "kullanıcıya tek mesaj iletildi");
+  assert.equal(tgState.sent[0].text, cevap, "ORİJİNAL DONE cevabı teslim edildi");
+  assert.equal(aiState.istekler.length, 2, "EK upstream çağrısı YOK");
+});
+
+test("AI-T2C-CRASH-02 bellek TTL'i (15 dk) retry'dan önce dolar → cache yakınsar, upstream +0", async () => {
+  await kotaSifirla();
+  aiState.istekler = []; tgState.sent = []; tgState.sendFail = false;
+  let saatMs = Date.now();
+  const hafiza = aiHafiza({ simdi: () => saatMs });
+
+  tgState.updates = [mesaj(4111, "Kira giderim ne kadar?")];
+  assert.equal((await pollOnce({ pb, tg, aiHafiza: hafiza, pollTimeout: 1, pollLimit: 10 })).islenmis, 1);
+  assert.equal(hafiza.al(TGID).length, 1);
+
+  const cevap = await doneAmaTeslimEdilmemis(4112, "Ya market giderim?", hafiza);
+  const oncekiCagri = aiState.istekler.length;
+
+  saatMs += 16 * 60000; // hareketsizlik TTL'i aşıldı
+  assert.deepEqual(hafiza.al(TGID), [], "TTL dolunca history boşalır");
+
+  const r2 = await tekrarDene(4112, "Ya market giderim?", hafiza);
+  assert.equal(r2.islenmis, 1);
+  assert.equal(tgState.sent.length, 1);
+  assert.equal(tgState.sent[0].text, cevap);
+  assert.equal(aiState.istekler.length, oncekiCagri, "EK upstream çağrısı YOK");
+});
+
+test("AI-T2C-CRASH-03 DONE'dan sonra AI anahtarı SİLİNİR → no_key cache'i MASKELEYEMEZ", async () => {
+  await kotaSifirla();
+  aiState.istekler = []; tgState.sent = []; tgState.sendFail = false;
+  const cevap = await doneAmaTeslimEdilmemis(4121, "Net varlığım ne?", aiHafiza());
+  const oncekiCagri = aiState.istekler.length;
+
+  const anahtar = (await api(`/api/collections/ai_keys/records?filter=${encodeURIComponent(`user="${userId}"`)}`, { headers: { Authorization: adminTok } })).json.items[0];
+  await api(`/api/collections/ai_keys/records/${anahtar.id}`, { method: "DELETE", headers: yonetici() });
+  try {
+    const r2 = await tekrarDene(4121, "Net varlığım ne?", aiHafiza());
+    assert.equal(r2.islenmis, 1, "anahtar olmasa bile dayanıklı cevap teslim edilmeli");
+    assert.equal(tgState.sent.length, 1);
+    assert.equal(tgState.sent[0].text, cevap);
+    assert.equal(aiState.istekler.length, oncekiCagri, "EK upstream çağrısı YOK");
+  } finally {
+    await api("/api/collections/ai_keys/records", { method: "POST", headers: yonetici(), body: JSON.stringify({ user: userId, keys: { anthropic: "user-key-t2c" } }) });
+  }
+});
+
+test("AI-T2C-CRASH-04 DONE'dan sonra sağlayıcı/model DEĞİŞİR → cache yine döner, upstream +0", async () => {
+  await kotaSifirla();
+  aiState.istekler = []; tgState.sent = []; tgState.sendFail = false;
+  const once = await kullanici();
+  const cevap = await doneAmaTeslimEdilmemis(4131, "Aylık bütçem nasıl gidiyor?", aiHafiza());
+  const oncekiCagri = aiState.istekler.length;
+
+  // Yerel sağlayıcıya geç (taze yürütmede 409 local_only üretirdi) + model değiştir.
+  await api(`/api/collections/users/records/${userId}`, { method: "PATCH", headers: yonetici(), body: JSON.stringify({
+    data: { ...once.data, ayarlar: { ...once.data.ayarlar, aiSaglayici: "ozel", yerelModel: "yerel-x" } } }) });
+  try {
+    const r2 = await tekrarDene(4131, "Aylık bütçem nasıl gidiyor?", aiHafiza());
+    assert.equal(r2.islenmis, 1, "sağlayıcı/model değişse de dayanıklı cevap teslim edilmeli");
+    assert.equal(tgState.sent.length, 1);
+    assert.equal(tgState.sent[0].text, cevap);
+    assert.equal(aiState.istekler.length, oncekiCagri, "EK upstream çağrısı YOK");
+  } finally {
+    await api(`/api/collections/users/records/${userId}`, { method: "PATCH", headers: yonetici(), body: JSON.stringify({ data: once.data }) });
+  }
+});
+
+test("AI-T2C-CRASH-05 aynı update_id + DEĞİŞEN soru → 409 idempotency_conflict (eski cevap dönmez)", async () => {
+  await kotaSifirla();
+  aiState.istekler = []; tgState.sent = []; tgState.sendFail = false;
+  const cevap = await doneAmaTeslimEdilmemis(4141, "İlk soru metni", aiHafiza());
+  const oncekiCagri = aiState.istekler.length;
+
+  const r = await pb.aiAsk({ tgid: TGID, updateId: "4141", question: "TAMAMEN BAŞKA bir soru", history: [] });
+  assert.equal(r.status, 409);
+  assert.deepEqual(r.json, { error: "idempotency_conflict" });
+  assert.ok(!JSON.stringify(r.json).includes(cevap), "önceki cevap sızmamalı");
+  assert.equal(aiState.istekler.length, oncekiCagri, "fail-closed → upstream çağrısı YOK");
+});
+
+test("AI-T2C-CRASH-06 unlink/relink link kimliğini değiştirir → fail-closed (cache dönmez)", async () => {
+  await kotaSifirla();
+  aiState.istekler = []; tgState.sent = []; tgState.sendFail = false;
+  const cevap = await doneAmaTeslimEdilmemis(4151, "Kimlik izolasyon sorusu", aiHafiza());
+  const oncekiCagri = aiState.istekler.length;
+
+  await pb.unlink(TGID);
+  const kod = (await api("/api/tg/user/pair-code", { method: "POST", headers: { Authorization: userTok, "Content-Type": "application/json" }, body: "{}" })).json.code;
+  assert.equal((await pb.pairConsume(TGID, kod)).status, 200);
+
+  const r = await pb.aiAsk({ tgid: TGID, updateId: "4151", question: "Kimlik izolasyon sorusu", history: [] });
+  assert.equal(r.status, 409, "yeni link kimliği → hash eşleşmez");
+  assert.deepEqual(r.json, { error: "idempotency_conflict" });
+  assert.ok(!JSON.stringify(r.json).includes(cevap), "önceki link'in cevabı ASLA dönmemeli");
+  assert.equal(aiState.istekler.length, oncekiCagri, "fail-closed → upstream çağrısı YOK");
 });

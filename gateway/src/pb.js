@@ -50,6 +50,13 @@ export function pbIstemci({ pbUrl, gwSecret, pbTimeoutMs = 15000, pbAiTimeoutMs 
       if (history && history.length) govde.history = history.map((h) => ({ q: String(h.q), a: String(h.a) }));
       const r = await istek("/api/tg/service/ai", govde, pbAiTimeoutMs);
       const j = r.json;
+      // 5XX SINIFLANDIRMASI (T2C.1 F8 — BİLİNÇLİ İSTİSNA, kaza değil):
+      //   502/504 = PB'nin BELGELENMİŞ AI protokol kodları (upstream sağlayıcı hatası/timeout)
+      //             → aşağıdaki şema doğrulamasından geçer, router taksonomisi karar verir.
+      //   diğer 5xx (500/503/...) = PB'nin KENDİ altyapı hatası (panic, restart, 503 unavailable)
+      //             → TransientError: offset İLERLEMEZ, update yeniden denenir.
+      // Bu, "beklenmeyen 2xx/4xx/502 şeması → FatalConfigError" kuralının bir istisnasıdır:
+      // altyapı kesintisi bir sözleşme sapması DEĞİLDİR ve süreci fail-closed kapatmamalıdır.
       // HMAC/servis-auth sapması → süreç fail-closed (T1 semantiği aynen).
       if (r.status === 401 || r.status === 403) throw new FatalConfigError(`PB ai auth ${r.status}`);
       if (r.status >= 500 && r.status !== 502 && r.status !== 504) throw new TransientError(`PB ai ${r.status}`);

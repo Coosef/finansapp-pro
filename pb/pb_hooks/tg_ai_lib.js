@@ -203,11 +203,13 @@ function cevapCikar(tip, json) {
   return m && typeof m.content === "string" ? m.content.trim() : "";
 }
 
-// request_hash — çözülen link/user kimliği + tgid + update_id + normalize soru + sınırlı
-// geçmiş + çözülen sağlayıcı/model. Kanonikleştirme yapısaldır (bkz. tg_ai_context.hashKanonik).
+// request_hash (T2C.1 / t2b-v3) — YALNIZ DEĞİŞMEZ istek kimliği: çözülen link/user kimliği +
+// tgid + update_id + normalize soru. history / sağlayıcı / model / anahtar / finans context'i
+// BİLEREK DIŞARIDADIR (yürütme bağlamı; retry'lar arasında meşru olarak değişebilir).
+// Kanonikleştirme yapısaldır (bkz. tg_ai_context.hashKanonik).
 // linkId/userId hash GİRDİSİDİR; ham olarak hiçbir yere yazılmaz.
-function istekHash(linkId, userId, tgid, uid, soru, history, sag, model) {
-  return $security.sha256(C.hashKanonik(linkId, userId, tgid, uid, soru, history, sag, model));
+function istekHash(linkId, userId, tgid, uid, soru) {
+  return $security.sha256(C.hashKanonik(linkId, userId, tgid, uid, soru));
 }
 
 // ---- Idempotency satır sınıflandırma (handler scope'u dosya-seviyesini GÖRMEZ → burada) ----

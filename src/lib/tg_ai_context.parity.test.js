@@ -302,55 +302,64 @@ describe("T2B — govdeDogrula sözleşmesi", () => {
     expect(C.govdeDogrula({ ...temel, history: "abc" }).ok).toBe(false);
   });
   it("AI-T2-IDEM-HASH-02 aynı istek aynı kanoniği üretir", () => {
-    const a = C.hashKanonik("L1", "U1", "1", "2", "soru", [{ q: "a", a: "b" }], "anthropic", "claude-opus-4-8");
-    const b = C.hashKanonik("L1", "U1", "1", "2", "soru", [{ q: "a", a: "b" }], "anthropic", "claude-opus-4-8");
+    const a = C.hashKanonik("L1", "U1", "1", "2", "soru");
+    const b = C.hashKanonik("L1", "U1", "1", "2", "soru");
     expect(a).toBe(b);
   });
 
-  it("her bağlayıcı girdi hash'i değiştirir (link/user/tgid/update/soru/geçmiş/sağlayıcı/model)", () => {
-    const t = ["L1", "U1", "1", "2", "soru", [], "anthropic", "claude-opus-4-8"];
+  it("T2C.1 her DEĞİŞMEZ kimlik alanı hash'i değiştirir (link/user/tgid/update/soru)", () => {
+    const t = ["L1", "U1", "1", "2", "soru"];
     const taban = C.hashKanonik(...t);
     const varyantlar = [
-      ["L2", "U1", "1", "2", "soru", [], "anthropic", "claude-opus-4-8"],
-      ["L1", "U2", "1", "2", "soru", [], "anthropic", "claude-opus-4-8"],
-      ["L1", "U1", "9", "2", "soru", [], "anthropic", "claude-opus-4-8"],
-      ["L1", "U1", "1", "3", "soru", [], "anthropic", "claude-opus-4-8"],
-      ["L1", "U1", "1", "2", "başka", [], "anthropic", "claude-opus-4-8"],
-      ["L1", "U1", "1", "2", "soru", [{ q: "a", a: "b" }], "anthropic", "claude-opus-4-8"],
-      ["L1", "U1", "1", "2", "soru", [], "openai", "claude-opus-4-8"],
-      ["L1", "U1", "1", "2", "soru", [], "anthropic", "claude-haiku-4-5"],
+      ["L2", "U1", "1", "2", "soru"],
+      ["L1", "U2", "1", "2", "soru"],
+      ["L1", "U1", "9", "2", "soru"],
+      ["L1", "U1", "1", "3", "soru"],
+      ["L1", "U1", "1", "2", "başka"],
     ];
     const hepsi = new Set([taban, ...varyantlar.map((v) => C.hashKanonik(...v))]);
     expect(hepsi.size).toBe(varyantlar.length + 1);
   });
 
-  it("AI-T2-IDEM-HASH-01 kontrol karakteri/satır sonu enjeksiyonu çakışma ÜRETEMEZ", () => {
-    // Ayıraç birleştirmede bu çiftler AYNI düz metne katlanırdı.
-    const ciftler = [
-      [[{ q: "a", a: "b" }], [{ q: "a\u0000b", a: "" }]],
-      [[{ q: "a", a: "b" }], [{ q: "a", a: "" }, { q: "b", a: "" }]],
-      [[{ q: "a\nb", a: "c" }], [{ q: "a", a: "b\nc" }]],
-      [[{ q: "x\u0001y", a: "" }], [{ q: "x", a: "y" }]],
-      [[{ q: '", "', a: "" }], [{ q: "", a: "" }]],
+  it("T2C.1 YÜRÜTME BAĞLAMI (geçmiş/sağlayıcı/model) hash'i DEĞİŞTİRMEZ", () => {
+    // Bu alanlar imzada YOK: fazladan argüman verilse bile kanonik AYNI kalır. Gateway
+    // yeniden başladığında (history=[]) veya kullanıcı sağlayıcı/model/anahtar değiştirdiğinde
+    // aynı Telegram update'i AYNI kimliğe çözülmeli → dayanıklı DONE cevabı teslim edilebilsin.
+    const taban = C.hashKanonik("L1", "U1", "1", "2", "soru");
+    const varyantlar = [
+      C.hashKanonik("L1", "U1", "1", "2", "soru", [{ q: "a", a: "b" }], "anthropic", "claude-opus-4-8"),
+      C.hashKanonik("L1", "U1", "1", "2", "soru", [{ q: "x", a: "y" }, { q: "z", a: "w" }], "openai", "gpt-4o-mini"),
+      C.hashKanonik("L1", "U1", "1", "2", "soru", [], "gemini", "gemini-2.5-flash"),
+      C.hashKanonik("L1", "U1", "1", "2", "soru", undefined, undefined, undefined),
     ];
-    for (const [h1, h2] of ciftler) {
-      const a = C.hashKanonik("L", "U", "1", "2", "s", h1, "anthropic", "m");
-      const b = C.hashKanonik("L", "U", "1", "2", "s", h2, "anthropic", "m");
-      expect(`${JSON.stringify(h1)} vs ${JSON.stringify(h2)}`).toBe(`${JSON.stringify(h1)} vs ${JSON.stringify(h2)}`);
-      expect(a === b).toBe(false);
+    for (const v of varyantlar) expect(v).toBe(taban);
+    // Kanonikte geçmiş/sağlayıcı/model izi HİÇ yok.
+    expect(taban).not.toContain("anthropic");
+    expect(taban).not.toContain("claude-opus-4-8");
+  });
+
+  it("AI-T2-IDEM-HASH-01 kontrol karakteri/satır sonu enjeksiyonu çakışma ÜRETEMEZ", () => {
+    // Ayıraç birleştirmede bu çiftler AYNI düz metne katlanırdı; yapısal JSON'da katlanmaz.
+    const ciftler = [
+      [["L", "U", "1", "2", "a\u0000b"], ["L", "U", "1", "2\u0000a", "b"]],
+      [["L", "U", "1", "2", "a\nb"], ["L", "U", "1", "2\na", "b"]],
+      [["L", "U", "1", "2", "x\u0001y"], ["L", "U", "1", "2\u0001x", "y"]],
+      [["L", "U", "1", "2", '", "3", "'], ["L", "U", "1", "3", ""]],
+      [["L", "U", "12", "3", "s"], ["L", "U", "1", "23", "s"]],
+      [["L", "U1", "1", "2", "s"], ["LU", "1", "1", "2", "s"]],
+    ];
+    for (const [a1, a2] of ciftler) {
+      expect(`${JSON.stringify(a1)} vs ${JSON.stringify(a2)}`).toBe(`${JSON.stringify(a1)} vs ${JSON.stringify(a2)}`);
+      expect(C.hashKanonik(...a1) === C.hashKanonik(...a2)).toBe(false);
     }
-    // Soru metnindeki enjeksiyon da geçmişe/sağlayıcıya sızamaz.
-    const s1 = C.hashKanonik("L", "U", "1", "2", 'x", "openai', [], "anthropic", "m");
-    const s2 = C.hashKanonik("L", "U", "1", "2", "x", [], "openai", "m");
-    expect(s1 === s2).toBe(false);
   });
 
   it("kanonik biçim geçerli JSON dizisidir ve sürüm etiketi taşır", () => {
-    const k = C.hashKanonik("L", "U", "12", "34", "soru", [{ q: "a", a: "b" }], "gemini", "gemini-2.5-flash");
+    const k = C.hashKanonik("L", "U", "12", "34", "soru");
     const dizi = JSON.parse(k);
     expect(Array.isArray(dizi)).toBe(true);
-    expect(dizi[0]).toBe("t2b-v2");
-    expect(dizi.length).toBe(9);
-    expect(dizi[6]).toEqual([["a", "b"]]);
+    expect(dizi[0]).toBe("t2b-v3");
+    expect(dizi.length).toBe(6);
+    expect(dizi).toEqual(["t2b-v3", "L", "U", "12", "34", "soru"]);
   });
 });

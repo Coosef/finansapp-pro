@@ -106,9 +106,24 @@ ghcr.io/coosef/finansapp-tg-gateway     # multi-arch: linux/amd64 + linux/arm64
   cache olarak dönmez, taze upstream çağrısı yapılır ve kota tüketir) ·
   **fiziksel silme** bir sonraki `tg_cleanup` turunda (15 dk'da bir) ·
   **nominal disk kalıcılığı ≈ en fazla 45 dk** (30 dk + ≤15 dk cron gecikmesi).
-- `request_hash` yapısal JSON serileştirmesidir (ayıraç birleştirme yok) ve çözülen **hesap
-  kimliğini** (link id + PB user id) de bağlar → unlink/relink sonrası önceki kullanıcının
-  cache'i asla döndürülemez (fail-closed `409 idempotency_conflict`). Ham id'ler saklanmaz.
+- `request_hash` (**`t2b-v3`**) yapısal JSON serileştirmesidir (ayıraç birleştirme yok) ve
+  **yalnız DEĞİŞMEZ istek kimliğini** bağlar: link id + PB user id + telegram_user_id +
+  update_id + normalize soru. Ham id'ler saklanmaz, yalnız hash girdisidir. Unlink/relink
+  sonrası önceki kullanıcının cache'i asla döndürülemez (fail-closed `409 idempotency_conflict`);
+  aynı `update_id` ile farklı soru da fail-closed'dur.
+- **T2C.1 — crash/restart güvenli idempotency.** `history`, sağlayıcı, model, AI anahtarı ve
+  finans context'i hash'e **girmez**; bunlar *yürütme bağlamıdır* ve aynı Telegram update'i
+  yeniden denenirken meşru olarak değişebilir/yok olabilir (gateway belleği RAM-only + 15 dk
+  TTL; kullanıcı anahtarını silebilir veya sağlayıcı/model değiştirebilir). `t2b-v2` bunları
+  bağladığı için dayanıklı bir DONE cevabı restart sonrası `409 idempotency_conflict` alıp
+  **hiç teslim edilemiyordu**. Idempotency = "aynı değişmez Telegram isteği → ilk kabul edilen
+  sonuç otoritedir", "retry her çalışma-zamanı ayarını bayt bayt yeniden üretmelidir" değil.
+- **Sıralama sözleşmesi:** HMAC → gövde doğrula → link/hesap kimliği → `request_hash` →
+  `telegram_ai_results` incele → *süresi dolmamış DONE + hash eşleşmesi ⇒ cache'i HEMEN dön* →
+  ancak bundan **sonra** finans verisi, sağlayıcı/model, `ai_keys`, taze-AI kotası ve upstream.
+  Böylece DONE bir sonuç, kullanıcı arkasından anahtarını silse / sağlayıcı-model değiştirse
+  bile mantıksal TTL dolana kadar teslim edilebilir kalır (`no_key` cache'i maskeleyemez).
+  Süresi dolmuş DONE ise taze yürütmedir: yapılandırma o an neyse onunla çalışılır.
 - `UPDATE_LEASE_MS` 120 s → 180 s (AI turu için zaman payı). Fencing semantiği değişmedi.
 
 ### ⚠️ `ai_keys` şema onarımı (migration `1735000600`)
@@ -171,10 +186,16 @@ sınırlı olduğundan sağlayıcı whitelist'i zayıflamaz.
   çifti, alan başına 400 code point, 15 dk hareketsizlik TTL'i, global 500 giriş (LRU tahliye).
   Gateway restart'ında **kasıtlı olarak kaybolur**; PB/Telegram'dan yeniden kurulmaz.
   Anahtar yalnız **numerik Telegram id**'dir.
-- **Commit sırası güvenlik-kritik:** bellek YALNIZ `updateComplete` başarılı olduktan SONRA
-  işlenir. Aksi halde aynı update'in retry'ı farklı `history` gönderir ve T2B'nin history-bağlı
-  `request_hash`'i haklı olarak `409 idempotency_conflict` döner. `/link`, `/unlink` ve
-  `not_linked` kimlik sınırlarında bellek temizlenir.
+- **Commit sırası:** bellek YALNIZ `updateComplete` başarılı olduktan SONRA işlenir → aynı
+  update'in retry'ı aynı `history` ile gider ve konuşma tutarlı kalır. (T2C.1'den itibaren bu
+  bir *doğruluk* değil *tutarlılık* güvencesidir: `history` artık `request_hash`'e girmediği
+  için farklı/boş geçmişle yapılan retry de dayanıklı DONE cevabına yakınsar.) `/link`,
+  `/unlink` ve `not_linked` kimlik sınırlarında bellek temizlenir.
+- **PB 5xx sınıflandırması (bilinçli istisna):** PB'nin kendi altyapı hatası (500/503/… —
+  restart, unavailable, panic) `TransientError`'dır → offset ilerlemez, update yeniden denenir.
+  `502`/`504` ise PB'nin **belgelenmiş** AI protokol kodlarıdır (upstream sağlayıcı hatası /
+  timeout) ve router taksonomisine gider. Beklenmeyen 2xx/4xx/502 **şeması** ve HMAC `401/403`
+  → `FatalConfigError` (fail-closed). Regresyon: `AI-T2C-23`.
 - Bir AI cevabı **tek** Telegram mesajıdır (çoklu-mesaj bölme YOK); PB zaten 3000 code point'te
   sınırlar, gateway `uzunlukGuvenli` ile savunmacı guard uygular.
 - AI cevabı **güvenilmez düz metindir**: parse/eval/komut yorumlaması yok, `parse_mode` verilmez.
